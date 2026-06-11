@@ -1,9 +1,21 @@
 import enum
 from datetime import datetime, timezone
 from uuid import uuid4
-from typing import List, Optional
+from typing import List, Optional, Any
 from sqlmodel import Field, SQLModel, Relationship
 from sqlalchemy import Column, JSON
+from sqlalchemy.types import TypeDecorator, String
+from geoalchemy2 import Geometry
+
+class PointType(TypeDecorator):
+    impl = Geometry
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect is None or dialect.name == "sqlite":
+            return String()
+        else:
+            return Geometry(geometry_type="POINT", srid=4326, spatial_index=True)
 
 from .services import ProviderServiceLink, Service
 
@@ -32,11 +44,12 @@ class User(SQLModel, table=True):
     __tablename__ = "users"  # type: ignore
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    phone_number: str = Field(unique=True, index=True)
+    phone_number: Optional[str] = Field(unique=True, index=True, default=None)
     email: str = Field(unique=True, index=True)
     type: UserType
     is_active: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     provider_profile: Optional["ProviderProfile"] = Relationship(
         back_populates="user",
@@ -66,8 +79,13 @@ class ProviderProfile(SQLModel, table=True):
     provider_reference: Optional[str] = Field(default=None, index=True)
     liveness_score: Optional[float] = None
     rejection_reason: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     verified_at: Optional[datetime] = None
+    last_known_location: Optional[Any] = Field(
+        default=None,
+        sa_column=Column(PointType, nullable=True)
+    )
 
     user: User = Relationship(back_populates="provider_profile")
     services: List[Service] = Relationship(
@@ -87,10 +105,13 @@ class ProviderPaymentAccount(SQLModel, table=True):
         index=True
     )
     provider: PaymentProvider
-    external_account_id: str
+    external_account_id: Optional[str]=None
     account_name: Optional[str] = None
     is_active: bool = Field(default=True)
     created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
     account_metadata: dict = Field(
@@ -110,6 +131,10 @@ class CustomerProfile(SQLModel, table=True):
     last_name: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_known_location: Optional[Any] = Field(
+        default=None,
+        sa_column=Column(PointType, nullable=True)
+    )
     
     user: User = Relationship(back_populates="customer_profile")
 
@@ -119,7 +144,8 @@ class AdminUser(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     email: str = Field(unique=True, index=True)
     hashed_password: str
-    totp_secret: str
+    full_name: Optional[str]=None
     role: AdminRole
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
