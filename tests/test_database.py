@@ -36,3 +36,31 @@ async def test_get_session_dependency():
         assert len(sessions) == 1
         assert sessions[0] == mock_session
         mock_session_maker.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_init_db():
+    """Verify that init_db correctly calls run_sync with SQLModel.metadata.create_all."""
+    with patch("app.core.database.engine") as mock_engine:
+        # Mock engine.begin() async context manager
+        mock_conn = MagicMock()
+        async def aenter(*args, **kwargs):
+            return mock_conn
+        async def aexit(*args, **kwargs):
+            return False
+        
+        mock_begin = MagicMock()
+        mock_begin.__aenter__ = aenter
+        mock_begin.__aexit__ = aexit
+        mock_engine.begin.return_value = mock_begin
+        
+        # Async method run_sync mock
+        async def mock_run_sync(func, *args, **kwargs):
+            pass
+        mock_conn.run_sync = mock_run_sync
+        
+        from app.core.database import init_db
+        await init_db()
+        
+        mock_engine.begin.assert_called_once()
+

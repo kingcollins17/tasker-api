@@ -4,14 +4,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+from app.core.database import init_db
+from app.core.services import get_cache_service
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
     print(f"Starting up {settings.PROJECT_NAME}...")
+    await init_db()
     yield
     # Shutdown logic
     print(f"Shutting down {settings.PROJECT_NAME}...")
+    await get_cache_service().close()
 
 def create_app() -> FastAPI:
     app = FastAPI(

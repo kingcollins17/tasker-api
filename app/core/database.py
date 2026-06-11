@@ -1,5 +1,6 @@
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
@@ -26,3 +27,13 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """
     async with async_session_maker() as session:
         yield session
+
+
+async def init_db() -> None:
+    """Initialize database tables defined in models on app startup."""
+    # Import models to register them on SQLModel.metadata
+    import app.core.models  # noqa: F401
+
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+

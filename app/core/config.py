@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     
     # Redis / Celery Settings
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Paystack Settings
+    PAYSTACK_SECRET_KEY: str = "sk_test_mock_key"
+    PAYSTACK_BASE_URL: str = "https://api.paystack.co"
+
     
     # Enable reading from .env file
     model_config = SettingsConfigDict(
