@@ -80,3 +80,20 @@ async def test_repository_crud():
         # Check size after delete
         remaining_users = await repo.get_all()
         assert len(remaining_users) == 1
+
+
+def test_get_repository_dependency():
+    """Verify that GetRepository dependency instantiates a Repository correctly."""
+    from unittest.mock import MagicMock
+    from app.core.repository import GetRepository
+    
+    dependency = GetRepository(User)
+    assert dependency.model == User
+    
+    mock_session = MagicMock(spec=AsyncSession)
+    repo = dependency(session=mock_session)
+    
+    assert isinstance(repo, Repository)
+    assert repo.model == User
+    assert repo.session == mock_session
+

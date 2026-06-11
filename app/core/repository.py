@@ -1,8 +1,11 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
+from fastapi import Depends
 from sqlmodel import select, SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import desc
+
+from app.core.database import get_session
 
 T = TypeVar("T", bound=SQLModel)
 
@@ -80,3 +83,14 @@ class Repository(Generic[T]):
         await self.session.delete(entity)
         await self.session.commit()
         return True
+
+
+class GetRepository(Generic[T]):
+    """FastAPI class dependency for obtaining a Repository instance for a specific model."""
+
+    def __init__(self, model: Type[T]):
+        self.model = model
+
+    def __call__(self, session: AsyncSession = Depends(get_session)) -> Repository[T]:
+        return Repository(self.model, session)
+

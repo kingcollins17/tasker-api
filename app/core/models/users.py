@@ -30,11 +30,6 @@ class KYCStatus(str, enum.Enum):
     VERIFIED = "verified"
     FAILED = "failed"
 
-class AdminRole(str, enum.Enum):
-    SUPER_ADMIN = "super_admin"
-    COMPLIANCE_OFFICER = "compliance_officer"
-    SUPPORT_AGENT = "support_agent"
-
 class PaymentProvider(str, enum.Enum):
     PAYSTACK = "paystack"
     MONNIFY = "monnify"
@@ -48,6 +43,8 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     type: UserType
     is_active: bool = Field(default=False)
+    email_verified: bool = Field(default=False)
+    phone_verified: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
@@ -69,11 +66,8 @@ class ProviderProfile(SQLModel, table=True):
     last_name: Optional[str] = None
     id_type: Optional[str] = None  # 'NIN', 'BVN'
     id_number: Optional[str] = None
-    selfie_s3_url: Optional[str] = None
-    
-    # Portfolio Track
-    resume_s3_url: Optional[str] = Field(default=None)
-    resume_uploaded_at: Optional[datetime] = Field(default=None)
+    id_doc_url: Optional[str] = None
+    selfie_url: Optional[str] = None
     
     status: KYCStatus = Field(default=KYCStatus.PENDING_SUBMISSION)
     provider_reference: Optional[str] = Field(default=None, index=True)
@@ -138,14 +132,4 @@ class CustomerProfile(SQLModel, table=True):
     
     user: User = Relationship(back_populates="customer_profile")
 
-class AdminUser(SQLModel, table=True):
-    __tablename__ = "admin_users"  # type: ignore
-    
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    email: str = Field(unique=True, index=True)
-    hashed_password: str
-    full_name: Optional[str]=None
-    role: AdminRole
-    is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+

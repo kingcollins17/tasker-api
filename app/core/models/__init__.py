@@ -1,13 +1,15 @@
 from .users import (
     UserType,
     KYCStatus,
-    AdminRole,
     User,
     ProviderProfile,
     CustomerProfile,
-    AdminUser,
     PaymentProvider,
     ProviderPaymentAccount,
+)
+from .admins import (
+    AdminRole,
+    AdminUser,
 )
 from .services import (
     Service,
