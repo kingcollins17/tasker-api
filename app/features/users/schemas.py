@@ -34,6 +34,7 @@ class CustomerProfileResponse(BaseModel):
     id: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    address_line: Optional[str] = None
 
 class ProviderProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -51,6 +52,7 @@ class ProviderProfileResponse(BaseModel):
     liveness_score: Optional[float] = None
     rejection_reason: Optional[str] = None
     verified_at: Optional[datetime] = None
+    address_line: Optional[str] = None
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -164,6 +166,7 @@ class CustomerProfileUpdate(BaseModel):
 class UpdateLocation(BaseModel):
     latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude coordinate")
     longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude coordinate")
+    address_line: Optional[str] = Field(None, description="Optional address line description of the location")
 
 
 class UpdateCloudMessagingToken(BaseModel):

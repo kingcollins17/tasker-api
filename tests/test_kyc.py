@@ -656,7 +656,8 @@ async def test_update_user_location_customer_success(user_service, mock_user_rep
         user_id=user_id,
         user_type=UserType.CUSTOMER,
         latitude=6.5244,
-        longitude=3.3792
+        longitude=3.3792,
+        address_line="123 Main St"
     )
 
     # Assert
@@ -665,6 +666,7 @@ async def test_update_user_location_customer_success(user_service, mock_user_rep
     call_args = customer_repo.update.call_args[0]
     assert call_args[0] == "profile-123"
     assert call_args[1]["last_known_location"] == "POINT(3.3792 6.5244)"
+    assert call_args[1]["address_line"] == "123 Main St"
 
 
 # ==========================================
@@ -682,7 +684,7 @@ def test_api_update_location_success(client, user_service):
     # Act
     response = client.put(
         "/api/v1/users/location",
-        json={"latitude": 6.5244, "longitude": 3.3792},
+        json={"latitude": 6.5244, "longitude": 3.3792, "address_line": "123 Main St"},
         headers={"Authorization": f"Bearer {token}"}
     )
 
@@ -693,7 +695,8 @@ def test_api_update_location_success(client, user_service):
         user_id=user_id,
         user_type=UserType.PROVIDER,
         latitude=6.5244,
-        longitude=3.3792
+        longitude=3.3792,
+        address_line="123 Main St"
     )
 
 

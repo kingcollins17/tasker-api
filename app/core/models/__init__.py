@@ -5,7 +5,7 @@ from .users import (
     ProviderProfile,
     CustomerProfile,
     PaymentProvider,
-    ProviderPaymentAccount,
+    PaymentAccount,
 )
 from .admins import (
     AdminRole,
@@ -26,7 +26,7 @@ __all__ = [
     "CustomerProfile",
     "AdminUser",
     "PaymentProvider",
-    "ProviderPaymentAccount",
+    "PaymentAccount",
     "Service",
     "ProviderServiceLink",
     "ServiceCategory",

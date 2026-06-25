@@ -445,14 +445,15 @@ class UserService:
         user_id: str,
         user_type: UserType,
         latitude: float,
-        longitude: float
+        longitude: float,
+        address_line: Optional[str] = None
     ) -> None:
         """Update last known location for customer or provider profile."""
         # from app.core.utils.datetime_helper import utc_now
         
         # Represent the POINT in Well-Known Text (WKT) format
         wkt_point = f"POINT({longitude} {latitude})"
-
+ 
         if user_type == UserType.CUSTOMER:
             profiles = await self.customer_repo.get_all(
                 QueryOptions(filters={"user_id": user_id})
@@ -465,7 +466,7 @@ class UserService:
             profile = profiles[0]
             await self.customer_repo.update(
                 profile.id,
-                {"last_known_location": wkt_point, "updated_at": utc_now()}
+                {"last_known_location": wkt_point, "address_line": address_line, "updated_at": utc_now()}
             )
         elif user_type == UserType.PROVIDER:
             profiles = await self.provider_repo.get_all(
@@ -479,7 +480,7 @@ class UserService:
             profile = profiles[0]
             await self.provider_repo.update(
                 profile.id,
-                {"last_known_location": wkt_point, "updated_at": utc_now()}
+                {"last_known_location": wkt_point, "address_line": address_line, "updated_at": utc_now()}
             )
 
     @log_error()

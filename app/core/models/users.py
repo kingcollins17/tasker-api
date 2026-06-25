@@ -59,6 +59,10 @@ class User(SQLModel, table=True):
         back_populates="user",
         sa_relationship_kwargs={"uselist": False, "lazy": "joined"}
     )
+    payment_accounts: List["PaymentAccount"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 class ProviderProfile(SQLModel, table=True):
     __tablename__ = "provider_profiles"  # type: ignore
@@ -84,22 +88,19 @@ class ProviderProfile(SQLModel, table=True):
         default=None,
         sa_column=Column(PointType, nullable=True)
     )
+    address_line: Optional[str] = None
 
     user: User = Relationship(back_populates="provider_profile")
     services: List[Service] = Relationship(
         back_populates="providers", link_model=ProviderServiceLink
     )
-    payment_accounts: List["ProviderPaymentAccount"] = Relationship(
-        back_populates="provider_profile",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
-    )
 
-class ProviderPaymentAccount(SQLModel, table=True):
-    __tablename__ = "provider_payment_accounts"  # type: ignore
+class PaymentAccount(SQLModel, table=True):
+    __tablename__ = "payment_accounts"  # type: ignore
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    provider_id: str = Field(
-        foreign_key="provider_profiles.id",
+    user_id: str = Field(
+        foreign_key="users.id",
         index=True
     )
     provider: PaymentProvider
@@ -117,7 +118,7 @@ class ProviderPaymentAccount(SQLModel, table=True):
         sa_column=Column(JSON)
     )
     
-    provider_profile: ProviderProfile = Relationship(back_populates="payment_accounts")
+    user: User = Relationship(back_populates="payment_accounts")
 
 
 class CustomerProfile(SQLModel, table=True):
@@ -133,6 +134,7 @@ class CustomerProfile(SQLModel, table=True):
         default=None,
         sa_column=Column(PointType, nullable=True)
     )
+    address_line: Optional[str] = None
     
     user: User = Relationship(back_populates="customer_profile")
 

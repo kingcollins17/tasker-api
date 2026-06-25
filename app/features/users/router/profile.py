@@ -102,7 +102,8 @@ async def update_location(
             user_id=current_user.id,
             user_type=current_user.type,
             latitude=schema.latitude,
-            longitude=schema.longitude
+            longitude=schema.longitude,
+            address_line=schema.address_line
         )
         return BaseAPIResponse[None](
             detail="Location updated successfully.",
