@@ -133,6 +133,10 @@ class UserAuth(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
     kyc_profile: Optional["DoerKYCProfile"] = Relationship(back_populates="user")
+    payment_accounts: List["PaymentAccount"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 ```
 
 ---
@@ -146,6 +150,9 @@ class UserAuth(SQLModel, table=True):
 ### Doer KYC Profile Model Update
 
 ```python
+from datetime import timezone
+from sqlalchemy import Column, JSON
+
 class PaymentProvider(str, enum.Enum):
     PAYSTACK = "paystack"
     MONNIFY = "monnify"
@@ -170,22 +177,19 @@ class DoerKYCProfile(SQLModel, table=True):
     rejection_reason: Optional[str] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     verified_at: Optional[datetime] = None
+    address_line: Optional[str] = None
 
     user: UserAuth = Relationship(back_populates="kyc_profile")
     categories: List[MarketCategory] = Relationship(
         back_populates="profiles", link_model=DoerCategoryLink
     )
-    payment_accounts: List["ProviderPaymentAccount"] = Relationship(
-        back_populates="provider_profile",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
-    )
 
-class ProviderPaymentAccount(SQLModel, table=True):
-    __tablename__ = "provider_payment_accounts"
+class PaymentAccount(SQLModel, table=True):
+    __tablename__ = "payment_accounts"
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    provider_id: str = Field(
-        foreign_key="doerkycprofile.id",
+    user_id: str = Field(
+        foreign_key="userauth.id",
         index=True
     )
     provider: PaymentProvider
@@ -200,7 +204,7 @@ class ProviderPaymentAccount(SQLModel, table=True):
         sa_column=Column(JSON)
     )
     
-    provider_profile: DoerKYCProfile = Relationship(back_populates="payment_accounts")
+    user: UserAuth = Relationship(back_populates="payment_accounts")
 ```
 
 ---
