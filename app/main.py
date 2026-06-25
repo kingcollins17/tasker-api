@@ -40,11 +40,14 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=500,
             content={"message": "An unexpected error occurred.", "details": str(exc)},
-        )
+        ) 
 
     # Include API Routers (when implemented)
     # from app.features.auth.router import router as auth_router
     # app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
+    from app.features.users.router import router as users_router
+    API_V1_PREFIX='/api/v1'
+    app.include_router(users_router, prefix=f"{API_V1_PREFIX}/users", tags=["Users"])
 
     @app.get("/")
     async def read_root():

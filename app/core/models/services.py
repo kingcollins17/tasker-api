@@ -1,5 +1,6 @@
 from uuid import uuid4
 from datetime import datetime, timezone
+from app.core.utils.datetime_helper import utc_now
 from typing import List, Optional, TYPE_CHECKING
 from sqlmodel import Field, SQLModel, Relationship
 
@@ -19,8 +20,8 @@ class ServiceCategory(SQLModel, table=True):
     name: str = Field(unique=True, index=True)  # e.g., "Home Improvement", "Automotive"
     description: Optional[str] = None
     is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
     
     services: List["Service"] = Relationship(
         back_populates="category"
@@ -33,8 +34,8 @@ class Service(SQLModel, table=True):
     name: str = Field(unique=True, index=True)  # e.g., "plumber", "mechanic"
     take_rate: float = Field(default=0.10, description="Dynamic percentage take-rate specific to this service")
     is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
     
     category_id: Optional[str] = Field(
         default=None,

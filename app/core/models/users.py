@@ -1,6 +1,7 @@
 import enum
 from datetime import datetime, timezone
 from uuid import uuid4
+from app.core.utils.datetime_helper import utc_now
 from typing import List, Optional, Any
 from sqlmodel import Field, SQLModel, Relationship
 from sqlalchemy import Column, JSON
@@ -41,20 +42,22 @@ class User(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     phone_number: Optional[str] = Field(unique=True, index=True, default=None)
     email: str = Field(unique=True, index=True)
+    hashed_password: str = Field(nullable=False)
     type: UserType
     is_active: bool = Field(default=False)
     email_verified: bool = Field(default=False)
     phone_verified: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    cloud_messaging_token: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
     
     provider_profile: Optional["ProviderProfile"] = Relationship(
         back_populates="user",
-        sa_relationship_kwargs={"uselist": False}
+        sa_relationship_kwargs={"uselist": False, "lazy": "joined"}
     )
     customer_profile: Optional["CustomerProfile"] = Relationship(
         back_populates="user",
-        sa_relationship_kwargs={"uselist": False}
+        sa_relationship_kwargs={"uselist": False, "lazy": "joined"}
     )
 
 class ProviderProfile(SQLModel, table=True):
@@ -68,13 +71,14 @@ class ProviderProfile(SQLModel, table=True):
     id_number: Optional[str] = None
     id_doc_url: Optional[str] = None
     selfie_url: Optional[str] = None
+    gender: Optional[str] = None
     
     status: KYCStatus = Field(default=KYCStatus.PENDING_SUBMISSION)
     provider_reference: Optional[str] = Field(default=None, index=True)
     liveness_score: Optional[float] = None
     rejection_reason: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
     verified_at: Optional[datetime] = None
     last_known_location: Optional[Any] = Field(
         default=None,
@@ -103,10 +107,10 @@ class ProviderPaymentAccount(SQLModel, table=True):
     account_name: Optional[str] = None
     is_active: bool = Field(default=True)
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=utc_now
     )
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=utc_now
     )
     account_metadata: dict = Field(
         default_factory=dict,
@@ -123,8 +127,8 @@ class CustomerProfile(SQLModel, table=True):
     user_id: str = Field(foreign_key="users.id", unique=True)
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
     last_known_location: Optional[Any] = Field(
         default=None,
         sa_column=Column(PointType, nullable=True)

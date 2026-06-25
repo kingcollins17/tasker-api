@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 from sqlmodel import Field, SQLModel
+from app.core.utils.datetime_helper import utc_now
 
 class AdminRole(str, enum.Enum):
     SUPER_ADMIN = "super_admin"
@@ -18,5 +19,5 @@ class AdminUser(SQLModel, table=True):
     full_name: Optional[str] = None
     role: AdminRole
     is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)

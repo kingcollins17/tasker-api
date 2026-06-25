@@ -22,6 +22,12 @@ async_session_maker = async_sessionmaker(
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency function to obtain an AsyncSession object.
 
+    Note:
+        FastAPI caches dependency results per request by default. If multiple
+        repositories or services depend on get_session within the same request,
+        they will share the exact same AsyncSession instance, ensuring consistent
+        database transactions across components.
+
     Yields:
         AsyncSession: A database session context managed for a single request.
     """
@@ -34,6 +40,14 @@ async def init_db() -> None:
     # Import models to register them on SQLModel.metadata
     import app.core.models  # noqa: F401
 
+    from sqlalchemy import text
+
     async with engine.begin() as conn:
+        # Create PostGIS extension if it doesn't exist (required for geometry types)
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
+        except Exception:
+            # Ignore exceptions (e.g. concurrent creation race conditions or pre-existing extension)
+            pass
         await conn.run_sync(SQLModel.metadata.create_all)
 

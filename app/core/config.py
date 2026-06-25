@@ -6,19 +6,23 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     
     # Security Settings
-    SECRET_KEY: str = "super-secret-key-change-in-production"
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int
     
     # Database Settings
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/tasker_db"
-    
+    DATABASE_URL: str 
     # Redis / Celery Settings
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str 
 
     # Paystack Settings
-    PAYSTACK_SECRET_KEY: str = "sk_test_mock_key"
-    PAYSTACK_BASE_URL: str = "https://api.paystack.co"
+    PAYSTACK_SECRET_KEY: str 
+    PAYSTACK_BASE_URL: str 
+
+    # OTP Settings
+    OTP_EXPIRY_SECONDS: int 
+    OTP_COOLDOWN_SECONDS: int 
+    OTP_MAX_ATTEMPTS: int 
 
     
     # Enable reading from .env file
