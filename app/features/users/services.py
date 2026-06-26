@@ -73,6 +73,11 @@ class UserService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="The specified region does not exist."
                 )
+            if not region.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="We are not active in this region yet"
+                )
 
         # Hash the user's password
         hashed_password = security.hash_password(schema.password)

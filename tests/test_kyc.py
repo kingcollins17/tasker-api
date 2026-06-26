@@ -412,7 +412,9 @@ async def test_register_user_with_valid_region(mock_user_repo, mock_provider_rep
     mock_user_repo.get_all.return_value = []
     
     # Mock region existence check via region_repo.get
-    mock_region_repo.get.return_value = MagicMock()
+    mock_region = MagicMock()
+    mock_region.is_active = True
+    mock_region_repo.get.return_value = mock_region
     
     # Mocking add and session
     mock_user_repo.session = MagicMock()
@@ -469,6 +471,43 @@ async def test_register_user_with_invalid_region(mock_user_repo, mock_region_rep
     mock_region_repo.get.assert_called_once_with("invalid-region")
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
     assert exc_info.value.detail == "The specified region does not exist."
+
+
+@pytest.mark.asyncio
+async def test_register_user_with_inactive_region(mock_user_repo, mock_region_repo):
+    # Arrange
+    from app.features.users.schemas import UserRegister
+    user_service = UserService(
+        user_repo=mock_user_repo,
+        customer_repo=MagicMock(),
+        provider_repo=MagicMock(),
+        otp_service=MagicMock(),
+        region_repo=mock_region_repo,
+    )
+    
+    schema = UserRegister(
+        email="provider@example.com",
+        password="securepassword",
+        type=UserType.PROVIDER,
+        first_name="Jane",
+        last_name="Doe",
+        region_id="inactive-region"
+    )
+    
+    mock_user_repo.get_all.return_value = []
+    
+    # Mock region found but inactive
+    mock_region = MagicMock()
+    mock_region.is_active = False
+    mock_region_repo.get.return_value = mock_region
+    
+    # Act & Assert
+    with pytest.raises(HTTPException) as exc_info:
+        await user_service.register_user(schema)
+        
+    mock_region_repo.get.assert_called_once_with("inactive-region")
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc_info.value.detail == "We are not active in this region yet"
 
 
 # ==========================================

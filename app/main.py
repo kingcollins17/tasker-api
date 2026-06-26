@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.services import get_cache_service
+from app.features.users.router import router as users_router
+from app.features.regions.router import router as regions_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,12 +44,10 @@ def create_app() -> FastAPI:
             content={"message": "An unexpected error occurred.", "details": str(exc)},
         ) 
 
-    # Include API Routers (when implemented)
-    # from app.features.auth.router import router as auth_router
-    # app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
-    from app.features.users.router import router as users_router
-    API_V1_PREFIX='/api/v1'
+    # Include API Routers
+    API_V1_PREFIX = '/api/v1'
     app.include_router(users_router, prefix=f"{API_V1_PREFIX}/users", tags=["Users"])
+    app.include_router(regions_router, prefix=f"{API_V1_PREFIX}/regions", tags=["Regions"])
 
     @app.get("/")
     async def read_root():
@@ -65,3 +65,4 @@ def create_app() -> FastAPI:
     return app
 
 app = create_app()
+
