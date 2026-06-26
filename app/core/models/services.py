@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 class ProviderServiceLink(SQLModel, table=True):
     __tablename__ = "provider_services"  # type: ignore
     
-    provider_id: str = Field(foreign_key="provider_profiles.id", primary_key=True)
+    provider_id: str = Field(foreign_key="users.id", primary_key=True)
     service_id: str = Field(foreign_key="services.id", primary_key=True)
 
 class ServiceCategory(SQLModel, table=True):
@@ -46,5 +46,10 @@ class Service(SQLModel, table=True):
     category: Optional[ServiceCategory] = Relationship(back_populates="services")
     
     providers: List["ProviderProfile"] = Relationship(
-        back_populates="services", link_model=ProviderServiceLink
+        back_populates="services",
+        link_model=ProviderServiceLink,
+        sa_relationship_kwargs={
+            "primaryjoin": "Service.id == ProviderServiceLink.service_id",
+            "secondaryjoin": "ProviderProfile.user_id == ProviderServiceLink.provider_id"
+        }
     )

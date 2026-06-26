@@ -1,18 +1,27 @@
 import re
 from pydantic import BaseModel, Field, field_validator, ConfigDict
-from typing import Optional
+from typing import Optional, Literal, List
 from datetime import datetime
 from app.core.models.users import UserType, KYCStatus
 from app.core.utils.phone_helper import format_nigerian_phone
 
+
 class UserRegister(BaseModel):
     email: str = Field(..., description="Email address of the user")
-    phone_number: Optional[str] = Field(None, description="Optional phone number of the user")
-    password: str = Field(..., min_length=8, description="Password must be at least 8 characters long")
-    type: UserType = Field(..., description="Type of user registering (customer or provider)")
-    first_name: Optional[str] = Field(None, description="First name for profile initialization")
-    last_name: Optional[str] = Field(None, description="Last name for profile initialization")
-    gender: Optional[str] = Field(None, description="Optional gender of the provider")
+    phone_number: Optional[str] = Field(
+        None, description="Optional phone number of the user")
+    password: str = Field(..., min_length=8,
+                          description="Password must be at least 8 characters long")
+    type: UserType = Field(...,
+                           description="Type of user registering (customer or provider)")
+    first_name: Optional[str] = Field(
+        None, description="First name for profile initialization")
+    last_name: Optional[str] = Field(
+        None, description="Last name for profile initialization")
+    gender: Optional[str] = Field(
+        None, description="Optional gender of the provider")
+    region_id: Optional[str] = Field(
+        None, description="Optional region ID for the user")
 
     @field_validator("email")
     @classmethod
@@ -28,17 +37,28 @@ class UserRegister(BaseModel):
             return format_nigerian_phone(v)
         return v
 
+
 class CustomerProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     address_line: Optional[str] = None
 
+
+class ServiceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    name: Optional[str] = None
+    take_rate: Optional[float] = None
+    is_active: Optional[bool] = None
+
+
 class ProviderProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -53,6 +73,8 @@ class ProviderProfileResponse(BaseModel):
     rejection_reason: Optional[str] = None
     verified_at: Optional[datetime] = None
     address_line: Optional[str] = None
+    services: List[ServiceResponse] = []
+
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -66,12 +88,14 @@ class UserResponse(BaseModel):
     phone_verified: bool
     created_at: datetime
     updated_at: datetime
+    region_id: Optional[str] = None
     customer_profile: Optional[CustomerProfileResponse] = None
     provider_profile: Optional[ProviderProfileResponse] = None
 
 
 class RequestEmailOTP(BaseModel):
-    email: str = Field(..., description="Email address of the user requesting OTP")
+    email: str = Field(...,
+                       description="Email address of the user requesting OTP")
 
     @field_validator("email")
     @classmethod
@@ -82,8 +106,10 @@ class RequestEmailOTP(BaseModel):
 
 
 class VerifyEmailOTP(BaseModel):
-    email: str = Field(..., description="Email address of the user verifying OTP")
-    code: str = Field(..., min_length=6, max_length=6, description="6-digit OTP code")
+    email: str = Field(...,
+                       description="Email address of the user verifying OTP")
+    code: str = Field(..., min_length=6, max_length=6,
+                      description="6-digit OTP code")
 
     @field_validator("email")
     @classmethod
@@ -94,7 +120,8 @@ class VerifyEmailOTP(BaseModel):
 
 
 class RequestPhoneOTP(BaseModel):
-    phone_number: str = Field(..., description="Phone number of the user requesting OTP")
+    phone_number: str = Field(...,
+                              description="Phone number of the user requesting OTP")
 
     @field_validator("phone_number")
     @classmethod
@@ -103,8 +130,10 @@ class RequestPhoneOTP(BaseModel):
 
 
 class VerifyPhoneOTP(BaseModel):
-    phone_number: str = Field(..., description="Phone number of the user verifying OTP")
-    code: str = Field(..., min_length=6, max_length=6, description="6-digit OTP code")
+    phone_number: str = Field(...,
+                              description="Phone number of the user verifying OTP")
+    code: str = Field(..., min_length=6, max_length=6,
+                      description="6-digit OTP code")
 
     @field_validator("phone_number")
     @classmethod
@@ -134,7 +163,8 @@ class ProviderProfileUpdate(BaseModel):
     first_name: Optional[str] = Field(None, description="Updated first name")
     last_name: Optional[str] = Field(None, description="Updated last name")
     gender: Optional[str] = Field(None, description="Updated gender")
-    phone_number: Optional[str] = Field(None, description="Updated phone number")
+    phone_number: Optional[str] = Field(
+        None, description="Updated phone number")
 
     @field_validator("phone_number")
     @classmethod
@@ -145,9 +175,12 @@ class ProviderProfileUpdate(BaseModel):
 
 
 class VerifyOTP(BaseModel):
-    target: str = Field(..., description="The email address or phone number the OTP was sent to")
-    channel: str = Field(..., description="The delivery channel ('email' or 'sms')")
-    code: str = Field(..., min_length=6, max_length=6, description="6-digit OTP code")
+    target: str = Field(...,
+                        description="The email address or phone number the OTP was sent to")
+    channel: str = Field(...,
+                         description="The delivery channel ('email' or 'sms')")
+    code: str = Field(..., min_length=6, max_length=6,
+                      description="6-digit OTP code")
 
     @field_validator("channel")
     @classmethod
@@ -164,12 +197,18 @@ class CustomerProfileUpdate(BaseModel):
 
 
 class UpdateLocation(BaseModel):
-    latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude coordinate")
-    longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude coordinate")
-    address_line: Optional[str] = Field(None, description="Optional address line description of the location")
+    latitude: float = Field(..., ge=-90.0, le=90.0,
+                            description="Latitude coordinate")
+    longitude: float = Field(..., ge=-180.0, le=180.0,
+                             description="Longitude coordinate")
+    address_line: Optional[str] = Field(
+        None, description="Optional address line description of the location")
 
 
 class UpdateCloudMessagingToken(BaseModel):
-    token: str = Field(..., description="The cloud messaging registration token")
+    token: str = Field(...,
+                       description="The cloud messaging registration token")
 
 
+class AttachProviderService(BaseModel):
+    service_id: str = Field(..., description="The ID of the service to add")

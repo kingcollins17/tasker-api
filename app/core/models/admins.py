@@ -19,5 +19,6 @@ class AdminUser(SQLModel, table=True):
     full_name: Optional[str] = None
     role: AdminRole
     is_active: bool = Field(default=True)
+    region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

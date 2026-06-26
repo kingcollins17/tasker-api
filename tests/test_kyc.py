@@ -29,6 +29,13 @@ def mock_provider_repo():
 
 
 @pytest.fixture
+def mock_region_repo():
+    repo = MagicMock(spec=Repository)
+    repo.get = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
 def mock_storage_service():
     service = MagicMock(spec=StorageService)
     service.upload_file = AsyncMock(side_effect=lambda file, filename=None: f"https://mock-storage.local/{getattr(file, 'filename', 'uploaded_file')}")
@@ -36,12 +43,13 @@ def mock_storage_service():
 
 
 @pytest.fixture
-def user_service(mock_user_repo, mock_provider_repo):
+def user_service(mock_user_repo, mock_provider_repo, mock_region_repo):
     return UserService(
         user_repo=mock_user_repo,
         customer_repo=MagicMock(),
         provider_repo=mock_provider_repo,
         otp_service=MagicMock(),
+        region_repo=mock_region_repo,
     )
 
 
@@ -378,6 +386,89 @@ async def test_register_provider_with_gender(mock_user_repo, mock_provider_repo)
     assert added_profile.gender == "female"
     assert added_profile.first_name == "Jane"
     assert added_profile.last_name == "Doe"
+
+
+@pytest.mark.asyncio
+async def test_register_user_with_valid_region(mock_user_repo, mock_provider_repo, mock_region_repo):
+    # Arrange
+    from app.features.users.schemas import UserRegister
+    user_service = UserService(
+        user_repo=mock_user_repo,
+        customer_repo=MagicMock(),
+        provider_repo=mock_provider_repo,
+        otp_service=MagicMock(),
+        region_repo=mock_region_repo,
+    )
+    
+    schema = UserRegister(
+        email="provider@example.com",
+        password="securepassword",
+        type=UserType.PROVIDER,
+        first_name="Jane",
+        last_name="Doe",
+        region_id="region-123"
+    )
+    
+    mock_user_repo.get_all.return_value = []
+    
+    # Mock region existence check via region_repo.get
+    mock_region_repo.get.return_value = MagicMock()
+    
+    # Mocking add and session
+    mock_user_repo.session = MagicMock()
+    mock_user_repo.session.refresh = AsyncMock()
+    mock_provider_repo.add = AsyncMock()
+    
+    mock_user = User(
+        id="user-123",
+        email=schema.email,
+        type=schema.type,
+        is_active=True,
+        region_id=schema.region_id
+    )
+    mock_user_repo.add.return_value = mock_user
+    
+    # Act
+    res = await user_service.register_user(schema)
+    
+    # Assert
+    mock_region_repo.get.assert_called_once_with("region-123")
+    assert res.region_id == "region-123"
+
+
+@pytest.mark.asyncio
+async def test_register_user_with_invalid_region(mock_user_repo, mock_region_repo):
+    # Arrange
+    from app.features.users.schemas import UserRegister
+    user_service = UserService(
+        user_repo=mock_user_repo,
+        customer_repo=MagicMock(),
+        provider_repo=MagicMock(),
+        otp_service=MagicMock(),
+        region_repo=mock_region_repo,
+    )
+    
+    schema = UserRegister(
+        email="provider@example.com",
+        password="securepassword",
+        type=UserType.PROVIDER,
+        first_name="Jane",
+        last_name="Doe",
+        region_id="invalid-region"
+    )
+    
+    mock_user_repo.get_all.return_value = []
+    
+    # Mock region not found via region_repo.get
+    mock_region_repo.get.return_value = None
+    
+    # Act & Assert
+    with pytest.raises(HTTPException) as exc_info:
+        await user_service.register_user(schema)
+        
+    mock_region_repo.get.assert_called_once_with("invalid-region")
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc_info.value.detail == "The specified region does not exist."
 
 
 # ==========================================

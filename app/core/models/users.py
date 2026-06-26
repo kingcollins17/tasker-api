@@ -5,19 +5,7 @@ from app.core.utils.datetime_helper import utc_now
 from typing import List, Optional, Any
 from sqlmodel import Field, SQLModel, Relationship
 from sqlalchemy import Column, JSON
-from sqlalchemy.types import TypeDecorator, String
-from geoalchemy2 import Geometry
-
-class PointType(TypeDecorator):
-    impl = Geometry
-    cache_ok = True
-
-    def load_dialect_impl(self, dialect):
-        if dialect is None or dialect.name == "sqlite":
-            return String()
-        else:
-            return Geometry(geometry_type="POINT", srid=4326, spatial_index=True)
-
+from .spatial import PointType
 from .services import ProviderServiceLink, Service
 
 class UserType(str, enum.Enum):
@@ -48,6 +36,9 @@ class User(SQLModel, table=True):
     email_verified: bool = Field(default=False)
     phone_verified: bool = Field(default=False)
     cloud_messaging_token: Optional[str] = Field(default=None)
+    region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True)
+    credibility_score: float = Field(default=25.0)
+    average_ratings: float = Field(default=0.0)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     
@@ -88,11 +79,16 @@ class ProviderProfile(SQLModel, table=True):
         default=None,
         sa_column=Column(PointType, nullable=True)
     )
+    user: User = Relationship(back_populates="provider_profile")
     address_line: Optional[str] = None
 
-    user: User = Relationship(back_populates="provider_profile")
     services: List[Service] = Relationship(
-        back_populates="providers", link_model=ProviderServiceLink
+        back_populates="providers",
+        link_model=ProviderServiceLink,
+        sa_relationship_kwargs={
+            "primaryjoin": "ProviderProfile.user_id == ProviderServiceLink.provider_id",
+            "secondaryjoin": "Service.id == ProviderServiceLink.service_id"
+        }
     )
 
 class PaymentAccount(SQLModel, table=True):

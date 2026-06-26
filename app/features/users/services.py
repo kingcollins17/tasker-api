@@ -1,12 +1,16 @@
 from typing import Optional
 from fastapi import Depends, HTTPException, status
+from sqlmodel import select
 from app.core.repository import GetRepository, Repository, QueryOptions
 from app.core.models.users import User, CustomerProfile, ProviderProfile, UserType, KYCStatus
+from app.core.models.services import Service, ProviderServiceLink
+from app.core.models.regions import Region
 from app.core.utils import security
 from app.core.utils.phone_helper import format_nigerian_phone
 from app.core.logging import log_error
 from app.features.users.schemas import UserRegister, UserLogin
 from app.core.utils.datetime_helper import utc_now
+
         
 from app.core.services import (
     OTPService,
@@ -25,11 +29,13 @@ class UserService:
         customer_repo: Repository[CustomerProfile],
         provider_repo: Repository[ProviderProfile],
         otp_service: OTPService,
+        region_repo: Optional[Repository[Region]] = None,
     ):
         self.user_repo = user_repo
         self.customer_repo = customer_repo
         self.provider_repo = provider_repo
         self.otp_service = otp_service
+        self.region_repo = region_repo
 
     @log_error()
     async def register_user(self, schema: UserRegister) -> User:
@@ -54,6 +60,20 @@ class UserService:
                     detail="A user with this phone number already exists."
                 )
 
+        # Validate region if provided
+        if schema.region_id:
+            if self.region_repo:
+                region = await self.region_repo.get(schema.region_id)
+            else:
+                region_stmt = select(Region).where(Region.id == schema.region_id)
+                region_result = await self.user_repo.execute(region_stmt)
+                region = region_result.first()
+            if not region:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The specified region does not exist."
+                )
+
         # Hash the user's password
         hashed_password = security.hash_password(schema.password)
 
@@ -64,6 +84,7 @@ class UserService:
             hashed_password=hashed_password,
             type=schema.type,
             is_active=True,  # Set active on registration by default
+            region_id=schema.region_id,
         )
         user = await self.user_repo.add(user)
 
@@ -318,11 +339,9 @@ class UserService:
         phone_number: Optional[str] = None,
     ) -> User:
         """Update provider profile details (first_name, last_name, gender) and user details (phone_number)."""
-        from app.core.utils.datetime_helper import utc_now
 
         # 1. Update phone number on the User model if requested
         if phone_number is not None:
-            from app.core.utils.phone_helper import format_nigerian_phone
             phone_number = format_nigerian_phone(phone_number)
             # Check uniqueness
             existing = await self.user_repo.get_all(
@@ -488,6 +507,96 @@ class UserService:
         """Update cloud messaging token for a user."""
         await self.user_repo.update(user_id, {"cloud_messaging_token": token})
 
+    @log_error()
+    async def attach_provider_service(self, user_id: str, service_id: str) -> None:
+        """Associate a service with the provider, enforcing a maximum of 3 active services."""
+        # 1. Fetch provider profile
+        profiles = await self.provider_repo.get_all(
+            QueryOptions(filters={"user_id": user_id})
+        )
+        if not profiles:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider profile not found."
+            )
+
+        # 2. Get the Service instance to verify existence and active status
+        service_stmt = select(Service).where(Service.id == service_id)
+        service_result = await self.provider_repo.execute(service_stmt)
+        service = service_result.first()
+        if not service:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Service not found."
+            )
+        if not service.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot add an inactive service."
+            )
+
+        # 3. Fetch existing links to check limits and duplicate associations
+        link_stmt = select(ProviderServiceLink).where(ProviderServiceLink.provider_id == user_id)
+        link_result = await self.provider_repo.execute(link_stmt)
+        existing_links = list(link_result.all())
+
+        is_already_added = any(link.service_id == service_id for link in existing_links)
+        if is_already_added:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Service is already added to this provider."
+            )
+        if len(existing_links) >= 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A provider can have a maximum of 3 services."
+            )
+        
+        new_link = ProviderServiceLink(provider_id=user_id, service_id=service_id)
+        self.provider_repo.session.add(new_link)
+        await self.provider_repo.session.commit()
+
+    @log_error()
+    async def remove_provider_service(self, user_id: str, service_id: str) -> None:
+        """Remove a service association from the provider."""
+        # 1. Fetch provider profile
+        profiles = await self.provider_repo.get_all(
+            QueryOptions(filters={"user_id": user_id})
+        )
+        if not profiles:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider profile not found."
+            )
+
+        # 2. Get the Service instance
+        service_stmt = select(Service).where(Service.id == service_id)
+        service_result = await self.provider_repo.execute(service_stmt)
+        service = service_result.first()
+        if not service:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Service not found."
+            )
+
+        # 3. Fetch existing links to locate and remove association
+        link_stmt = select(ProviderServiceLink).where(ProviderServiceLink.provider_id == user_id)
+        link_result = await self.provider_repo.execute(link_stmt)
+        existing_links = list(link_result.all())
+
+        is_already_added = any(link.service_id == service_id for link in existing_links)
+        if not is_already_added:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Service is not associated with this provider."
+            )
+        
+        target_link = next(link for link in existing_links if link.service_id == service_id)
+        await self.provider_repo.session.delete(target_link)
+        await self.provider_repo.session.commit()
+
+
+
 
 
 
@@ -496,10 +605,12 @@ def get_user_service(
     customer_repo: Repository[CustomerProfile] = Depends(GetRepository(CustomerProfile)),
     provider_repo: Repository[ProviderProfile] = Depends(GetRepository(ProviderProfile)),
     otp_service: OTPService = Depends(get_otp_service),
+    region_repo: Repository[Region] = Depends(GetRepository(Region)),
 ) -> UserService:
     return UserService(
         user_repo=user_repo,
         customer_repo=customer_repo,
         provider_repo=provider_repo,
         otp_service=otp_service,
+        region_repo=region_repo,
     )

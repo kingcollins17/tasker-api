@@ -16,6 +16,8 @@ from .services import (
     ProviderServiceLink,
     ServiceCategory,
 )
+from .regions import Region
+from .spatial import PointType, GeometryType
 
 __all__ = [
     "UserType",
@@ -30,4 +32,8 @@ __all__ = [
     "Service",
     "ProviderServiceLink",
     "ServiceCategory",
+    "Region",
+    "PointType",
+    "GeometryType",
 ]
+

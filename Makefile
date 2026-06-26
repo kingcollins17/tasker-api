@@ -1,4 +1,4 @@
-.PHONY: dev install test clean
+.PHONY: dev install test clean celery
 
 # Variables
 VENV_DIR = .venv
@@ -6,9 +6,13 @@ PYTHON = $(VENV_DIR)/Scripts/python
 FASTAPI = $(VENV_DIR)/Scripts/fastapi
 PIP = $(VENV_DIR)/Scripts/pip
 PYTEST = $(VENV_DIR)/Scripts/pytest
+CELERY = $(VENV_DIR)/Scripts/celery
 
 dev:
 	$(FASTAPI) dev app/main.py
+
+celery:
+	$(CELERY) -A app.celery_app.celery_app worker --loglevel=info --pool=solo
 
 install:
 	$(PIP) install -r requirements.txt
