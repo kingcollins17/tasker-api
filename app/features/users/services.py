@@ -11,7 +11,7 @@ from app.core.logging import log_error
 from app.features.users.schemas import UserRegister, UserLogin
 from app.core.utils.datetime_helper import utc_now
 
-        
+
 from app.core.services import (
     OTPService,
     get_otp_service,
@@ -29,7 +29,7 @@ class UserService:
         customer_repo: Repository[CustomerProfile],
         provider_repo: Repository[ProviderProfile],
         otp_service: OTPService,
-        region_repo: Optional[Repository[Region]] = None,
+        region_repo: Repository[Region],
     ):
         self.user_repo = user_repo
         self.customer_repo = customer_repo
@@ -62,12 +62,7 @@ class UserService:
 
         # Validate region if provided
         if schema.region_id:
-            if self.region_repo:
-                region = await self.region_repo.get(schema.region_id)
-            else:
-                region_stmt = select(Region).where(Region.id == schema.region_id)
-                region_result = await self.user_repo.execute(region_stmt)
-                region = region_result.first()
+            region = await self.region_repo.get(schema.region_id)
             if not region:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -112,7 +107,7 @@ class UserService:
             await self.provider_repo.add(provider_profile)
 
         # Refresh to populate relationships
-        await self.user_repo.session.refresh(user)
+        await self.user_repo.refresh(user)
         return user
 
     @log_error()
@@ -303,7 +298,7 @@ class UserService:
         selfie_url: str
     ) -> ProviderProfile:
         """Submit KYC details for a provider and transition status to SUBMITTED."""
-        
+
         # Check if provider profile exists
         profiles = await self.provider_repo.get_all(
             QueryOptions(filters={"user_id": user_id})
@@ -357,7 +352,7 @@ class UserService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="A user with this phone number already exists."
                 )
-            
+
             await self.user_repo.update(user_id, {"phone_number": phone_number})
 
         # 2. Update provider profile details
@@ -390,7 +385,7 @@ class UserService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found."
             )
-        await self.user_repo.session.refresh(user)
+        await self.user_repo.refresh(user)
         return user
 
     @log_error()
@@ -433,7 +428,7 @@ class UserService:
         last_name: Optional[str] = None,
     ) -> User:
         """Update customer (seeker) profile details (first_name, last_name)."""
-        
+
         profiles = await self.customer_repo.get_all(
             QueryOptions(filters={"user_id": user_id})
         )
@@ -460,7 +455,7 @@ class UserService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found."
             )
-        await self.user_repo.session.refresh(user)
+        await self.user_repo.refresh(user)
         return user
 
     @log_error()
@@ -474,10 +469,10 @@ class UserService:
     ) -> None:
         """Update last known location for customer or provider profile."""
         # from app.core.utils.datetime_helper import utc_now
-        
+
         # Represent the POINT in Well-Known Text (WKT) format
         wkt_point = f"POINT({longitude} {latitude})"
- 
+
         if user_type == UserType.CUSTOMER:
             profiles = await self.customer_repo.get_all(
                 QueryOptions(filters={"user_id": user_id})
@@ -490,7 +485,8 @@ class UserService:
             profile = profiles[0]
             await self.customer_repo.update(
                 profile.id,
-                {"last_known_location": wkt_point, "address_line": address_line, "updated_at": utc_now()}
+                {"last_known_location": wkt_point,
+                    "address_line": address_line, "updated_at": utc_now()}
             )
         elif user_type == UserType.PROVIDER:
             profiles = await self.provider_repo.get_all(
@@ -504,7 +500,8 @@ class UserService:
             profile = profiles[0]
             await self.provider_repo.update(
                 profile.id,
-                {"last_known_location": wkt_point, "address_line": address_line, "updated_at": utc_now()}
+                {"last_known_location": wkt_point,
+                    "address_line": address_line, "updated_at": utc_now()}
             )
 
     @log_error()
@@ -541,11 +538,13 @@ class UserService:
             )
 
         # 3. Fetch existing links to check limits and duplicate associations
-        link_stmt = select(ProviderServiceLink).where(ProviderServiceLink.provider_id == user_id)
+        link_stmt = select(ProviderServiceLink).where(
+            ProviderServiceLink.provider_id == user_id)
         link_result = await self.provider_repo.execute(link_stmt)
         existing_links = list(link_result.all())
 
-        is_already_added = any(link.service_id == service_id for link in existing_links)
+        is_already_added = any(
+            link.service_id == service_id for link in existing_links)
         if is_already_added:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -556,8 +555,9 @@ class UserService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="A provider can have a maximum of 3 services."
             )
-        
-        new_link = ProviderServiceLink(provider_id=user_id, service_id=service_id)
+
+        new_link = ProviderServiceLink(
+            provider_id=user_id, service_id=service_id)
         self.provider_repo.session.add(new_link)
         await self.provider_repo.session.commit()
 
@@ -585,30 +585,57 @@ class UserService:
             )
 
         # 3. Fetch existing links to locate and remove association
-        link_stmt = select(ProviderServiceLink).where(ProviderServiceLink.provider_id == user_id)
+        link_stmt = select(ProviderServiceLink).where(
+            ProviderServiceLink.provider_id == user_id)
         link_result = await self.provider_repo.execute(link_stmt)
         existing_links = list(link_result.all())
 
-        is_already_added = any(link.service_id == service_id for link in existing_links)
+        is_already_added = any(
+            link.service_id == service_id for link in existing_links)
         if not is_already_added:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Service is not associated with this provider."
             )
-        
-        target_link = next(link for link in existing_links if link.service_id == service_id)
+
+        target_link = next(
+            link for link in existing_links if link.service_id == service_id)
         await self.provider_repo.session.delete(target_link)
         await self.provider_repo.session.commit()
 
+    @log_error()
+    async def update_user_region(self, user_id: str, region_id: Optional[str]) -> User:
+        """Update the region for a user after validating it exists and is active."""
+        if region_id is not None:
+            region = await self.region_repo.get(region_id)
+            if not region:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="The specified region does not exist."
+                )
+            if not region.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="We are not active in this region yet"
+                )
 
-
-
+        await self.user_repo.update(user_id, {"region_id": region_id})
+        user = await self.user_repo.get(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found."
+            )
+        await self.user_repo.refresh(user)
+        return user
 
 
 def get_user_service(
     user_repo: Repository[User] = Depends(GetRepository(User)),
-    customer_repo: Repository[CustomerProfile] = Depends(GetRepository(CustomerProfile)),
-    provider_repo: Repository[ProviderProfile] = Depends(GetRepository(ProviderProfile)),
+    customer_repo: Repository[CustomerProfile] = Depends(
+        GetRepository(CustomerProfile)),
+    provider_repo: Repository[ProviderProfile] = Depends(
+        GetRepository(ProviderProfile)),
     otp_service: OTPService = Depends(get_otp_service),
     region_repo: Repository[Region] = Depends(GetRepository(Region)),
 ) -> UserService:

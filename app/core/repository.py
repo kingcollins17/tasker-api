@@ -75,6 +75,10 @@ class Repository(Generic[T]):
         await self.session.refresh(entity)
         return entity
 
+    async def refresh(self, entity: T) -> None:
+        """Refresh the attributes of the given entity from the database."""
+        await self.session.refresh(entity)
+
     async def delete(self, id: Any) -> bool:
         """Delete an entity from the database by its ID."""
         entity = await self.get(id)

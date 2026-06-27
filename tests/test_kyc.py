@@ -352,6 +352,7 @@ async def test_register_provider_with_gender(mock_user_repo, mock_provider_repo)
         customer_repo=MagicMock(),
         provider_repo=mock_provider_repo,
         otp_service=MagicMock(),
+        region_repo=MagicMock(),
     )
     
     schema = UserRegister(

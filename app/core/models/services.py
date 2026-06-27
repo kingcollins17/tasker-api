@@ -19,6 +19,7 @@ class ServiceCategory(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     name: str = Field(unique=True, index=True)  # e.g., "Home Improvement", "Automotive"
     description: Optional[str] = None
+    image_url: Optional[str] = Field(default=None)
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -32,6 +33,7 @@ class Service(SQLModel, table=True):
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     name: str = Field(unique=True, index=True)  # e.g., "plumber", "mechanic"
+    image_url: Optional[str] = Field(default=None)
     take_rate: float = Field(default=0.10, description="Dynamic percentage take-rate specific to this service")
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=utc_now)

@@ -1,3 +1,5 @@
+import multiprocessing
+import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,14 +11,59 @@ from app.core.services import get_cache_service
 from app.features.users.router import router as users_router
 from app.features.regions.router import router as regions_router
 
+# Global variables to hold the celery processes references
+celery_process = None
+celery_beat_process = None
+
+def run_celery_worker():
+    from app.celery_app import celery_app
+    args = ["worker", "--loglevel=info"]
+    if sys.platform == "win32":
+        args.append("--pool=solo")
+    celery_app.worker_main(args)
+
+def run_celery_beat():
+    from app.celery_app import celery_app
+    celery_app.start(["beat", "--loglevel=info"])
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global celery_process, celery_beat_process
     # Startup logic
     print(f"Starting up {settings.PROJECT_NAME}...")
     await init_db()
+    
+    # Start Celery worker and beat processes using multiprocessing
+    try:
+        multiprocessing.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass
+        
+    celery_process = multiprocessing.Process(target=run_celery_worker, daemon=True)
+    celery_process.start()
+    print("Celery worker process started.")
+
+    celery_beat_process = multiprocessing.Process(target=run_celery_beat, daemon=True)
+    celery_beat_process.start()
+    print("Celery beat process started.")
+    
     yield
     # Shutdown logic
     print(f"Shutting down {settings.PROJECT_NAME}...")
+    if celery_process and celery_process.is_alive():
+        print("Terminating Celery worker process...")
+        celery_process.terminate()
+        celery_process.join(timeout=5)
+        if celery_process.is_alive():
+            celery_process.kill()
+
+    if celery_beat_process and celery_beat_process.is_alive():
+        print("Terminating Celery beat process...")
+        celery_beat_process.terminate()
+        celery_beat_process.join(timeout=5)
+        if celery_beat_process.is_alive():
+            celery_beat_process.kill()
+
     await get_cache_service().close()
 
 def create_app() -> FastAPI:

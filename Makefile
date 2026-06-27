@@ -1,4 +1,4 @@
-.PHONY: dev install test clean celery
+.PHONY: dev install test clean celery celery-beat
 
 # Variables
 VENV_DIR = .venv
@@ -13,6 +13,9 @@ dev:
 
 celery:
 	$(CELERY) -A app.celery_app.celery_app worker --loglevel=info --pool=solo
+
+celery-beat:
+	$(CELERY) -A app.celery_app.celery_app beat --loglevel=info
 
 install:
 	$(PIP) install -r requirements.txt

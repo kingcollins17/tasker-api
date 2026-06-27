@@ -6,7 +6,7 @@ from app.core.api_response import BaseAPIResponse
 from app.core.deps import get_current_user, GetCurrentUser
 from app.core.models.users import UserType
 from app.core.models.services import Service, ProviderServiceLink
-from app.features.users.schemas import UserResponse, ProviderProfileUpdate, CustomerProfileUpdate, UpdateLocation, UpdateCloudMessagingToken, AttachProviderService, ServiceResponse
+from app.features.users.schemas import UserResponse, ProviderProfileUpdate, CustomerProfileUpdate, UpdateLocation, UpdateCloudMessagingToken, AttachProviderService, ServiceResponse, UpdateRegion
 from app.features.users.services import UserService, get_user_service
 
 router = APIRouter()
@@ -255,6 +255,38 @@ async def remove_provider_service(
     except Exception as e:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return BaseAPIResponse[None](
+            detail=f"An unexpected error occurred: {str(e)}",
+            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@router.put("/region", response_model=BaseAPIResponse[UserResponse], status_code=status.HTTP_200_OK)
+async def update_region(
+    schema: UpdateRegion,
+    response: Response,
+    current_user: UserResponse = Depends(get_current_user),
+    user_service: UserService = Depends(get_user_service)
+):
+    """Update the region ID of the currently authenticated user."""
+    try:
+        updated_user = await user_service.update_user_region(
+            user_id=current_user.id,
+            region_id=schema.region_id
+        )
+        return BaseAPIResponse[UserResponse](
+            data=UserResponse.model_validate(updated_user),
+            detail="Region updated successfully.",
+            statusCode=status.HTTP_200_OK
+        )
+    except HTTPException as e:
+        response.status_code = e.status_code
+        return BaseAPIResponse(
+            detail=e.detail,
+            statusCode=e.status_code
+        )
+    except Exception as e:
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return BaseAPIResponse[UserResponse](
             detail=f"An unexpected error occurred: {str(e)}",
             statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
