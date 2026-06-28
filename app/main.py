@@ -10,7 +10,7 @@ from app.core.database import init_db
 from app.core.services import get_cache_service
 from app.features.users.router import router as users_router
 from app.features.regions.router import router as regions_router
-
+from app.features.services.routers import router as services_router
 # Global variables to hold the celery processes references
 celery_process = None
 celery_beat_process = None
@@ -102,6 +102,8 @@ def create_app() -> FastAPI:
         users_router, prefix=f"{API_V1_PREFIX}/users", tags=["Users"])
     app.include_router(
         regions_router, prefix=f"{API_V1_PREFIX}/regions", tags=["Regions"])
+    app.include_router(
+        services_router, prefix=f"{API_V1_PREFIX}")
 
     @app.get("/")
     async def read_root():
