@@ -1,3 +1,4 @@
+import traceback
 from fastapi import APIRouter, Depends, status, Response, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from app.core.api_response import BaseAPIResponse
@@ -24,19 +25,17 @@ async def register(
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(user),
             detail="User registered successfully.",
-            statusCode=status.HTTP_201_CREATED
+            status_code=status.HTTP_201_CREATED
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[UserResponse](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[UserResponse](
+        print(e)
+        traceback.print_exc()
+        raise HTTPException(
             detail="An unexpected error occurred during registration.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
@@ -47,7 +46,8 @@ async def login(
 ):
     """Authenticate a user and return a JWT access token."""
     try:
-        schema = UserLogin(email=form_data.username, password=form_data.password)
+        schema = UserLogin(email=form_data.username,
+                           password=form_data.password)
         login_data = await user_service.login_user(schema)
         return LoginResponse(
             access_token=login_data["access_token"],

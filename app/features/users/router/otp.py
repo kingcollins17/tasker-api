@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, status, Response, HTTPException
+from app.core.error_handler import AppErrorHandler
 from app.core.api_response import BaseAPIResponse
 from app.features.users.schemas import (
     UserResponse,
@@ -27,16 +28,12 @@ async def request_email_otp(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[None](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[None](
-            detail="An unexpected error occurred while requesting email OTP.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while requesting email OTP."
         )
 
 
@@ -55,16 +52,12 @@ async def verify_email(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[UserResponse](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[UserResponse](
-            detail="An unexpected error occurred during email verification.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during email verification."
         )
 
 
@@ -82,16 +75,12 @@ async def request_phone_otp(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[None](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[None](
-            detail="An unexpected error occurred while requesting phone OTP.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while requesting phone OTP."
         )
 
 
@@ -110,16 +99,12 @@ async def verify_phone(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[UserResponse](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[UserResponse](
-            detail="An unexpected error occurred during phone verification.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during phone verification."
         )
 
 
@@ -138,17 +123,11 @@ async def verify_otp(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[bool](
-            data=False,
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[bool](
-            data=False,
-            detail="An unexpected error occurred during OTP verification.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during OTP verification."
         )
 

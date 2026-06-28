@@ -1,6 +1,7 @@
 import inspect
 from fastapi import HTTPException
 from fastapi import APIRouter, Depends, status, Response
+from app.core.error_handler import AppErrorHandler
 from sqlmodel import select
 from app.core.api_response import BaseAPIResponse
 from app.core.deps import get_current_user, GetCurrentUser
@@ -51,16 +52,12 @@ async def get_me(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[UserResponse](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[UserResponse](
-            detail=f"An unexpected error occurred: {str(e)}",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
         )
 
 
@@ -87,16 +84,12 @@ async def update_profile(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[UserResponse](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[UserResponse](
-            detail="An unexpected error occurred during profile update.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during profile update."
         )
 
 
@@ -121,16 +114,12 @@ async def update_seeker_profile(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[UserResponse](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[UserResponse](
-            detail="An unexpected error occurred during profile update.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during profile update."
         )
 
 
@@ -155,16 +144,12 @@ async def update_location(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[None](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[None](
-            detail="An unexpected error occurred while updating location.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while updating location."
         )
 
 
@@ -183,16 +168,12 @@ async def update_cloud_messaging_token(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[None](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[None](
-            detail="An unexpected error occurred while updating the token.",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while updating the token."
         )
 
 
@@ -215,16 +196,12 @@ async def attach_provider_service(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[None](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[None](
-            detail=f"An unexpected error occurred: {str(e)}",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
         )
 
 
@@ -247,16 +224,12 @@ async def remove_provider_service(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse[None](
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[None](
-            detail=f"An unexpected error occurred: {str(e)}",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
         )
 
 
@@ -279,14 +252,10 @@ async def update_region(
             statusCode=status.HTTP_200_OK
         )
     except HTTPException as e:
-        response.status_code = e.status_code
-        return BaseAPIResponse(
-            detail=e.detail,
-            statusCode=e.status_code
-        )
+        raise e
     except Exception as e:
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        return BaseAPIResponse[UserResponse](
-            detail=f"An unexpected error occurred: {str(e)}",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
         )

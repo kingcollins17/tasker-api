@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, status, UploadFile, File, Form, HTTPException
+from app.core.error_handler import AppErrorHandler
 from app.core.api_response import BaseAPIResponse
 from app.core.deps import GetCurrentUser
 from app.core.models.users import UserType, KYCStatus
@@ -50,6 +51,7 @@ async def submit_kyc(
     except HTTPException as e:
         raise e
     except Exception as e:
+        AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred during KYC submission."
@@ -61,13 +63,22 @@ async def get_kyc_status(
     current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER))
 ):
     """Retrieve the KYC status and submission details of the current provider."""
-    if not current_user.provider_profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Provider profile not found."
+    try:
+        if not current_user.provider_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider profile not found."
+            )
+        return BaseAPIResponse[ProviderProfileResponse](
+            data=current_user.provider_profile,
+            detail="KYC details retrieved successfully.",
+            statusCode=status.HTTP_200_OK
         )
-    return BaseAPIResponse[ProviderProfileResponse](
-        data=current_user.provider_profile,
-        detail="KYC details retrieved successfully.",
-        statusCode=status.HTTP_200_OK
-    )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during KYC status retrieval."
+        )

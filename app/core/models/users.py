@@ -87,7 +87,8 @@ class ProviderProfile(SQLModel, table=True):
         link_model=ProviderServiceLink,
         sa_relationship_kwargs={
             "primaryjoin": "ProviderProfile.user_id == ProviderServiceLink.provider_id",
-            "secondaryjoin": "Service.id == ProviderServiceLink.service_id"
+            "secondaryjoin": "Service.id == ProviderServiceLink.service_id",
+            "lazy": "selectin"
         }
     )
 
