@@ -330,6 +330,78 @@ class UserService:
         return updated_profile
 
     @log_error()
+    async def submit_kyc_selfie(
+        self,
+        user_id: str,
+        selfie_url: str
+    ) -> ProviderProfile:
+        """Submit KYC selfie."""
+        profiles = await self.provider_repo.get_all(
+            QueryOptions(filters={"user_id": user_id})
+        )
+        if not profiles:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider profile not found."
+            )
+        profile = profiles[0]
+
+        updated_profile = await self.provider_repo.update(
+            profile.id,
+            {
+                "selfie_url": selfie_url,
+                "updated_at": utc_now()
+            }
+        )
+        if not updated_profile:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update provider profile."
+            )
+        return updated_profile
+
+    @log_error()
+    async def submit_kyc_document(
+        self,
+        user_id: str,
+        id_type: str,
+        id_number: str,
+        id_doc_url: str
+    ) -> ProviderProfile:
+        """Submit KYC document details and transition status to SUBMITTED if selfie is also present."""
+        profiles = await self.provider_repo.get_all(
+            QueryOptions(filters={"user_id": user_id})
+        )
+        if not profiles:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider profile not found."
+            )
+        profile = profiles[0]
+
+        # Transition status to SUBMITTED if selfie is already completed
+        new_status = profile.status
+        if profile.selfie_url:
+            new_status = KYCStatus.SUBMITTED
+
+        updated_profile = await self.provider_repo.update(
+            profile.id,
+            {
+                "id_type": id_type,
+                "id_number": id_number,
+                "id_doc_url": id_doc_url,
+                "status": new_status,
+                "updated_at": utc_now()
+            }
+        )
+        if not updated_profile:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update provider profile."
+            )
+        return updated_profile
+
+    @log_error()
     async def update_provider_profile(
         self,
         user_id: str,

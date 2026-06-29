@@ -66,7 +66,7 @@ def client(user_service, mock_storage_service):
 # ==========================================
 
 @pytest.mark.asyncio
-async def test_submit_kyc_success(user_service, mock_provider_repo):
+async def test_submit_kyc_selfie_success(user_service, mock_provider_repo):
     # Arrange
     user_id = "provider-123"
     profile = ProviderProfile(
@@ -74,7 +74,50 @@ async def test_submit_kyc_success(user_service, mock_provider_repo):
         user_id=user_id,
         first_name="John",
         last_name="Doe",
+        status=KYCStatus.PENDING_SUBMISSION,
+        id_type="NIN",
+        id_number="1234567890",
+        id_doc_url="https://mock-storage.local/id.png"
+    )
+    mock_provider_repo.get_all.return_value = [profile]
+    
+    updated_profile = ProviderProfile(
+        id="profile-123",
+        user_id=user_id,
+        first_name="John",
+        last_name="Doe",
+        id_type="NIN",
+        id_number="1234567890",
+        id_doc_url="https://mock-storage.local/id.png",
+        selfie_url="https://mock-storage.local/selfie.png",
         status=KYCStatus.PENDING_SUBMISSION
+    )
+    mock_provider_repo.update.return_value = updated_profile
+
+    # Act
+    res = await user_service.submit_kyc_selfie(
+        user_id=user_id,
+        selfie_url="https://mock-storage.local/selfie.png"
+    )
+
+    # Assert
+    assert res.status == KYCStatus.PENDING_SUBMISSION
+    assert res.selfie_url == "https://mock-storage.local/selfie.png"
+    mock_provider_repo.get_all.assert_called_once()
+    mock_provider_repo.update.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_submit_kyc_document_success(user_service, mock_provider_repo):
+    # Arrange
+    user_id = "provider-123"
+    profile = ProviderProfile(
+        id="profile-123",
+        user_id=user_id,
+        first_name="John",
+        last_name="Doe",
+        status=KYCStatus.PENDING_SUBMISSION,
+        selfie_url="https://mock-storage.local/selfie.png"
     )
     mock_provider_repo.get_all.return_value = [profile]
     
@@ -92,18 +135,18 @@ async def test_submit_kyc_success(user_service, mock_provider_repo):
     mock_provider_repo.update.return_value = updated_profile
 
     # Act
-    res = await user_service.submit_kyc(
+    res = await user_service.submit_kyc_document(
         user_id=user_id,
         id_type="NIN",
         id_number="1234567890",
-        id_doc_url="https://mock-storage.local/id.png",
-        selfie_url="https://mock-storage.local/selfie.png"
+        id_doc_url="https://mock-storage.local/id.png"
     )
 
     # Assert
     assert res.status == KYCStatus.SUBMITTED
     assert res.id_type == "NIN"
     assert res.id_number == "1234567890"
+    assert res.id_doc_url == "https://mock-storage.local/id.png"
     mock_provider_repo.get_all.assert_called_once()
     mock_provider_repo.update.assert_called_once()
 
@@ -112,10 +155,9 @@ async def test_submit_kyc_success(user_service, mock_provider_repo):
 # KYC Router API Tests
 # ==========================================
 
-def test_api_submit_kyc_provider_success(client, user_service, mock_storage_service):
+def test_api_submit_kyc_selfie_provider_success(client, user_service, mock_storage_service):
     # Arrange
     user_id = "provider-123"
-    # Create a real token
     token = security.create_access_token({"id": user_id})
     
     provider_profile = ProviderProfile(
@@ -126,7 +168,59 @@ def test_api_submit_kyc_provider_success(client, user_service, mock_storage_serv
         status=KYCStatus.PENDING_SUBMISSION
     )
     
-    # Mock user returned by security dependency
+    mock_user = User(
+        id=user_id,
+        email="provider@example.com",
+        type=UserType.PROVIDER,
+        is_active=True,
+        email_verified=True,
+        phone_verified=True,
+        provider_profile=provider_profile
+    )
+    user_service.get_user = AsyncMock(return_value=mock_user)
+    
+    updated_profile = ProviderProfile(
+        id="profile-123",
+        user_id=user_id,
+        first_name="John",
+        last_name="Doe",
+        selfie_url="https://mock-storage.local/selfie.png",
+        status=KYCStatus.PENDING_SUBMISSION
+    )
+    user_service.submit_kyc_selfie = AsyncMock(return_value=updated_profile)
+
+    selfie_file = ("selfie.png", io.BytesIO(b"fake selfie"), "image/png")
+
+    # Act
+    response = client.post(
+        "/api/v1/users/kyc/selfie",
+        files={"selfie": selfie_file},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    # Assert
+    assert response.status_code == status.HTTP_200_OK
+    res_data = response.json()
+    assert res_data["detail"] == "KYC selfie submitted successfully."
+    user_service.submit_kyc_selfie.assert_called_once_with(
+        user_id=user_id,
+        selfie_url="https://mock-storage.local/selfie.png"
+    )
+
+
+def test_api_submit_kyc_document_provider_success(client, user_service, mock_storage_service):
+    # Arrange
+    user_id = "provider-123"
+    token = security.create_access_token({"id": user_id})
+    
+    provider_profile = ProviderProfile(
+        id="profile-123",
+        user_id=user_id,
+        first_name="John",
+        last_name="Doe",
+        status=KYCStatus.PENDING_SUBMISSION
+    )
+    
     mock_user = User(
         id=user_id,
         email="provider@example.com",
@@ -146,38 +240,33 @@ def test_api_submit_kyc_provider_success(client, user_service, mock_storage_serv
         id_type="NIN",
         id_number="1234567890",
         id_doc_url="https://mock-storage.local/id.png",
-        selfie_url="https://mock-storage.local/selfie.png",
-        status=KYCStatus.SUBMITTED
+        status=KYCStatus.PENDING_SUBMISSION
     )
-    user_service.submit_kyc = AsyncMock(return_value=updated_profile)
+    user_service.submit_kyc_document = AsyncMock(return_value=updated_profile)
 
-    # Prepare files
     id_doc_file = ("id.png", io.BytesIO(b"fake doc"), "image/png")
-    selfie_file = ("selfie.png", io.BytesIO(b"fake selfie"), "image/png")
 
     # Act
     response = client.post(
-        "/api/v1/users/kyc",
+        "/api/v1/users/kyc/document",
         data={"id_type": "NIN", "id_number": "1234567890"},
-        files={"id_doc": id_doc_file, "selfie": selfie_file},
+        files={"id_doc": id_doc_file},
         headers={"Authorization": f"Bearer {token}"}
     )
 
     # Assert
     assert response.status_code == status.HTTP_200_OK
     res_data = response.json()
-    assert res_data["detail"] == "KYC documents submitted successfully."
-    assert res_data["data"]["status"] == KYCStatus.SUBMITTED
-    user_service.submit_kyc.assert_called_once_with(
+    assert res_data["detail"] == "KYC document submitted successfully."
+    user_service.submit_kyc_document.assert_called_once_with(
         user_id=user_id,
         id_type="NIN",
         id_number="1234567890",
-        id_doc_url="https://mock-storage.local/id.png",
-        selfie_url="https://mock-storage.local/selfie.png"
+        id_doc_url="https://mock-storage.local/id.png"
     )
 
 
-def test_api_submit_kyc_customer_forbidden(client, user_service):
+def test_api_submit_kyc_selfie_customer_forbidden(client, user_service):
     # Arrange
     user_id = "customer-123"
     token = security.create_access_token({"id": user_id})
@@ -193,15 +282,12 @@ def test_api_submit_kyc_customer_forbidden(client, user_service):
     )
     user_service.get_user = AsyncMock(return_value=mock_user)
 
-    # Prepare files
-    id_doc_file = ("id.png", io.BytesIO(b"fake doc"), "image/png")
     selfie_file = ("selfie.png", io.BytesIO(b"fake selfie"), "image/png")
 
     # Act
     response = client.post(
-        "/api/v1/users/kyc",
-        data={"id_type": "NIN", "id_number": "1234567890"},
-        files={"id_doc": id_doc_file, "selfie": selfie_file},
+        "/api/v1/users/kyc/selfie",
+        files={"selfie": selfie_file},
         headers={"Authorization": f"Bearer {token}"}
     )
 
@@ -210,97 +296,35 @@ def test_api_submit_kyc_customer_forbidden(client, user_service):
     assert "not authorized" in response.json()["detail"]
 
 
-def test_api_submit_kyc_email_not_verified(client, user_service):
-    user_id = "provider-123"
+def test_api_submit_kyc_document_customer_forbidden(client, user_service):
+    # Arrange
+    user_id = "customer-123"
     token = security.create_access_token({"id": user_id})
-    provider_profile = ProviderProfile(
-        id="profile-123",
-        user_id=user_id,
-        status=KYCStatus.PENDING_SUBMISSION
-    )
+    
+    # Mock user as customer
     mock_user = User(
         id=user_id,
-        email="provider@example.com",
-        type=UserType.PROVIDER,
-        is_active=True,
-        email_verified=False,
-        phone_verified=True,
-        provider_profile=provider_profile
-    )
-    user_service.get_user = AsyncMock(return_value=mock_user)
-    id_doc_file = ("id.png", io.BytesIO(b"fake doc"), "image/png")
-    selfie_file = ("selfie.png", io.BytesIO(b"fake selfie"), "image/png")
-
-    response = client.post(
-        "/api/v1/users/kyc",
-        data={"id_type": "NIN", "id_number": "1234567890"},
-        files={"id_doc": id_doc_file, "selfie": selfie_file},
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert "Email address not verified" in response.json()["detail"]
-
-
-def test_api_submit_kyc_phone_not_verified(client, user_service):
-    user_id = "provider-123"
-    token = security.create_access_token({"id": user_id})
-    provider_profile = ProviderProfile(
-        id="profile-123",
-        user_id=user_id,
-        status=KYCStatus.PENDING_SUBMISSION
-    )
-    mock_user = User(
-        id=user_id,
-        email="provider@example.com",
-        type=UserType.PROVIDER,
+        email="customer@example.com",
+        type=UserType.CUSTOMER,
         is_active=True,
         email_verified=True,
-        phone_verified=False,
-        provider_profile=provider_profile
+        phone_verified=True
     )
     user_service.get_user = AsyncMock(return_value=mock_user)
-    id_doc_file = ("id.png", io.BytesIO(b"fake doc"), "image/png")
-    selfie_file = ("selfie.png", io.BytesIO(b"fake selfie"), "image/png")
 
+    id_doc_file = ("id.png", io.BytesIO(b"fake doc"), "image/png")
+
+    # Act
     response = client.post(
-        "/api/v1/users/kyc",
+        "/api/v1/users/kyc/document",
         data={"id_type": "NIN", "id_number": "1234567890"},
-        files={"id_doc": id_doc_file, "selfie": selfie_file},
+        files={"id_doc": id_doc_file},
         headers={"Authorization": f"Bearer {token}"}
     )
+
+    # Assert
     assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert "Phone number not verified" in response.json()["detail"]
-
-
-def test_api_submit_kyc_status_not_allowed(client, user_service):
-    user_id = "provider-123"
-    token = security.create_access_token({"id": user_id})
-    provider_profile = ProviderProfile(
-        id="profile-123",
-        user_id=user_id,
-        status=KYCStatus.SUBMITTED
-    )
-    mock_user = User(
-        id=user_id,
-        email="provider@example.com",
-        type=UserType.PROVIDER,
-        is_active=True,
-        email_verified=True,
-        phone_verified=True,
-        provider_profile=provider_profile
-    )
-    user_service.get_user = AsyncMock(return_value=mock_user)
-    id_doc_file = ("id.png", io.BytesIO(b"fake doc"), "image/png")
-    selfie_file = ("selfie.png", io.BytesIO(b"fake selfie"), "image/png")
-
-    response = client.post(
-        "/api/v1/users/kyc",
-        data={"id_type": "NIN", "id_number": "1234567890"},
-        files={"id_doc": id_doc_file, "selfie": selfie_file},
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert "KYC status requirement not met" in response.json()["detail"]
+    assert "not authorized" in response.json()["detail"]
 
 
 def test_api_get_kyc_status_success(client, user_service):

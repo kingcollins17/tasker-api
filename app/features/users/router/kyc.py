@@ -10,11 +10,12 @@ from app.core.services.storage import StorageService, get_storage_service
 router = APIRouter()
 
 
-@router.post("/kyc", response_model=BaseAPIResponse[ProviderProfileResponse], status_code=status.HTTP_200_OK)
-async def submit_kyc(
-    id_type: str = Form(..., description="Type of ID card (e.g., NIN, BVN)"),
-    id_number: str = Form(..., description="ID card number"),
-    id_doc: UploadFile = File(..., description="ID document image/PDF"),
+@router.post(
+    "/kyc/selfie",
+    response_model=BaseAPIResponse[ProviderProfileResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def submit_kyc_selfie(
     selfie: UploadFile = File(..., description="Selfie for liveness verification"),
     current_user: UserResponse = Depends(
         GetCurrentUser(
@@ -22,31 +23,23 @@ async def submit_kyc(
             required_active=True,
             required_email_verified=True,
             required_phone_verified=True,
-            allowed_kyc_statuses=[KYCStatus.PENDING_SUBMISSION, KYCStatus.FAILED]
         )
     ),
     user_service: UserService = Depends(get_user_service),
-    storage_service: StorageService = Depends(get_storage_service)
+    storage_service: StorageService = Depends(get_storage_service),
 ):
-    """Submit KYC verification details and documents for a provider."""
+    """Submit KYC selfie for liveness verification."""
     try:
-        # Upload documents to storage service
-        id_doc_url = await storage_service.upload_file(id_doc)
         selfie_url = await storage_service.upload_file(selfie)
-        
-        # Save KYC information in provider profile
-        profile = await user_service.submit_kyc(
-            user_id=current_user.id,
-            id_type=id_type,
-            id_number=id_number,
-            id_doc_url=id_doc_url,
-            selfie_url=selfie_url
+
+        profile = await user_service.submit_kyc_selfie(
+            user_id=current_user.id, selfie_url=selfie_url
         )
-        
+
         return BaseAPIResponse[ProviderProfileResponse](
             data=ProviderProfileResponse.model_validate(profile),
-            detail="KYC documents submitted successfully.",
-            statusCode=status.HTTP_200_OK
+            detail="KYC selfie submitted successfully.",
+            statusCode=status.HTTP_200_OK,
         )
     except HTTPException as e:
         raise e
@@ -54,25 +47,78 @@ async def submit_kyc(
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred during KYC submission."
+            detail="An unexpected error occurred during KYC selfie submission.",
         )
 
 
-@router.get("/kyc", response_model=BaseAPIResponse[ProviderProfileResponse], status_code=status.HTTP_200_OK)
+@router.post(
+    "/kyc/document",
+    response_model=BaseAPIResponse[ProviderProfileResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def submit_kyc_document(
+    id_type: str = Form(..., description="Type of ID card (e.g., NIN, BVN)"),
+    id_number: str = Form(..., description="ID card number"),
+    id_doc: UploadFile = File(..., description="ID document image/PDF"),
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.PROVIDER,
+            required_active=True,
+            required_email_verified=True,
+            required_phone_verified=True,
+            allowed_kyc_statuses=[KYCStatus.PENDING_SUBMISSION, KYCStatus.FAILED],
+        )
+    ),
+    user_service: UserService = Depends(get_user_service),
+    storage_service: StorageService = Depends(get_storage_service),
+):
+    """Submit KYC verification document details."""
+    try:
+        id_doc_url = await storage_service.upload_file(id_doc)
+
+        profile = await user_service.submit_kyc_document(
+            user_id=current_user.id,
+            id_type=id_type,
+            id_number=id_number,
+            id_doc_url=id_doc_url,
+        )
+
+        return BaseAPIResponse[ProviderProfileResponse](
+            data=ProviderProfileResponse.model_validate(profile),
+            detail="KYC document submitted successfully.",
+            statusCode=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during KYC document submission.",
+        )
+
+
+@router.get(
+    "/kyc",
+    response_model=BaseAPIResponse[ProviderProfileResponse],
+    status_code=status.HTTP_200_OK,
+)
 async def get_kyc_status(
-    current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER))
+    current_user: UserResponse = Depends(
+        GetCurrentUser(required_type=UserType.PROVIDER)
+    ),
 ):
     """Retrieve the KYC status and submission details of the current provider."""
     try:
         if not current_user.provider_profile:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Provider profile not found."
+                detail="Provider profile not found.",
             )
         return BaseAPIResponse[ProviderProfileResponse](
             data=current_user.provider_profile,
             detail="KYC details retrieved successfully.",
-            statusCode=status.HTTP_200_OK
+            statusCode=status.HTTP_200_OK,
         )
     except HTTPException as e:
         raise e
@@ -80,5 +126,5 @@ async def get_kyc_status(
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred during KYC status retrieval."
+            detail="An unexpected error occurred during KYC status retrieval.",
         )
