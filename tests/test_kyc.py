@@ -50,6 +50,8 @@ def user_service(mock_user_repo, mock_provider_repo, mock_region_repo):
         provider_repo=mock_provider_repo,
         otp_service=MagicMock(),
         region_repo=mock_region_repo,
+        location_repo=MagicMock(),
+        device_repo=MagicMock(),
     )
 
 
@@ -377,6 +379,8 @@ async def test_register_provider_with_gender(mock_user_repo, mock_provider_repo)
         provider_repo=mock_provider_repo,
         otp_service=MagicMock(),
         region_repo=MagicMock(),
+        location_repo=MagicMock(),
+        device_repo=MagicMock(),
     )
     
     schema = UserRegister(
@@ -423,6 +427,8 @@ async def test_register_user_with_valid_region(mock_user_repo, mock_provider_rep
         provider_repo=mock_provider_repo,
         otp_service=MagicMock(),
         region_repo=mock_region_repo,
+        location_repo=MagicMock(),
+        device_repo=MagicMock(),
     )
     
     schema = UserRegister(
@@ -473,6 +479,8 @@ async def test_register_user_with_invalid_region(mock_user_repo, mock_region_rep
         provider_repo=MagicMock(),
         otp_service=MagicMock(),
         region_repo=mock_region_repo,
+        location_repo=MagicMock(),
+        device_repo=MagicMock(),
     )
     
     schema = UserRegister(
@@ -508,6 +516,8 @@ async def test_register_user_with_inactive_region(mock_user_repo, mock_region_re
         provider_repo=MagicMock(),
         otp_service=MagicMock(),
         region_repo=mock_region_repo,
+        location_repo=MagicMock(),
+        device_repo=MagicMock(),
     )
     
     schema = UserRegister(
@@ -796,15 +806,15 @@ def test_api_update_seeker_profile_success(client, user_service):
 # ==========================================
 
 @pytest.mark.asyncio
-async def test_update_user_location_customer_success(user_service, mock_user_repo):
+async def test_update_user_location_customer_success(user_service):
     # Arrange
     user_id = "customer-123"
-    from app.core.models.users import CustomerProfile
-    customer_repo = MagicMock(spec=Repository)
-    user_service.customer_repo = customer_repo
+    from app.core.models.users import UserLocation
+    location_repo = MagicMock(spec=Repository)
+    user_service.location_repo = location_repo
 
-    existing_profile = CustomerProfile(id="profile-123", user_id=user_id)
-    customer_repo.get_all.return_value = [existing_profile]
+    existing_location = UserLocation(id="loc-123", user_id=user_id)
+    location_repo.get_all.return_value = [existing_location]
 
     # Act
     await user_service.update_user_location(
@@ -816,10 +826,10 @@ async def test_update_user_location_customer_success(user_service, mock_user_rep
     )
 
     # Assert
-    customer_repo.get_all.assert_called_once()
-    customer_repo.update.assert_called_once()
-    call_args = customer_repo.update.call_args[0]
-    assert call_args[0] == "profile-123"
+    location_repo.get_all.assert_called_once()
+    location_repo.update.assert_called_once()
+    call_args = location_repo.update.call_args[0]
+    assert call_args[0] == "loc-123"
     assert call_args[1]["last_known_location"] == "POINT(3.3792 6.5244)"
     assert call_args[1]["address_line"] == "123 Main St"
 
@@ -851,7 +861,8 @@ def test_api_update_location_success(client, user_service):
         user_type=UserType.PROVIDER,
         latitude=6.5244,
         longitude=3.3792,
-        address_line="123 Main St"
+        address_line="123 Main St",
+        region_id=None
     )
 
 
@@ -860,15 +871,23 @@ def test_api_update_location_success(client, user_service):
 # ==========================================
 
 @pytest.mark.asyncio
-async def test_update_cloud_messaging_token_success(user_service, mock_user_repo):
+async def test_update_cloud_messaging_token_success(user_service):
     # Arrange
     user_id = "user-123"
+    device_repo = MagicMock(spec=Repository)
+    user_service.device_repo = device_repo
+    device_repo.get_all.return_value = []
 
     # Act
-    await user_service.update_cloud_messaging_token(user_id=user_id, token="new-device-token-123")
+    await user_service.update_cloud_messaging_token(user_id=user_id, token="new-device-token-123", platform="android")
 
     # Assert
-    mock_user_repo.update.assert_called_once_with(user_id, {"cloud_messaging_token": "new-device-token-123"})
+    device_repo.get_all.assert_called_once()
+    device_repo.add.assert_called_once()
+    call_args = device_repo.add.call_args[0]
+    assert call_args[0].user_id == user_id
+    assert call_args[0].messaging_token == "new-device-token-123"
+    assert call_args[0].platform == "android"
 
 
 # ==========================================
@@ -886,11 +905,12 @@ def test_api_update_cloud_messaging_token_success(client, user_service):
     # Act
     response = client.put(
         "/api/v1/users/cloud-messaging-token",
-        json={"token": "firebase-push-token-123"},
+        json={"token": "firebase-push-token-123", "platform": "android"},
         headers={"Authorization": f"Bearer {token}"}
     )
 
     # Assert
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["detail"] == "Cloud messaging token updated successfully."
-    user_service.update_cloud_messaging_token.assert_called_once_with(user_id, "firebase-push-token-123")
+    user_service.update_cloud_messaging_token.assert_called_once_with(user_id, "firebase-push-token-123", "android")
+

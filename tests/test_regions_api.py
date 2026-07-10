@@ -30,7 +30,7 @@ def test_get_regions_empty(client, mock_region_repo):
     # Assert
     assert response.status_code == status.HTTP_200_OK
     json_data = response.json()
-    assert json_data["statusCode"] == 200
+    assert json_data["status_code"] == 200
     assert json_data["detail"] == "Regions retrieved successfully."
     assert json_data["data"] == []
     mock_region_repo.get_all.assert_called_once()
@@ -67,7 +67,7 @@ def test_get_regions_with_data(client, mock_region_repo):
     # Assert
     assert response.status_code == status.HTTP_200_OK
     json_data = response.json()
-    assert json_data["statusCode"] == 200
+    assert json_data["status_code"] == 200
     assert json_data["detail"] == "Regions retrieved successfully."
     assert len(json_data["data"]) == 2
     
@@ -93,5 +93,5 @@ def test_get_regions_error(client, mock_region_repo):
     # Assert
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     json_data = response.json()
-    assert json_data["statusCode"] == 500
+    assert json_data["status_code"] == 500
     assert "Database connection failed" in json_data["detail"]

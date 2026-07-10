@@ -137,7 +137,8 @@ async def update_location(
             user_type=current_user.type,
             latitude=schema.latitude,
             longitude=schema.longitude,
-            address_line=schema.address_line
+            address_line=schema.address_line,
+            region_id=schema.region_id
         )
         return BaseAPIResponse[None](
             detail="Location updated successfully.",
@@ -162,7 +163,7 @@ async def update_cloud_messaging_token(
 ):
     """Update the cloud messaging token for push notifications."""
     try:
-        await user_service.update_cloud_messaging_token(current_user.id, schema.token)
+        await user_service.update_cloud_messaging_token(current_user.id, schema.token, schema.platform)
         return BaseAPIResponse[None](
             detail="Cloud messaging token updated successfully.",
             statusCode=status.HTTP_200_OK

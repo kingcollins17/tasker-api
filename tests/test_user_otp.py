@@ -43,6 +43,8 @@ def user_service(mock_user_repo, mock_otp_service):
         provider_repo=MagicMock(),
         otp_service=mock_otp_service,
         region_repo=MagicMock(),
+        location_repo=MagicMock(),
+        device_repo=MagicMock(),
     )
 
 

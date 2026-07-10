@@ -11,9 +11,12 @@ from app.core.services import get_cache_service
 from app.features.users.router import router as users_router
 from app.features.regions.router import router as regions_router
 from app.features.services.routers import router as services_router
+from app.features.notifications.router import router as notifications_router
+from app.features.tasks.router import router as tasks_router
 # Global variables to hold the celery processes references
 celery_process = None
 celery_beat_process = None
+
 
 
 def run_celery_worker():
@@ -104,6 +107,11 @@ def create_app() -> FastAPI:
         regions_router, prefix=f"{API_V1_PREFIX}/regions", tags=["Regions"])
     app.include_router(
         services_router, prefix=f"{API_V1_PREFIX}")
+    app.include_router(
+        notifications_router, prefix=f"{API_V1_PREFIX}/notifications", tags=["Notifications"])
+    app.include_router(
+        tasks_router, prefix=f"{API_V1_PREFIX}")
+
 
     @app.get("/")
     async def read_root():

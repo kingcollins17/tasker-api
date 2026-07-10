@@ -6,6 +6,8 @@ from .users import (
     CustomerProfile,
     PaymentProvider,
     PaymentAccount,
+    UserLocation,
+    UserDevice,
 )
 from .admins import (
     AdminRole,
@@ -18,6 +20,28 @@ from .services import (
 )
 from .regions import Region
 from .spatial import PointType, GeometryType
+from .notifications import (
+    NotificationType,
+    NotificationChannel,
+    NotificationPriority,
+    RecipientStatus,
+    DeliveryStatus,
+    Notification,
+    NotificationRecipient,
+    NotificationDelivery,
+    NotificationPreference,
+)
+from .tasks import (
+    TaskStatus,
+    TaskBidStatus,
+    TaskAssignmentStatus,
+    Task,
+    TaskLocation,
+    TaskBid,
+    TaskAssignment,
+    TaskStatusHistory,
+    TaskAttachment,
+)
 
 __all__ = [
     "UserType",
@@ -35,5 +59,25 @@ __all__ = [
     "Region",
     "PointType",
     "GeometryType",
+    "NotificationType",
+    "NotificationChannel",
+    "NotificationPriority",
+    "RecipientStatus",
+    "DeliveryStatus",
+    "Notification",
+    "NotificationRecipient",
+    "NotificationDelivery",
+    "NotificationPreference",
+    "UserLocation",
+    "UserDevice",
+    "TaskStatus",
+    "TaskBidStatus",
+    "TaskAssignmentStatus",
+    "Task",
+    "TaskLocation",
+    "TaskBid",
+    "TaskAssignment",
+    "TaskStatusHistory",
+    "TaskAttachment",
 ]
 

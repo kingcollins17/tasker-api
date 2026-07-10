@@ -76,6 +76,30 @@ class ProviderProfileResponse(BaseModel):
     services: List[ServiceResponse] = []
 
 
+class UserLocationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    user_id: Optional[str] = None
+    region_id: Optional[str] = None
+    address_line: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class UserDeviceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    user_id: Optional[str] = None
+    platform: Optional[str] = None
+    messaging_token: Optional[str] = None
+    is_active: Optional[bool] = None
+    last_login_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -91,6 +115,9 @@ class UserResponse(BaseModel):
     region_id: Optional[str] = None
     customer_profile: Optional[CustomerProfileResponse] = None
     provider_profile: Optional[ProviderProfileResponse] = None
+    devices: Optional[List[UserDeviceResponse]] = []
+    location: Optional[UserLocationResponse] = None
+
 
 
 class RequestEmailOTP(BaseModel):
@@ -203,11 +230,16 @@ class UpdateLocation(BaseModel):
                              description="Longitude coordinate")
     address_line: Optional[str] = Field(
         None, description="Optional address line description of the location")
+    region_id: Optional[str] = Field(
+        None, description="Optional region ID mapping to regions.id")
+
 
 
 class UpdateCloudMessagingToken(BaseModel):
     token: str = Field(...,
                        description="The cloud messaging registration token")
+    platform: str = Field(...,
+                          description="The platform of the device (platform-ios|android)")
 
 
 class AttachProviderService(BaseModel):

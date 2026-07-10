@@ -35,7 +35,6 @@ class User(SQLModel, table=True):
     is_active: bool = Field(default=False)
     email_verified: bool = Field(default=False)
     phone_verified: bool = Field(default=False)
-    cloud_messaging_token: Optional[str] = Field(default=None)
     region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True)
     credibility_score: float = Field(default=25.0)
     average_ratings: float = Field(default=0.0)
@@ -53,6 +52,14 @@ class User(SQLModel, table=True):
     payment_accounts: List["PaymentAccount"] = Relationship(
         back_populates="user",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    devices: List["UserDevice"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    )
+    location: Optional["UserLocation"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan", "lazy": "joined"}
     )
 
 class ProviderProfile(SQLModel, table=True):
@@ -75,12 +82,7 @@ class ProviderProfile(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     verified_at: Optional[datetime] = None
-    last_known_location: Optional[Any] = Field(
-        default=None,
-        sa_column=Column(PointType, nullable=True)
-    )
     user: User = Relationship(back_populates="provider_profile")
-    address_line: Optional[str] = None
 
     services: List[Service] = Relationship(
         back_populates="providers",
@@ -127,12 +129,40 @@ class CustomerProfile(SQLModel, table=True):
     last_name: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    
+    user: User = Relationship(back_populates="customer_profile")
+
+
+class UserLocation(SQLModel, table=True):
+    __tablename__ = "user_locations"  # type: ignore
+    
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    user_id: str = Field(foreign_key="users.id", unique=True, index=True)
+    region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True)
     last_known_location: Optional[Any] = Field(
         default=None,
         sa_column=Column(PointType, nullable=True)
     )
     address_line: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
     
-    user: User = Relationship(back_populates="customer_profile")
+    user: User = Relationship(back_populates="location")
+
+
+class UserDevice(SQLModel, table=True):
+    __tablename__ = "user_devices"  # type: ignore
+    
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
+    platform: str = Field(description="platform-ios|android")
+    messaging_token: str = Field(unique=True, index=True)
+    is_active: bool = Field(default=True)
+    last_login_at: Optional[datetime] = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    
+    user: User = Relationship(back_populates="devices")
+
 
 

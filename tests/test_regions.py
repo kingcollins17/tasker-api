@@ -1,5 +1,5 @@
 from app.core.models.regions import Region
-from app.core.models.users import User, UserType
+from app.core.models.users import User, UserType, UserLocation
 from app.core.models.admins import AdminUser, AdminRole
 
 def test_region_model_instantiation():
@@ -41,9 +41,16 @@ def test_user_and_admin_region_id_field():
         role=AdminRole.SUPER_ADMIN,
         region_id="region-123"
     )
+    user_loc = UserLocation(
+        user_id="user-123",
+        region_id="region-123",
+        address_line="123 Road"
+    )
     
     assert user.region_id == "region-123"
     assert user.credibility_score == 25.0
     assert user.average_ratings == 0.0
     assert admin.region_id == "region-123"
+    assert user_loc.region_id == "region-123"
+
 

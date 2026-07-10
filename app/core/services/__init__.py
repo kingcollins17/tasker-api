@@ -1,5 +1,6 @@
 from .email import EmailService
 from .sms import SMSService
+from .whatsapp import WhatsAppService
 from .cache import CacheService, get_cache_service
 from .payment import PaymentGateway, PaystackPaymentGateway, get_paystack_gateway
 from .storage import StorageService, MockStorageService, get_storage_service
@@ -16,6 +17,7 @@ from fastapi import Depends
 # Instantiate singleton instances for application-wide use
 email_service = EmailService()
 sms_service = SMSService()
+whatsapp_service = WhatsAppService()
 
 
 def get_otp_service(
@@ -32,6 +34,7 @@ def get_otp_service(
 __all__ = [
     "EmailService",
     "SMSService",
+    "WhatsAppService",
     "CacheService",
     "PaymentGateway",
     "PaystackPaymentGateway",
@@ -46,6 +49,7 @@ __all__ = [
     "OTPMaxAttemptsReachedError",
     "email_service",
     "sms_service",
+    "whatsapp_service",
     "get_cache_service",
     "get_paystack_gateway",
     "get_otp_service",

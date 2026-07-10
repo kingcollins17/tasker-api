@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from sqlmodel import select
 from app.core.repository import GetRepository, Repository, QueryOptions
-from app.core.models.users import User, CustomerProfile, ProviderProfile, UserType, KYCStatus
+from app.core.models.users import User, CustomerProfile, ProviderProfile, UserType, KYCStatus, UserLocation, UserDevice
 from app.core.models.services import Service, ProviderServiceLink
 from app.core.models.regions import Region
 from app.core.utils import security
@@ -30,12 +30,17 @@ class UserService:
         provider_repo: Repository[ProviderProfile],
         otp_service: OTPService,
         region_repo: Repository[Region],
+        location_repo: Repository[UserLocation],
+        device_repo: Repository[UserDevice],
     ):
         self.user_repo = user_repo
         self.customer_repo = customer_repo
         self.provider_repo = provider_repo
         self.otp_service = otp_service
         self.region_repo = region_repo
+        self.location_repo = location_repo
+        self.device_repo = device_repo
+
 
     @log_error()
     async def register_user(self, schema: UserRegister) -> User:
@@ -537,49 +542,67 @@ class UserService:
         user_type: UserType,
         latitude: float,
         longitude: float,
-        address_line: Optional[str] = None
+        address_line: Optional[str] = None,
+        region_id: Optional[str] = None,
     ) -> None:
-        """Update last known location for customer or provider profile."""
-        # from app.core.utils.datetime_helper import utc_now
-
-        # Represent the POINT in Well-Known Text (WKT) format
+        """Update last known location by upserting to the user_locations table."""
         wkt_point = f"POINT({longitude} {latitude})"
 
-        if user_type == UserType.CUSTOMER:
-            profiles = await self.customer_repo.get_all(
-                QueryOptions(filters={"user_id": user_id})
+        # Check if a location record already exists for this user
+        locations = await self.location_repo.get_all(
+            QueryOptions(filters={"user_id": user_id})
+        )
+
+        if region_id:
+            await self.user_repo.update(user_id, {"region_id": region_id, "updated_at": utc_now()})
+
+        if locations:
+            updates = {
+                "last_known_location": wkt_point,
+                "address_line": address_line,
+                "updated_at": utc_now(),
+            }
+            if region_id:
+                updates["region_id"] = region_id
+            await self.location_repo.update(locations[0].id, updates)
+        else:
+            new_location = UserLocation(
+                user_id=user_id,
+                last_known_location=wkt_point,
+                address_line=address_line,
+                region_id=region_id,
             )
-            if not profiles:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Customer profile not found."
-                )
-            profile = profiles[0]
-            await self.customer_repo.update(
-                profile.id,
-                {"last_known_location": wkt_point,
-                    "address_line": address_line, "updated_at": utc_now()}
-            )
-        elif user_type == UserType.PROVIDER:
-            profiles = await self.provider_repo.get_all(
-                QueryOptions(filters={"user_id": user_id})
-            )
-            if not profiles:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Provider profile not found."
-                )
-            profile = profiles[0]
-            await self.provider_repo.update(
-                profile.id,
-                {"last_known_location": wkt_point,
-                    "address_line": address_line, "updated_at": utc_now()}
-            )
+            await self.location_repo.add(new_location)
 
     @log_error()
-    async def update_cloud_messaging_token(self, user_id: str, token: str) -> None:
-        """Update cloud messaging token for a user."""
-        await self.user_repo.update(user_id, {"cloud_messaging_token": token})
+    async def update_cloud_messaging_token(self, user_id: str, token: str, platform: str) -> None:
+        """Update/upsert cloud messaging device token in user_devices table."""
+        # Find if token already exists
+        devices = await self.device_repo.get_all(
+            QueryOptions(filters={"messaging_token": token})
+        )
+        if devices:
+            # Update existing token info
+            await self.device_repo.update(
+                devices[0].id,
+                {
+                    "user_id": user_id,
+                    "platform": platform,
+                    "is_active": True,
+                    "last_login_at": utc_now(),
+                    "updated_at": utc_now(),
+                }
+            )
+        else:
+            # Create new device mapping
+            new_device = UserDevice(
+                user_id=user_id,
+                platform=platform,
+                messaging_token=token,
+                is_active=True,
+            )
+            await self.device_repo.add(new_device)
+
 
     @log_error()
     async def attach_provider_service(self, user_id: str, service_id: str) -> None:
@@ -710,6 +733,8 @@ def get_user_service(
         GetRepository(ProviderProfile)),
     otp_service: OTPService = Depends(get_otp_service),
     region_repo: Repository[Region] = Depends(GetRepository(Region)),
+    location_repo: Repository[UserLocation] = Depends(GetRepository(UserLocation)),
+    device_repo: Repository[UserDevice] = Depends(GetRepository(UserDevice)),
 ) -> UserService:
     return UserService(
         user_repo=user_repo,
@@ -717,4 +742,6 @@ def get_user_service(
         provider_repo=provider_repo,
         otp_service=otp_service,
         region_repo=region_repo,
+        location_repo=location_repo,
+        device_repo=device_repo,
     )

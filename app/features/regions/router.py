@@ -21,12 +21,12 @@ async def get_regions(
         return BaseAPIResponse[List[RegionResponse]](
             data=data,
             detail="Regions retrieved successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except Exception as e:
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return BaseAPIResponse[List[RegionResponse]](
             detail=f"An unexpected error occurred: {str(e)}",
-            statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
