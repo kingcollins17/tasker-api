@@ -106,8 +106,8 @@ class NotificationRecipient(SQLModel, table=True):
     )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    notification_id: str = Field(foreign_key="notifications.id", index=True)
-    recipient_id: str = Field(foreign_key="users.id", index=True)
+    notification_id: str = Field(foreign_key="notifications.id", index=True, ondelete="CASCADE")
+    recipient_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE")
     status: RecipientStatus = Field(default=RecipientStatus.PENDING)
     read_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
@@ -156,7 +156,7 @@ class NotificationPreference(SQLModel, table=True):
     )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    user_id: str = Field(foreign_key="users.id", index=True)
+    user_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE")
     notification_type: NotificationType
     channel: NotificationChannel
     enabled: bool = Field(default=True)

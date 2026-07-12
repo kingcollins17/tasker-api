@@ -1,8 +1,11 @@
 import math
+import random
+from datetime import datetime
 from typing import List, Optional, Tuple
 from fastapi import Depends, HTTPException, status
 from sqlmodel import select, func, desc, col
 from sqlalchemy import cast
+from sqlalchemy.orm import contains_eager, with_expression
 from geoalchemy2 import Geography
 
 from app.core.utils.datetime_helper import utc_now
@@ -17,6 +20,7 @@ from app.core.models.tasks import (
     TaskStatus,
     TaskBidStatus,
     TaskAssignmentStatus,
+    LocationType,
 )
 from app.core.models.users import UserType, User
 from app.features.tasks.schemas import TaskCreate, TaskUpdate, TaskBidCreate
@@ -41,10 +45,16 @@ class TaskService:
         self.attachment_repo = attachment_repo
         self.user_repo = user_repo
 
+    def _generate_pin(self) -> str:
+        return f"{random.randint(0, 9999):04d}"
+
     async def create_task(self, customer_id: str, schema: TaskCreate) -> Task:
         # Fetch customer to get their region_id
         user = await self.user_repo.get(customer_id)
         region_id = user.region_id if user else None
+
+        start_pin = self._generate_pin()
+        completion_pin = self._generate_pin()
 
         # Create Task
         task = Task(
@@ -57,7 +67,9 @@ class TaskService:
             budget_min=schema.budget_min,
             budget_max=schema.budget_max,
             pricing_model=schema.pricing_model or "fixed",
-            visibility=schema.visibility or "public",
+            scheduled_start_at=schema.scheduled_start_at,
+            start_pin=start_pin,
+            completion_pin=completion_pin,
             expires_at=schema.expires_at,
             status=TaskStatus.OPEN,
         )
@@ -67,6 +79,7 @@ class TaskService:
         wkt_point = f"POINT({schema.longitude} {schema.latitude})"
         location = TaskLocation(
             task_id=task.id,
+            location_type=LocationType.SERVICE,
             latitude=schema.latitude,
             longitude=schema.longitude,
             address=schema.address,
@@ -88,6 +101,7 @@ class TaskService:
 
         # Refresh to populate relationships
         await self.task_repo.refresh(task)
+
         return task
 
     async def get_task(self, task_id: str) -> Optional[Task]:
@@ -106,6 +120,12 @@ class TaskService:
         radius_km: Optional[float] = None,
         sort_by: str = "created_at",
         sort_desc: bool = True,
+        region_id: Optional[str] = None,
+        budget_min: Optional[float] = None,
+        budget_max: Optional[float] = None,
+        scheduled_start_at: Optional[datetime] = None,
+        expires_at: Optional[datetime] = None,
+        customer_id: Optional[str] = None,
     ) -> Tuple[List[Task], int]:
         statement = select(Task)
         count_statement = select(func.count()).select_from(Task)
@@ -129,6 +149,30 @@ class TaskService:
             )
             statement = statement.where(search_filter)
             count_statement = count_statement.where(search_filter)
+
+        if region_id:
+            statement = statement.where(Task.region_id == region_id)
+            count_statement = count_statement.where(Task.region_id == region_id)
+
+        if budget_min is not None:
+            statement = statement.where(Task.budget_min >= budget_min)
+            count_statement = count_statement.where(Task.budget_min >= budget_min)
+
+        if budget_max is not None:
+            statement = statement.where(Task.budget_max <= budget_max)
+            count_statement = count_statement.where(Task.budget_max <= budget_max)
+
+        if scheduled_start_at:
+            statement = statement.where(Task.scheduled_start_at >= scheduled_start_at)
+            count_statement = count_statement.where(Task.scheduled_start_at >= scheduled_start_at)
+
+        if expires_at:
+            statement = statement.where(Task.expires_at <= expires_at)
+            count_statement = count_statement.where(Task.expires_at <= expires_at)
+
+        if customer_id:
+            statement = statement.where(Task.customer_id == customer_id)
+            count_statement = count_statement.where(Task.customer_id == customer_id)
 
         if latitude is not None and longitude is not None and radius_km is not None:
             # pyrefly: ignore [bad-argument-type]
@@ -157,6 +201,22 @@ class TaskService:
                 )
                 statement = statement.where(*spatial_filter)
                 count_statement = count_statement.where(*spatial_filter)
+
+                # Approximate Euclidean distance in km for sqlite
+                distance_expr = func.sqrt(
+                    func.pow((TaskLocation.latitude - latitude) * 111.0, 2)
+                    + func.pow(
+                        (TaskLocation.longitude - longitude) * 111.0 * cos_lat, 2
+                    )
+                )
+                statement = statement.options(
+                    # pyrefly: ignore [bad-argument-type]
+                    contains_eager(Task.locations).with_expression(
+                        # pyrefly: ignore [bad-argument-type]
+                        TaskLocation.distance_km,
+                        distance_expr,
+                    )
+                )
             else:
                 target_point = func.ST_SetSRID(
                     func.ST_MakePoint(longitude, latitude), 4326
@@ -176,6 +236,18 @@ class TaskService:
                     )
                 )
 
+                distance_expr = (
+                    func.ST_Distance(
+                        cast(TaskLocation.geography_point, Geography),
+                        cast(target_point, Geography),
+                    )
+                    / 1000.0
+                )
+
+                statement = statement.options(
+                    contains_eager(Task.locations).with_expression(TaskLocation.distance_km, distance_expr)  # type: ignore
+                )
+
         count_result = await self.task_repo.execute(count_statement)
         total = count_result.first() or 0
 
@@ -186,19 +258,19 @@ class TaskService:
         statement = statement.offset((page - 1) * per_page).limit(per_page)
 
         results = await self.task_repo.execute(statement)
-        tasks = list(results.all())
+        tasks = list(results.unique().all())
 
         return tasks, total
 
     async def update_task(
-        self, task_id: str, current_user_id: str, schema: TaskUpdate
+        self, task_id: str, current_user_id: str, schema: TaskUpdate, is_admin: bool = False
     ) -> Task:
         task = await self.task_repo.get(task_id)
         if not task:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
             )
-        if task.customer_id != current_user_id:
+        if not is_admin and task.customer_id != current_user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to update this task",
@@ -213,7 +285,7 @@ class TaskService:
             "budget_min",
             "budget_max",
             "pricing_model",
-            "visibility",
+            "scheduled_start_at",
             "expires_at",
         ]:
             val = getattr(schema, key)
@@ -239,35 +311,16 @@ class TaskService:
             )
             await self.history_repo.add(history)
 
-        loc_updates = {}
-        for key in ["latitude", "longitude", "address", "city", "state", "country"]:
-            val = getattr(schema, key)
-            if val is not None:
-                loc_updates[key] = val
-
-        if "latitude" in loc_updates or "longitude" in loc_updates:
-            lat = loc_updates.get(
-                "latitude", task.location.latitude if task.location else 0.0
-            )
-            lng = loc_updates.get(
-                "longitude", task.location.longitude if task.location else 0.0
-            )
-            loc_updates["geography_point"] = f"POINT({lng} {lat})"
-
-        if loc_updates and task.location:
-            loc_updates["updated_at"] = utc_now()
-            await self.location_repo.update(task.location.id, loc_updates)
-
         await self.task_repo.refresh(task)
         return task
 
-    async def delete_task(self, task_id: str, current_user_id: str) -> bool:
+    async def delete_task(self, task_id: str, current_user_id: str, is_admin: bool = False) -> bool:
         task = await self.task_repo.get(task_id)
         if not task:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
             )
-        if task.customer_id != current_user_id:
+        if not is_admin and task.customer_id != current_user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to cancel this task",
@@ -487,4 +540,3 @@ def get_task_service(
         attachment_repo=attachment_repo,
         user_repo=user_repo,
     )
-

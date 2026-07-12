@@ -3,7 +3,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.api_response import BaseAPIResponse
-from app.core.deps import get_current_user
+from app.core.deps import GetCurrentUser
 from app.core.error_handler import AppErrorHandler
 from app.features.notifications.schemas import (
     BulkUpdatePreferences,
@@ -24,7 +24,7 @@ router = APIRouter()
     status_code=status.HTTP_200_OK,
 )
 async def get_preferences(
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     service: NotificationService = Depends(get_notification_service),
 ):
     """Get the current user's notification preferences."""
@@ -55,7 +55,7 @@ async def get_preferences(
 )
 async def update_preferences(
     schema: BulkUpdatePreferences,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     service: NotificationService = Depends(get_notification_service),
 ):
     """Bulk upsert notification preferences for the current user."""

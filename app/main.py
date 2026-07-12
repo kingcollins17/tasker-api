@@ -8,19 +8,21 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.services import get_cache_service
+from app.celery_app import celery_app  # Ensure Celery app is loaded and bound
 from app.features.users.router import router as users_router
 from app.features.regions.router import router as regions_router
 from app.features.services.routers import router as services_router
 from app.features.notifications.router import router as notifications_router
 from app.features.tasks.router import router as tasks_router
+
 # Global variables to hold the celery processes references
 celery_process = None
 celery_beat_process = None
 
 
-
 def run_celery_worker():
     from app.celery_app import celery_app
+
     args = ["worker", "--loglevel=info"]
     if sys.platform == "win32":
         args.append("--pool=solo")
@@ -29,6 +31,7 @@ def run_celery_worker():
 
 def run_celery_beat():
     from app.celery_app import celery_app
+
     celery_app.start(["beat", "--loglevel=info"])
 
 
@@ -95,23 +98,22 @@ def create_app() -> FastAPI:
     async def global_exception_handler(request: Request, exc: Exception):
         return JSONResponse(
             status_code=500,
-            content={"message": "An unexpected error occurred.",
-                     "details": str(exc)},
+            content={"message": "An unexpected error occurred.", "details": str(exc)},
         )
 
     # Include API Routers
-    API_V1_PREFIX = '/api/v1'
+    API_V1_PREFIX = "/api/v1"
+    app.include_router(users_router, prefix=f"{API_V1_PREFIX}/users", tags=["Users"])
     app.include_router(
-        users_router, prefix=f"{API_V1_PREFIX}/users", tags=["Users"])
+        regions_router, prefix=f"{API_V1_PREFIX}/regions", tags=["Regions"]
+    )
+    app.include_router(services_router, prefix=f"{API_V1_PREFIX}")
     app.include_router(
-        regions_router, prefix=f"{API_V1_PREFIX}/regions", tags=["Regions"])
-    app.include_router(
-        services_router, prefix=f"{API_V1_PREFIX}")
-    app.include_router(
-        notifications_router, prefix=f"{API_V1_PREFIX}/notifications", tags=["Notifications"])
-    app.include_router(
-        tasks_router, prefix=f"{API_V1_PREFIX}")
-
+        notifications_router,
+        prefix=f"{API_V1_PREFIX}/notifications",
+        tags=["Notifications"],
+    )
+    app.include_router(tasks_router, prefix=f"{API_V1_PREFIX}")
 
     @app.get("/")
     async def read_root():
@@ -119,7 +121,7 @@ def create_app() -> FastAPI:
             "name": settings.PROJECT_NAME,
             "version": settings.VERSION,
             "status": "healthy",
-            "documentation": "/docs"
+            "documentation": "/docs",
         }
 
     @app.get("/health")

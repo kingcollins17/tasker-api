@@ -1,9 +1,11 @@
+from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # App Settings
     PROJECT_NAME: str = "Tasker API"
     VERSION: str = "1.0.0"
+    ENVIRONMENT: Literal["local", "staging", "production"] = "local"
     
     # Security Settings
     SECRET_KEY: str

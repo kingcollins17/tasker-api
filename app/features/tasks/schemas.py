@@ -12,8 +12,8 @@ class TaskCreate(BaseModel):
     budget_min: Optional[float] = Field(default=None, ge=0, description="Minimum budget")
     budget_max: Optional[float] = Field(default=None, ge=0, description="Maximum budget")
     pricing_model: Optional[str] = Field(default="fixed", description="Pricing model, e.g. fixed or hourly")
-    visibility: Optional[str] = Field(default="public", description="Task visibility")
     expires_at: Optional[datetime] = Field(default=None, description="Expiration date/time of the task")
+    scheduled_start_at: Optional[datetime] = Field(default=None, description="When the user would like the task to start")
     
     # Location fields
     latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude of the task location")
@@ -31,11 +31,11 @@ class TaskUpdate(BaseModel):
     budget_min: Optional[float] = Field(default=None, ge=0)
     budget_max: Optional[float] = Field(default=None, ge=0)
     pricing_model: Optional[str] = Field(default=None)
-    visibility: Optional[str] = Field(default=None)
     expires_at: Optional[datetime] = Field(default=None)
+    scheduled_start_at: Optional[datetime] = Field(default=None)
     status: Optional[TaskStatus] = Field(default=None)
     
-    # Location updates
+class TaskLocationUpdate(BaseModel):
     latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
     longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
     address: Optional[str] = Field(default=None)
@@ -43,12 +43,12 @@ class TaskUpdate(BaseModel):
     state: Optional[str] = Field(default=None)
     country: Optional[str] = Field(default=None)
 
-# Task Location Response
 class TaskLocationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
     id: Optional[str] = None
     task_id: Optional[str] = None
+    location_type: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     address: Optional[str] = None
@@ -57,6 +57,7 @@ class TaskLocationResponse(BaseModel):
     country: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    distance_km: Optional[float] = None
 
 # Task Bid Response (referenced in TaskResponse)
 class TaskBidResponse(BaseModel):
@@ -115,11 +116,13 @@ class TaskResponse(BaseModel):
     budget_max: Optional[float] = None
     pricing_model: Optional[str] = None
     status: Optional[TaskStatus] = None
-    visibility: Optional[str] = None
     created_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    scheduled_start_at: Optional[datetime] = None
+    start_pin: Optional[str] = None
+    completion_pin: Optional[str] = None
     updated_at: Optional[datetime] = None
-    location: Optional[TaskLocationResponse] = None
+    locations: Optional[List[TaskLocationResponse]] = None
     bids: Optional[List[TaskBidResponse]] = None
     assignment: Optional[TaskAssignmentResponse] = None
     attachments: Optional[List[TaskAttachmentResponse]] = None

@@ -21,7 +21,7 @@ from app.features.tasks.services import TaskService, get_task_service
 from app.features.tasks.schemas import TaskCreate, TaskUpdate, TaskBidCreate
 from app.features.users.schemas import UserResponse
 from app.core.repository import Repository
-from app.core.deps.auth import get_current_user
+from app.core.deps.auth import GetCurrentUser
 from app.features.tasks.router.bids import get_current_provider
 
 # Test Users
@@ -127,10 +127,22 @@ def task_service(
 
 
 @pytest.fixture
-def client(task_service):
+def client(task_service, monkeypatch):
+    import functools
+    from app.core.deps.auth import GetCurrentUser
+    
     app.dependency_overrides[get_task_service] = lambda: task_service
-    app.dependency_overrides[get_current_user] = lambda: MOCK_CUSTOMER
-    app.dependency_overrides[get_current_provider] = lambda: MOCK_PROVIDER
+    
+    original_call = GetCurrentUser.__call__
+    @functools.wraps(original_call)
+    async def mock_get_current_user(self, *args, **kwargs):
+        from app.core.models.users import UserType
+        if getattr(self, "required_type", None) == UserType.PROVIDER:
+            return MOCK_PROVIDER
+        return MOCK_CUSTOMER
+        
+    monkeypatch.setattr("app.core.deps.auth.GetCurrentUser.__call__", mock_get_current_user)
+    
     yield TestClient(app)
     app.dependency_overrides.clear()
 

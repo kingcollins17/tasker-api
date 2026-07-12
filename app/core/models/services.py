@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 class ProviderServiceLink(SQLModel, table=True):
     __tablename__ = "provider_services"  # type: ignore
     
-    provider_id: str = Field(foreign_key="users.id", primary_key=True)
+    provider_id: str = Field(foreign_key="users.id", primary_key=True, ondelete="CASCADE")
     service_id: str = Field(foreign_key="services.id", primary_key=True)
 
 class ServiceCategory(SQLModel, table=True):

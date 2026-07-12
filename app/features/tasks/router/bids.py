@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, status, HTTPException
 from typing import List
 
 from app.core.api_response import BaseAPIResponse
-from app.core.deps import get_current_user, GetCurrentUser
+from app.core.deps import GetCurrentUser
 from app.features.users.schemas import UserResponse
 from app.core.models.users import UserType
 from app.features.tasks.schemas import TaskBidCreate, TaskBidResponse, TaskAssignmentResponse
@@ -41,7 +41,7 @@ async def create_bid(
 @router.get("/tasks/{task_id}/bids", response_model=BaseAPIResponse[List[TaskBidResponse]], status_code=status.HTTP_200_OK)
 async def get_task_bids(
     task_id: str,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     task_service: TaskService = Depends(get_task_service)
 ):
     """Retrieve all bids for a task. Customers see all bids; providers see only their own."""
@@ -87,7 +87,7 @@ async def withdraw_bid(
 @router.post("/bids/{bid_id}/accept", response_model=BaseAPIResponse[TaskAssignmentResponse], status_code=status.HTTP_200_OK)
 async def accept_bid(
     bid_id: str,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     task_service: TaskService = Depends(get_task_service)
 ):
     """Accept a bid and assign the task to the provider (restricted to the task customer)."""

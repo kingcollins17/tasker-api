@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, status, Response
 from app.core.error_handler import AppErrorHandler
 from sqlmodel import select
 from app.core.api_response import BaseAPIResponse
-from app.core.deps import get_current_user, GetCurrentUser
+from app.core.deps import GetCurrentUser
 from app.core.models.users import UserType
 from app.core.models.services import Service, ProviderServiceLink
 from app.features.users.schemas import UserResponse, ProviderProfileUpdate, CustomerProfileUpdate, UpdateLocation, UpdateCloudMessagingToken, AttachProviderService, ServiceResponse, UpdateRegion
@@ -16,7 +16,7 @@ router = APIRouter()
 @router.get("/me", response_model=BaseAPIResponse[UserResponse], status_code=status.HTTP_200_OK)
 async def get_me(
     response: Response,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     user_service: UserService = Depends(get_user_service)
 ):
     """Retrieve the profile details of the currently authenticated user."""
@@ -127,7 +127,7 @@ async def update_seeker_profile(
 async def update_location(
     schema: UpdateLocation,
     response: Response,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     user_service: UserService = Depends(get_user_service)
 ):
     """Update the live last known location of the currently authenticated user (seeker or tasker)."""
@@ -158,7 +158,7 @@ async def update_location(
 async def update_cloud_messaging_token(
     schema: UpdateCloudMessagingToken,
     response: Response,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     user_service: UserService = Depends(get_user_service)
 ):
     """Update the cloud messaging token for push notifications."""
@@ -238,7 +238,7 @@ async def remove_provider_service(
 async def update_region(
     schema: UpdateRegion,
     response: Response,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     user_service: UserService = Depends(get_user_service)
 ):
     """Update the region ID of the currently authenticated user."""

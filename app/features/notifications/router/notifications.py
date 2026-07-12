@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.api_response import BaseAPIResponse, PaginatedData
-from app.core.deps import get_current_user
+from app.core.deps import GetCurrentUser
 from app.core.error_handler import AppErrorHandler
 from app.features.notifications.schemas import (
     MarkReadRequest,
@@ -25,7 +25,7 @@ router = APIRouter()
 async def list_notifications(
     page: int = 1,
     per_page: int = 20,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     service: NotificationService = Depends(get_notification_service),
 ):
     """List the current user's notifications with pagination."""
@@ -63,7 +63,7 @@ async def list_notifications(
     status_code=status.HTTP_200_OK,
 )
 async def get_notification_counts(
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     service: NotificationService = Depends(get_notification_service),
 ):
     """Get the number of read and unread notifications for the current user."""
@@ -94,7 +94,7 @@ async def get_notification_counts(
 )
 async def mark_as_read(
     schema: MarkReadRequest,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: UserResponse = Depends(GetCurrentUser()),
     service: NotificationService = Depends(get_notification_service),
 ):
     """Mark one or more notifications as read for the current user."""

@@ -66,7 +66,7 @@ class ProviderProfile(SQLModel, table=True):
     __tablename__ = "provider_profiles"  # type: ignore
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    user_id: str = Field(foreign_key="users.id", unique=True)
+    user_id: str = Field(foreign_key="users.id", unique=True, ondelete="CASCADE")
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     id_type: Optional[str] = None  # 'NIN', 'BVN'
@@ -100,7 +100,8 @@ class PaymentAccount(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     user_id: str = Field(
         foreign_key="users.id",
-        index=True
+        index=True,
+        ondelete="CASCADE"
     )
     provider: PaymentProvider
     external_account_id: Optional[str]=None
@@ -124,7 +125,7 @@ class CustomerProfile(SQLModel, table=True):
     __tablename__ = "customer_profiles"  # type: ignore
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    user_id: str = Field(foreign_key="users.id", unique=True)
+    user_id: str = Field(foreign_key="users.id", unique=True, ondelete="CASCADE")
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
@@ -137,7 +138,7 @@ class UserLocation(SQLModel, table=True):
     __tablename__ = "user_locations"  # type: ignore
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    user_id: str = Field(foreign_key="users.id", unique=True, index=True)
+    user_id: str = Field(foreign_key="users.id", unique=True, index=True, ondelete="CASCADE")
     region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True)
     last_known_location: Optional[Any] = Field(
         default=None,
@@ -154,7 +155,7 @@ class UserDevice(SQLModel, table=True):
     __tablename__ = "user_devices"  # type: ignore
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    user_id: str = Field(foreign_key="users.id", index=True)
+    user_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE")
     platform: str = Field(description="platform-ios|android")
     messaging_token: str = Field(unique=True, index=True)
     is_active: bool = Field(default=True)

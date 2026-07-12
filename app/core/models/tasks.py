@@ -6,6 +6,13 @@ from sqlmodel import Field, SQLModel, Relationship
 from sqlalchemy import Column
 from app.core.utils.datetime_helper import utc_now
 from app.core.models.spatial import PointType
+from sqlalchemy.orm import query_expression
+
+
+class LocationType(str, enum.Enum):
+    PICKUP = "pickup"
+    DROPOFF = "dropoff"
+    SERVICE = "service"
 
 
 class TaskStatus(str, enum.Enum):
@@ -39,7 +46,7 @@ class Task(SQLModel, table=True):
     __tablename__ = "tasks"  # type: ignore
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    customer_id: str = Field(foreign_key="users.id", index=True)
+    customer_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, ondelete="SET NULL", nullable=True)
     region_id: Optional[str] = Field(
         default=None, foreign_key="regions.id", index=True, nullable=True
     )
@@ -55,13 +62,26 @@ class Task(SQLModel, table=True):
     budget_max: Optional[float] = Field(default=None, nullable=True)
     pricing_model: str = Field(default="fixed")
     status: TaskStatus = Field(default=TaskStatus.OPEN, index=True)
-    visibility: str = Field(default="public")
+    scheduled_start_at: Optional[datetime] = Field(default=None, nullable=True)
+    start_pin: Optional[str] = Field(default=None, nullable=True)
+    completion_pin: Optional[str] = Field(default=None, nullable=True)
     expires_at: Optional[datetime] = Field(default=None, index=True, nullable=True)
     created_at: datetime = Field(default_factory=utc_now, index=True)
     updated_at: datetime = Field(default_factory=utc_now)
 
     # Relationships
-    location: Optional["TaskLocation"] = Relationship(
+    locations: List["TaskLocation"] = Relationship(
+        back_populates="task",
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "lazy": "joined",
+        },
+    )
+    bids: List["TaskBid"] = Relationship(
+        back_populates="task",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
+    )
+    assignment: Optional["TaskAssignment"] = Relationship(
         back_populates="task",
         sa_relationship_kwargs={
             "uselist": False,
@@ -69,18 +89,13 @@ class Task(SQLModel, table=True):
             "lazy": "joined",
         },
     )
-    bids: List["TaskBid"] = Relationship(
-        back_populates="task", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
-    )
-    assignment: Optional["TaskAssignment"] = Relationship(
-        back_populates="task",
-        sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan"},
-    )
     history: List["TaskStatusHistory"] = Relationship(
-        back_populates="task", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+        back_populates="task",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
     )
     attachments: List["TaskAttachment"] = Relationship(
-        back_populates="task", sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+        back_populates="task",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
     )
 
 
@@ -88,7 +103,8 @@ class TaskLocation(SQLModel, table=True):
     __tablename__ = "task_locations"  # type: ignore
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    task_id: str = Field(foreign_key="tasks.id", unique=True, index=True)
+    task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE")
+    location_type: LocationType = Field(default=LocationType.SERVICE, index=True)
     latitude: float
     longitude: float
     address: Optional[str] = Field(default=None, nullable=True)
@@ -98,18 +114,19 @@ class TaskLocation(SQLModel, table=True):
     geography_point: Optional[Any] = Field(
         default=None, sa_column=Column(PointType, nullable=True)
     )
+    distance_km: Optional[float] = Field(default=None, sa_column=query_expression())  # type: ignore
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
-    task: Task = Relationship(back_populates="location")
+    task: Task = Relationship(back_populates="locations")
 
 
 class TaskBid(SQLModel, table=True):
     __tablename__ = "task_bids"  # type: ignore
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    task_id: str = Field(foreign_key="tasks.id", index=True)
-    provider_id: str = Field(foreign_key="users.id", index=True)
+    task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE")
+    provider_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE")
     price: float
     message: Optional[str] = Field(default=None, nullable=True)
     estimated_duration: Optional[str] = Field(default=None, nullable=True)
@@ -124,8 +141,8 @@ class TaskAssignment(SQLModel, table=True):
     __tablename__ = "task_assignments"  # type: ignore
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    task_id: str = Field(foreign_key="tasks.id", unique=True, index=True)
-    provider_id: str = Field(foreign_key="users.id", index=True)
+    task_id: str = Field(foreign_key="tasks.id", unique=True, index=True, ondelete="CASCADE")
+    provider_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE")
     accepted_bid_id: Optional[str] = Field(
         default=None, foreign_key="task_bids.id", nullable=True
     )
@@ -142,7 +159,7 @@ class TaskStatusHistory(SQLModel, table=True):
     __tablename__ = "task_status_history"  # type: ignore
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    task_id: str = Field(foreign_key="tasks.id", index=True)
+    task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE")
     old_status: Optional[TaskStatus] = Field(default=None, nullable=True)
     new_status: TaskStatus
     changed_by: Optional[str] = Field(
@@ -157,7 +174,7 @@ class TaskAttachment(SQLModel, table=True):
     __tablename__ = "task_attachments"  # type: ignore
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    task_id: str = Field(foreign_key="tasks.id", index=True, description="The ID of the task this attachment is associated with")
+    task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE", description="The ID of the task this attachment is associated with")
     storage_key: str = Field(description="The unique object key/path inside the cloud storage system (e.g. 'tasks/task-uuid/image.png')")
     file_name: Optional[str] = Field(default=None, nullable=True, description="The original name of the uploaded file")
     file_size: Optional[int] = Field(default=None, nullable=True, description="The size of the file in bytes")

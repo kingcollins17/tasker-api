@@ -4,6 +4,8 @@ from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorization
 
 from app.core.utils import security
 from app.core.models.users import UserType, KYCStatus
+from app.core.models.admins import AdminUser
+from app.core.repository import Repository, GetRepository
 from app.features.users.services import UserService, get_user_service
 from app.features.users.schemas import UserResponse
 
@@ -136,5 +138,40 @@ class GetCurrentUser:
         return UserResponse.model_validate(user)
 
 
-get_current_user = GetCurrentUser()
 
+class GetCurrentUserOrAdminOptional:
+    """Dependency class to retrieve the currently authenticated user or admin, returning None if not authenticated."""
+    
+    async def __call__(
+        self,
+        token_oauth: str | None = Depends(oauth2_scheme),
+        token_bearer: HTTPAuthorizationCredentials | None = Depends(http_bearer),
+        user_service: UserService = Depends(get_user_service),
+        admin_repo: Repository[AdminUser] = Depends(GetRepository(AdminUser)),
+    ):
+        token = None
+        if token_bearer:
+            token = token_bearer.credentials
+        elif token_oauth:
+            token = token_oauth
+
+        if not token:
+            return None
+
+        payload = security.decode_access_token(token)
+        if not payload:
+            return None
+            
+        user_id = payload.get("id")
+        if not user_id:
+            return None
+
+        user = await user_service.get_user(user_id)
+        if user:
+            return UserResponse.model_validate(user)
+            
+        admin = await admin_repo.get(user_id)
+        if admin:
+            return admin
+            
+        return None

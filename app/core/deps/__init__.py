@@ -1,6 +1,9 @@
-from .auth import GetCurrentUser, get_current_user
+from .auth import (
+    GetCurrentUser,
+    GetCurrentUserOrAdminOptional,
+)
 
 __all__ = [
     "GetCurrentUser",
-    "get_current_user",
+    "GetCurrentUserOrAdminOptional",
 ]

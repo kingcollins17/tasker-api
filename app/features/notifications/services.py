@@ -78,8 +78,11 @@ class NotificationService:
         # Dispatch via Celery fan-out task (returns immediately)
         from app.features.notifications.tasks import process_notification
 
-        # pyrefly: ignore [not-callable]
-        process_notification.delay(notification.id)  # pyright: ignore [reportCallIssue]
+        try:
+            # pyrefly: ignore [not-callable]
+            process_notification.delay(notification.id)  # pyright: ignore [reportCallIssue]
+        except Exception as e:
+            logger.error(f"Failed to enqueue notification {notification.id} for processing: {e}")
 
         return notification
 
