@@ -4,7 +4,7 @@ from uuid import uuid4
 from app.core.utils.datetime_helper import utc_now
 from typing import List, Optional, Any
 from sqlmodel import Field, SQLModel, Relationship
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 from .spatial import PointType
 from .services import ProviderServiceLink, Service
 
@@ -153,6 +153,7 @@ class UserLocation(SQLModel, table=True):
 
 class UserDevice(SQLModel, table=True):
     __tablename__ = "user_devices"  # type: ignore
+    __table_args__ = (UniqueConstraint("user_id", "platform", name="uq_user_device_platform"),)
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     user_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE")

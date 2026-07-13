@@ -24,7 +24,12 @@ class CacheService:
         """
         if hasattr(self, "_initialized") and self._initialized:
             return
-        self.client: Redis = from_url(redis_url, decode_responses=True)
+        self.client: Redis = from_url(
+            redis_url,
+            decode_responses=True,
+            socket_keepalive=True,
+            health_check_interval=30
+        )
         self._initialized = True
 
     async def get(self, key: str) -> Optional[str]:

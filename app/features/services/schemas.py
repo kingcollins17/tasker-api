@@ -25,3 +25,6 @@ class ServiceResponse(BaseModel):
     category: Optional[CategoryResponse] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+class ServiceAvailabilityResponse(BaseModel):
+    is_available: bool

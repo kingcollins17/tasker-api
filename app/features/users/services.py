@@ -564,14 +564,26 @@ class UserService:
         self, user_id: str, token: str, platform: str
     ) -> None:
         """Update/upsert cloud messaging device token in user_devices table."""
-        # Find if token already exists
-        devices = await self.device_repo.get_all(
+        # 1. Check if the token is already in the DB
+        token_devices = await self.device_repo.get_all(
             QueryOptions(filters={"messaging_token": token})
         )
-        if devices:
-            # Update existing token info
+        
+        # 2. Check if the user already has a device for this platform
+        user_platform_devices = await self.device_repo.get_all(
+            QueryOptions(filters={"user_id": user_id, "platform": platform})
+        )
+        
+        if token_devices:
+            token_device = token_devices[0]
+            if user_platform_devices and user_platform_devices[0].id != token_device.id:
+                # User has an existing device for this platform, but token is linked to a different device record.
+                # Delete old platform device to prevent unique constraint failure.
+                await self.device_repo.delete(user_platform_devices[0].id)
+            
+            # Update the existing token device to the current user and platform
             await self.device_repo.update(
-                devices[0].id,
+                token_device.id,
                 {
                     "user_id": user_id,
                     "platform": platform,
@@ -581,14 +593,26 @@ class UserService:
                 },
             )
         else:
-            # Create new device mapping
-            new_device = UserDevice(
-                user_id=user_id,
-                platform=platform,
-                messaging_token=token,
-                is_active=True,
-            )
-            await self.device_repo.add(new_device)
+            if user_platform_devices:
+                # Update existing platform device with new token
+                await self.device_repo.update(
+                    user_platform_devices[0].id,
+                    {
+                        "messaging_token": token,
+                        "is_active": True,
+                        "last_login_at": utc_now(),
+                        "updated_at": utc_now(),
+                    },
+                )
+            else:
+                # Create new device mapping
+                new_device = UserDevice(
+                    user_id=user_id,
+                    platform=platform,
+                    messaging_token=token,
+                    is_active=True,
+                )
+                await self.device_repo.add(new_device)
 
     @log_error()
     async def attach_provider_service(self, user_id: str, service_id: str) -> None:

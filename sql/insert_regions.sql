@@ -24,7 +24,7 @@ INSERT INTO regions (
 ('cd1ccdf8-45a2-4a0b-967a-e09210a5b9b8', NULL, 'Ebonyi', FALSE, 0, 0, 0, 0, NULL, NOW(), NOW()),
 ('f71dcdbb-04a2-4e0b-85cd-ec9220a2b8e2', NULL, 'Edo', FALSE, 0, 0, 0, 0, NULL, NOW(), NOW()),
 ('42dcdfa8-24cc-4c0e-adcc-e892b9abda9a', NULL, 'Ekiti', FALSE, 0, 0, 0, 0, NULL, NOW(), NOW()),
-('8a1cda28-f1ac-469b-b27a-514197170a41', NULL, 'Enugu', FALSE, 0, 0, 0, 0, NULL, NOW(), NOW()),
+('8a1cda28-f1ac-469b-b27a-514197170a41', NULL, 'Enugu', TRUE, 0, 0, 0, 0, NULL, NOW(), NOW()),
 ('94ba1bca-e94d-45db-b952-b88efbc0e99d', NULL, 'Gombe', FALSE, 0, 0, 0, 0, NULL, NOW(), NOW()),
 ('1cbb9d28-765f-4ab4-8027-e43697920ab7', NULL, 'Imo', FALSE, 0, 0, 0, 0, NULL, NOW(), NOW()),
 ('23da89c2-51bc-40bc-8051-a4b717db08e2', NULL, 'Jigawa', FALSE, 0, 0, 0, 0, NULL, NOW(), NOW()),
