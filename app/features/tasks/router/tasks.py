@@ -38,6 +38,7 @@ from app.core.models.tasks import TaskAttachment
 from app.features.tasks.services import TaskService, get_task_service
 from app.core.error_handler import AppErrorHandler
 from app.core.models.tasks import TaskStatus
+from app.features.tasks.celery_tasks import process_new_task_workflow
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -74,6 +75,9 @@ async def create_task(
             ),
             created_by=current_user.id,
         )
+
+        # pyrefly: ignore [bad-argument-type]
+        background_tasks.add_task(process_new_task_workflow.delay, task.id)
 
         return BaseAPIResponse[TaskResponse](
             data=TaskResponse.model_validate(task),

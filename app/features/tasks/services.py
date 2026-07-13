@@ -75,20 +75,21 @@ class TaskService:
         )
         task = await self.task_repo.add(task)
 
-        # Create TaskLocation
-        wkt_point = f"POINT({schema.longitude} {schema.latitude})"
-        location = TaskLocation(
-            task_id=task.id,
-            location_type=LocationType.SERVICE,
-            latitude=schema.latitude,
-            longitude=schema.longitude,
-            address=schema.address,
-            city=schema.city,
-            state=schema.state,
-            country=schema.country,
-            geography_point=wkt_point,
-        )
-        await self.location_repo.add(location)
+        # Create TaskLocations
+        for loc in schema.locations:
+            wkt_point = f"POINT({loc.longitude} {loc.latitude})"
+            location = TaskLocation(
+                task_id=task.id,
+                location_type=loc.location_type,
+                latitude=loc.latitude,
+                longitude=loc.longitude,
+                address=loc.address,
+                city=loc.city,
+                state=loc.state,
+                country=loc.country,
+                geography_point=wkt_point,
+            )
+            await self.location_repo.add(location)
 
         # Write TaskStatusHistory
         history = TaskStatusHistory(

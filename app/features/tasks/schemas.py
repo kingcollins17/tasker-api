@@ -1,9 +1,18 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime
-from app.core.models.tasks import TaskStatus, TaskBidStatus, TaskAssignmentStatus
+from app.core.models.tasks import TaskStatus, TaskBidStatus, TaskAssignmentStatus, LocationType
 
 # Tasks Schemas
+class LocationCreate(BaseModel):
+    location_type: LocationType = Field(default=LocationType.SERVICE, description="Type of the location")
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude of the task location")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude of the task location")
+    address: Optional[str] = Field(default=None, description="Address description")
+    city: Optional[str] = Field(default=None, description="City")
+    state: Optional[str] = Field(default=None, description="State")
+    country: Optional[str] = Field(default=None, description="Country")
+
 class TaskCreate(BaseModel):
     title: str = Field(..., min_length=1, description="Title of the task")
     description: str = Field(..., min_length=1, description="Detailed description of the task")
@@ -15,13 +24,7 @@ class TaskCreate(BaseModel):
     expires_at: Optional[datetime] = Field(default=None, description="Expiration date/time of the task")
     scheduled_start_at: Optional[datetime] = Field(default=None, description="When the user would like the task to start")
     
-    # Location fields
-    latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude of the task location")
-    longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude of the task location")
-    address: Optional[str] = Field(default=None, description="Address description")
-    city: Optional[str] = Field(default=None, description="City")
-    state: Optional[str] = Field(default=None, description="State")
-    country: Optional[str] = Field(default=None, description="Country")
+    locations: List[LocationCreate] = Field(..., min_length=1, max_length=2, description="List of task locations (1 or 2)")
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(default=None)

@@ -34,6 +34,7 @@ from app.core.repository import QueryOptions, Repository
 from app.core.services import email_service, sms_service, whatsapp_service
 from app.core.services.cloud_messaging import MockCloudMessagingService
 from app.core.utils.datetime_helper import utc_now
+from app.core.utils.celery import run_async
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -41,16 +42,7 @@ from app.core.utils.datetime_helper import utc_now
 BATCH_SIZE = 1000
 
 
-def _run_async(coro):
-    """Run an async coroutine in a synchronous Celery worker context."""
-    try:
-        asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
 
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(coro)
 
 
 # ── Step 1: Fan-out task ─────────────────────────────────────────────────────
@@ -71,7 +63,7 @@ def process_notification(self, notification_id: str) -> None:
     logger.info(f"[Pipeline] Fan-out started for notification {notification_id}")
 
     try:
-        _run_async(_fan_out_notification(notification_id))
+        run_async(_fan_out_notification(notification_id))
         logger.info(f"[Pipeline] Fan-out complete for notification {notification_id}")
     except Exception as exc:
         logger.error(
@@ -153,7 +145,7 @@ def process_recipient_batch(
     )
 
     try:
-        _run_async(_process_batch(notification_id, recipient_ids))
+        run_async(_process_batch(notification_id, recipient_ids))
     except Exception as exc:
         logger.error(
             f"[Pipeline] Batch processing failed for notification {notification_id}: {exc}"
@@ -297,7 +289,7 @@ def send_email_batch(self, notification_id: str, delivery_ids: List[str]) -> Non
     logger.info(
         f"[Email] Processing {len(delivery_ids)} deliveries for notification {notification_id}"
     )
-    _run_async(_send_email_batch(notification_id, delivery_ids))
+    run_async(_send_email_batch(notification_id, delivery_ids))
 
 
 async def _send_email_batch(notification_id: str, delivery_ids: List[str]) -> None:
@@ -381,7 +373,7 @@ def send_sms_batch(self, notification_id: str, delivery_ids: List[str]) -> None:
     logger.info(
         f"[SMS] Processing {len(delivery_ids)} deliveries for notification {notification_id}"
     )
-    _run_async(_send_sms_batch(notification_id, delivery_ids))
+    run_async(_send_sms_batch(notification_id, delivery_ids))
 
 
 async def _send_sms_batch(notification_id: str, delivery_ids: List[str]) -> None:
@@ -476,7 +468,7 @@ def send_push_batch(self, notification_id: str, delivery_ids: List[str]) -> None
     logger.info(
         f"[Push] Processing {len(delivery_ids)} deliveries for notification {notification_id}"
     )
-    _run_async(_send_push_batch(notification_id, delivery_ids))
+    run_async(_send_push_batch(notification_id, delivery_ids))
 
 
 async def _send_push_batch(notification_id: str, delivery_ids: List[str]) -> None:
@@ -588,7 +580,7 @@ def send_whatsapp_batch(self, notification_id: str, delivery_ids: List[str]) -> 
     logger.info(
         f"[WhatsApp] Processing {len(delivery_ids)} deliveries for notification {notification_id}"
     )
-    _run_async(_send_whatsapp_batch(notification_id, delivery_ids))
+    run_async(_send_whatsapp_batch(notification_id, delivery_ids))
 
 
 async def _send_whatsapp_batch(notification_id: str, delivery_ids: List[str]) -> None:
