@@ -33,3 +33,28 @@ internal database url=postgresql://tasker:fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa@dpg-d
 external db url=postgresql://tasker:fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa@dpg-d8kp6e3eo5us73env830-a.oregon-postgres.render.com/tasker_g3j2
 
 psql command = PGPASSWORD=fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa psql -h dpg-d8kp6e3eo5us73env830-a.oregon-postgres.render.com -U tasker tasker_g3j2
+
+
+// create task example 
+{
+  "title": "IT Support & Setup",
+  "description": "My laptop has been shutting down unexpectedly and I need someone to diagnose and fix the issue. If any parts need replacement, let me know before proceeding.",
+  "category_id": "c101a111-2222-3333-4444-555555555553",
+  "service_id": "s202b222-1111-2222-3333-444444444412",
+  "budget_min": 10000,
+  "budget_max": 10000,
+  "pricing_model": "fixed",
+  "expires_at": "2026-07-19T14:13:25.068492Z",
+  "scheduled_start_at": null,
+  "locations": [
+    {
+      "location_type": "service",
+      "latitude": 6.8598795,
+      "longitude": 7.4134683,
+      "address": "VC67+46M University Medical Centre, University of Nigeria James Africanus Norton Rd, Ihe Nsukka, Nsukka 410105, Enugu, Nigeria",
+      "city": "Nsukka",
+      "state": "Enugu",
+      "country": "Nigeria"
+    }
+  ]
+}

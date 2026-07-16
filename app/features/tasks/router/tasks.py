@@ -1,6 +1,6 @@
 from app.core.deps import GetCurrentUserOrAdminOptional
 from app.core.models.users import UserType
-from typing import Optional, Union
+from typing import Optional, Union, List
 from datetime import datetime
 from app.core.models.admins import AdminUser
 from app.core.services.storage import StorageService, get_storage_service
@@ -64,17 +64,6 @@ async def create_task(
     """Create a new task with spatial location coordinates."""
     try:
         task = await task_service.create_task(current_user.id, schema)
-
-        background_tasks.add_task(
-            notification_service.create_notification,
-            schema=CreateNotification(
-                type=NotificationType.SECURITY_ALERT,
-                title="Task Created Successfully",
-                body=f"Your task '{task.title}' has been created. Your start pin is {task.start_pin} and completion pin is {task.completion_pin}.",
-                recipient_ids=[current_user.id],
-            ),
-            created_by=current_user.id,
-        )
 
         # pyrefly: ignore [bad-argument-type]
         background_tasks.add_task(process_new_task_workflow.delay, task.id)
@@ -488,4 +477,33 @@ async def delete_task_attachment(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while deleting the attachment.",
+        )
+
+
+@router.get(
+    "/{task_id}/nearby-providers",
+    response_model=BaseAPIResponse[List[UserResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_nearby_providers(
+    task_id: str,
+    radius_km: float = Query(50.0, ge=0.1, description="Radius in kilometers"),
+    current_user: UserResponse = Depends(GetCurrentUser()),
+    task_service: TaskService = Depends(get_task_service),
+):
+    """Fetch providers within a specific radius of a task."""
+    try:
+        providers = await task_service.get_providers_near_task(task_id, radius_km)
+        return BaseAPIResponse[List[UserResponse]](
+            data=providers,
+            detail="Nearby providers fetched successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching nearby providers.",
         )

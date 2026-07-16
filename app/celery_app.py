@@ -7,6 +7,7 @@ celery_app = Celery(
     "tasker",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
+    include=["app.features.tasks.celery_tasks"]
 )
 
 celery_app.conf.update(
@@ -25,6 +26,7 @@ celery_app.conf.update(
         Queue("sms"),
         Queue("push"),
         Queue("whatsapp"),
+        Queue("tasks"),
     ),
     task_default_queue="default",
 
@@ -36,6 +38,9 @@ celery_app.conf.update(
         "notifications.send_sms_batch": {"queue": "sms"},
         "notifications.send_push_batch": {"queue": "push"},
         "notifications.send_whatsapp_batch": {"queue": "whatsapp"},
+        "tasks.match_providers_for_task": {"queue": "tasks"},
+        "tasks.notify_providers_of_task": {"queue": "tasks"},
+        "tasks.process_new_task_workflow": {"queue": "tasks"},
     },
 )
 
@@ -44,4 +49,5 @@ celery_app.autodiscover_tasks([
     "app.core",
     "app.features.users",
     "app.features.notifications",
+    "app.features.tasks",
 ])

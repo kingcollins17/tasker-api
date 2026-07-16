@@ -18,6 +18,7 @@ from app.core.models.notifications import (
 from app.core.repository import Repository
 from app.features.notifications.tasks import process_notification
 from app.core.utils.celery import run_async
+from app.core.queries.task_queries import TaskQueries
 
 
 @shared_task(name="tasks.match_providers_for_task")
@@ -49,26 +50,8 @@ async def _match_providers_for_task_async(task_id: str, radius_km: float) -> Lis
         distance_m = radius_km * 1000
 
         # Query providers
-        stmt = (
-            select(User.id)
-            .join(ProviderProfile, col(ProviderProfile.user_id) == User.id)
-            .join(
-                ProviderServiceLink,
-                col(ProviderServiceLink.provider_id) == ProviderProfile.user_id,
-            )
-            .join(UserLocation, col(UserLocation.user_id) == User.id)
-            .where(col(ProviderServiceLink.service_id) == task.service_id)
-            .where(col(User.region_id) == task.region_id)
-            .where(
-                func.ST_DistanceSphere(
-                    UserLocation.last_known_location, task_loc.geography_point
-                )
-                <= distance_m
-            )
-            .order_by(
-                col(User.average_ratings).desc(), col(User.credibility_score).desc()
-            )
-            .limit(100)
+        stmt = TaskQueries.get_providers_near_task_query(
+            task, task_loc, radius_km, select_ids_only=True
         )
 
         res = await session.exec(stmt)

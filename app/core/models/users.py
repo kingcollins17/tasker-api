@@ -144,6 +144,8 @@ class UserLocation(SQLModel, table=True):
         default=None,
         sa_column=Column(PointType, nullable=True)
     )
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     address_line: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

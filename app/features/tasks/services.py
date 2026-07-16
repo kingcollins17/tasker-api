@@ -22,8 +22,10 @@ from app.core.models.tasks import (
     TaskAssignmentStatus,
     LocationType,
 )
-from app.core.models.users import UserType, User
+from app.core.models.users import UserType, User, ProviderProfile, UserLocation
+from app.core.models.services import ProviderServiceLink
 from app.features.tasks.schemas import TaskCreate, TaskUpdate, TaskBidCreate
+from app.core.queries.task_queries import TaskQueries
 
 
 class TaskService:
@@ -67,10 +69,16 @@ class TaskService:
             budget_min=schema.budget_min,
             budget_max=schema.budget_max,
             pricing_model=schema.pricing_model or "fixed",
-            scheduled_start_at=schema.scheduled_start_at,
+            scheduled_start_at=(
+                schema.scheduled_start_at.replace(tzinfo=None)
+                if schema.scheduled_start_at
+                else None
+            ),
             start_pin=start_pin,
             completion_pin=completion_pin,
-            expires_at=schema.expires_at,
+            expires_at=(
+                schema.expires_at.replace(tzinfo=None) if schema.expires_at else None
+            ),
             status=TaskStatus.OPEN,
         )
         task = await self.task_repo.add(task)
@@ -156,20 +164,24 @@ class TaskService:
             count_statement = count_statement.where(Task.region_id == region_id)
 
         if budget_min is not None:
-            statement = statement.where(Task.budget_min >= budget_min)
-            count_statement = count_statement.where(Task.budget_min >= budget_min)
+            statement = statement.where(col(Task.budget_min) >= budget_min)
+            count_statement = count_statement.where(col(Task.budget_min) >= budget_min)
 
         if budget_max is not None:
-            statement = statement.where(Task.budget_max <= budget_max)
-            count_statement = count_statement.where(Task.budget_max <= budget_max)
+            statement = statement.where(col(Task.budget_max) <= budget_max)
+            count_statement = count_statement.where(col(Task.budget_max) <= budget_max)
 
         if scheduled_start_at:
-            statement = statement.where(Task.scheduled_start_at >= scheduled_start_at)
-            count_statement = count_statement.where(Task.scheduled_start_at >= scheduled_start_at)
+            statement = statement.where(
+                col(Task.scheduled_start_at) >= scheduled_start_at
+            )
+            count_statement = count_statement.where(
+                col(Task.scheduled_start_at) >= scheduled_start_at
+            )
 
         if expires_at:
-            statement = statement.where(Task.expires_at <= expires_at)
-            count_statement = count_statement.where(Task.expires_at <= expires_at)
+            statement = statement.where(col(Task.expires_at) <= expires_at)
+            count_statement = count_statement.where(col(Task.expires_at) <= expires_at)
 
         if customer_id:
             statement = statement.where(Task.customer_id == customer_id)
@@ -264,7 +276,11 @@ class TaskService:
         return tasks, total
 
     async def update_task(
-        self, task_id: str, current_user_id: str, schema: TaskUpdate, is_admin: bool = False
+        self,
+        task_id: str,
+        current_user_id: str,
+        schema: TaskUpdate,
+        is_admin: bool = False,
     ) -> Task:
         task = await self.task_repo.get(task_id)
         if not task:
@@ -315,7 +331,9 @@ class TaskService:
         await self.task_repo.refresh(task)
         return task
 
-    async def delete_task(self, task_id: str, current_user_id: str, is_admin: bool = False) -> bool:
+    async def delete_task(
+        self, task_id: str, current_user_id: str, is_admin: bool = False
+    ) -> bool:
         task = await self.task_repo.get(task_id)
         if not task:
             raise HTTPException(
@@ -515,6 +533,35 @@ class TaskService:
         await self.history_repo.add(history)
 
         return assignment
+
+    async def get_providers_near_task(
+        self, task_id: str, radius_km: float
+    ) -> List[User]:
+        task = await self.task_repo.get(task_id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
+            )
+
+        # Get task location
+        stmt_loc = (
+            select(TaskLocation).where(col(TaskLocation.task_id) == task_id).limit(1)
+        )
+        res_loc = await self.task_repo.execute(stmt_loc)
+        task_loc = res_loc.one_or_none()
+
+        if not task_loc or not task_loc.geography_point:
+            return []
+
+        distance_m = radius_km * 1000
+
+        # Query providers
+        stmt = TaskQueries.get_providers_near_task_query(
+            task, task_loc, radius_km, select_ids_only=False
+        )
+
+        res = await self.user_repo.execute(stmt)
+        return list(res.all())
 
 
 def get_task_service(

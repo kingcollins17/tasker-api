@@ -135,7 +135,7 @@ class NotificationDelivery(SQLModel, table=True):
     )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    recipient_id: str = Field(foreign_key="notification_recipients.id", index=True)
+    recipient_id: str = Field(foreign_key="notification_recipients.id", index=True, ondelete="CASCADE")
     channel: NotificationChannel
     status: DeliveryStatus = Field(default=DeliveryStatus.PENDING)
     attempt: int = Field(default=1)

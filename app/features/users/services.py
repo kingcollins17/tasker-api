@@ -569,6 +569,8 @@ class UserService:
         if locations:
             updates = {
                 "last_known_location": wkt_point,
+                "latitude": latitude,
+                "longitude": longitude,
                 "address_line": address_line,
                 "updated_at": utc_now(),
             }
@@ -579,6 +581,8 @@ class UserService:
             new_location = UserLocation(
                 user_id=user_id,
                 last_known_location=wkt_point,
+                latitude=latitude,
+                longitude=longitude,
                 address_line=address_line,
                 region_id=region_id,
             )
