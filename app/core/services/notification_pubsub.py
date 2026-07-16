@@ -47,18 +47,35 @@ async def _listen() -> None:
 
     try:
         async for message in _pubsub.listen():
+            logger.warning(f"[PubSub] Message received {message}")
+
             if message["type"] != "message":
                 continue
 
             try:
+                logger.info(f"[PubSub] Received raw message: {message['data']}")
                 data = json.loads(message["data"])
                 user_id = data.get("user_id")
                 notification = data.get("notification")
 
                 if not user_id or not notification:
+                    logger.warning(
+                        "[PubSub] Message missing 'user_id' or 'notification' payload."
+                    )
                     continue
 
-                await manager.send_to_user(user_id, notification)
+                logger.info(
+                    f"[PubSub] Attempting to deliver notification to user_id: {user_id}"
+                )
+                success = await manager.send_to_user(user_id, notification)
+                if success:
+                    logger.info(
+                        f"[PubSub] Successfully delivered notification to user_id: {user_id}"
+                    )
+                else:
+                    logger.info(
+                        f"[PubSub] User {user_id} not connected to this instance, message not delivered."
+                    )
             except json.JSONDecodeError:
                 logger.warning("[PubSub] Received non-JSON message, skipping.")
             except Exception as e:
