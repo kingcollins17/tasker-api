@@ -39,54 +39,74 @@ async def _listen() -> None:
     global _pubsub
 
     cache = get_cache_service()
-    _pubsub = cache.pubsub()
-    await _pubsub.subscribe(NOTIFICATION_CHANNEL)
-    logger.info(f"[PubSub] Subscribed to '{NOTIFICATION_CHANNEL}' channel.")
-
     manager = get_connection_manager()
 
-    try:
-        async for message in _pubsub.listen():
-            logger.warning(f"[PubSub] Message received {message}")
+    while True:
+        try:
+            _pubsub = cache.pubsub()
+            await _pubsub.subscribe(NOTIFICATION_CHANNEL)
+            logger.info(f"[PubSub] Subscribed to '{NOTIFICATION_CHANNEL}' channel.")
 
-            if message["type"] != "message":
-                continue
-
-            try:
-                logger.info(f"[PubSub] Received raw message: {message['data']}")
-                data = json.loads(message["data"])
-                user_id = data.get("user_id")
-                notification = data.get("notification")
-
-                if not user_id or not notification:
-                    logger.warning(
-                        "[PubSub] Message missing 'user_id' or 'notification' payload."
-                    )
+            while True:
+                # Use get_message with a timeout so we can periodically ping
+                # the connection to keep it alive on Serverless Redis (Upstash)
+                message = await _pubsub.get_message(
+                    ignore_subscribe_messages=False, timeout=60.0
+                )
+                if message is None:
+                    await _pubsub.ping()
                     continue
 
-                logger.info(
-                    f"[PubSub] Attempting to deliver notification to user_id: {user_id}"
-                )
-                success = await manager.send_to_user(user_id, notification)
-                if success:
+                logger.warning(f"[PubSub] Message received {message}")
+
+                if message["type"] != "message":
+                    continue
+
+                try:
+                    logger.info(f"[PubSub] Received raw message: {message['data']}")
+                    data = json.loads(message["data"] or "{}")
+                    user_id = data.get("user_id")
+                    notification = data.get("notification")
+
+                    if not user_id or not notification:
+                        logger.warning(
+                            "[PubSub] Message missing 'user_id' or 'notification' payload."
+                        )
+                        continue
+
                     logger.info(
-                        f"[PubSub] Successfully delivered notification to user_id: {user_id}"
+                        f"[PubSub] Attempting to deliver notification to user_id: {user_id}"
                     )
-                else:
-                    logger.info(
-                        f"[PubSub] User {user_id} not connected to this instance, message not delivered."
-                    )
-            except json.JSONDecodeError:
-                logger.warning("[PubSub] Received non-JSON message, skipping.")
-            except Exception as e:
-                logger.error(f"[PubSub] Error processing message: {e}")
-    except asyncio.CancelledError:
-        logger.info("[PubSub] Listener task cancelled.")
-    finally:
-        if _pubsub:
-            await _pubsub.unsubscribe(NOTIFICATION_CHANNEL)
-            await _pubsub.close()
-        logger.info("[PubSub] Cleaned up subscriber connection.")
+                    success = await manager.send_to_user(user_id, notification)
+                    if success:
+                        logger.info(
+                            f"[PubSub] Successfully delivered notification to user_id: {user_id}"
+                        )
+                    else:
+                        logger.info(
+                            f"[PubSub] User {user_id} not connected to this instance, message not delivered."
+                        )
+                except json.JSONDecodeError:
+                    logger.warning("[PubSub] Received non-JSON message, skipping.")
+                except Exception as e:
+                    logger.error(f"[PubSub] Error processing message: {e}")
+
+        except asyncio.CancelledError:
+            logger.info("[PubSub] Listener task cancelled.")
+            break
+        except Exception as e:
+            logger.error(
+                f"[PubSub] Connection error in listener loop: {e}. Reconnecting in 5s..."
+            )
+            await asyncio.sleep(5)
+        finally:
+            if _pubsub:
+                try:
+                    await _pubsub.unsubscribe(NOTIFICATION_CHANNEL)
+                    await _pubsub.close()
+                except Exception:
+                    pass
+            logger.info("[PubSub] Cleaned up subscriber connection.")
 
 
 async def start_notification_listener() -> None:

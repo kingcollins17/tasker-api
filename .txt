@@ -58,3 +58,5 @@ psql command = PGPASSWORD=fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa psql -h dpg-d8kp6e3eo
     }
   ]
 }
+
+wscat -c "ws://127.0.0.1:8000/api/v1/notifications/ws?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImEzNjA5NDcyLTk1Y2UtNDZhYy05NjM3LWNkMGQ5ZTk0ZGNhNyIsImVtYWlsIjoiaGFzc2FuMTIzQHlvcG1haWwuY29tIiwiaXNfYWN0aXZlIjp0cnVlLCJleHAiOjE3ODcwNjY2Mzh9.XBmyzmeOQJVEIdYARPqZRvOrEj7EAuSHR_3sBMkMmqI"
