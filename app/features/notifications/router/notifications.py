@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.deps import GetCurrentUser
 from app.core.error_handler import AppErrorHandler
+from app.core.services.connection_manager import get_connection_manager
+from app.core.utils import security
 from app.features.notifications.schemas import (
     MarkReadRequest,
     NotificationCountsResponse,
@@ -116,3 +118,48 @@ async def mark_as_read(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while marking notifications as read.",
         )
+
+
+@router.websocket("/ws")
+async def notifications_websocket(
+    websocket: WebSocket,
+    token: str = Query(default=None),
+):
+    """WebSocket endpoint for real-time in-app notifications.
+
+    Clients connect with their JWT token as a query parameter:
+        ws://<host>/api/v1/notifications/ws?token=<jwt>
+
+    On successful authentication the connection is held open. The server
+    pushes notification payloads as JSON messages whenever a new in-app
+    notification is created for the authenticated user.
+    """
+    # Authenticate via JWT query parameter
+    if not token:
+        await websocket.close(code=4001, reason="Missing authentication token")
+        return
+
+    payload = security.decode_access_token(token)
+    if not payload:
+        await websocket.close(code=4001, reason="Invalid or expired token")
+        return
+
+    user_id = payload.get("id")
+    if not user_id:
+        await websocket.close(code=4001, reason="Invalid token payload")
+        return
+
+    manager = get_connection_manager()
+    await manager.connect(user_id, websocket)
+
+    try:
+        # Keep the connection alive by waiting for incoming messages.
+        # Clients can send pings or any text; the server just reads to
+        # detect disconnection.
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(user_id, websocket)
+    except Exception:
+        manager.disconnect(user_id, websocket)
+

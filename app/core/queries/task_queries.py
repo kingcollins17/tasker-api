@@ -27,8 +27,13 @@ class TaskQueries:
             )
             .join(UserLocation, col(UserLocation.user_id) == User.id)
             .where(col(ProviderServiceLink.service_id) == task.service_id)
-            .where(col(User.region_id) == task.region_id)
-            .where(
+        )
+
+        if task.region_id:
+            stmt = stmt.where(col(User.region_id) == task.region_id)
+
+        stmt = (
+            stmt.where(
                 func.ST_DistanceSphere(
                     UserLocation.last_known_location, task_loc.geography_point
                 )

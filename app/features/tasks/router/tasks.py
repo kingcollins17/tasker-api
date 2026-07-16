@@ -25,6 +25,7 @@ from app.core.deps import (
     GetCurrentUser,
 )
 from app.features.users.schemas import UserResponse
+from app.core.schemas.users import MinimalProviderResponse
 from app.features.tasks.schemas import (
     TaskCreate,
     TaskUpdate,
@@ -482,19 +483,41 @@ async def delete_task_attachment(
 
 @router.get(
     "/{task_id}/nearby-providers",
-    response_model=BaseAPIResponse[List[UserResponse]],
+    response_model=BaseAPIResponse[List[MinimalProviderResponse]],
     status_code=status.HTTP_200_OK,
 )
 async def get_nearby_providers(
     task_id: str,
-    radius_km: float = Query(50.0, ge=0.1, description="Radius in kilometers"),
+    radius_km: float = Query(10.0, ge=0.1, description="Radius in kilometers"),
     current_user: UserResponse = Depends(GetCurrentUser()),
     task_service: TaskService = Depends(get_task_service),
 ):
     """Fetch providers within a specific radius of a task."""
     try:
-        providers = await task_service.get_providers_near_task(task_id, radius_km)
-        return BaseAPIResponse[List[UserResponse]](
+        users = await task_service.get_providers_near_task(task_id, radius_km)
+
+        providers = []
+        for u in users:
+            fullname = None
+            gender = None
+            if u.provider_profile:
+                first_name = u.provider_profile.first_name or ""
+                last_name = u.provider_profile.last_name or ""
+                fullname = f"{first_name} {last_name}".strip() or None
+                gender = u.provider_profile.gender
+
+            providers.append(
+                MinimalProviderResponse(
+                    id=u.id,
+                    email=u.email,
+                    fullname=fullname,
+                    average_ratings=u.average_ratings,
+                    credibility_score=u.credibility_score,
+                    gender=gender,
+                )
+            )
+
+        return BaseAPIResponse[List[MinimalProviderResponse]](
             data=providers,
             detail="Nearby providers fetched successfully.",
             status_code=status.HTTP_200_OK,

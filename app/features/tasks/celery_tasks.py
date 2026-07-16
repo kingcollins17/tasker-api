@@ -22,7 +22,7 @@ from app.core.queries.task_queries import TaskQueries
 
 
 @shared_task(name="tasks.match_providers_for_task")
-def match_providers_for_task(task_id: str, radius_km: float = 50.0) -> List[str]:
+def match_providers_for_task(task_id: str, radius_km: float = 10.0) -> List[str]:
     """Finds providers matching the task criteria and returns their IDs."""
     logger.info(f"Matching providers for task {task_id} within {radius_km}km")
     return run_async(_match_providers_for_task_async(task_id, radius_km))
@@ -84,6 +84,7 @@ async def _notify_providers_of_task_async(provider_ids: List[str], task_id: str)
             body=f"A new task '{task.title}' is available in your area.",
             priority=NotificationPriority.HIGH,
             data={"task_id": task_id},
+            channels=["email", "push", "in_app"],
         )
         session.add(notification)
         await session.flush()

@@ -12,6 +12,7 @@ Design principles:
 """
 
 import asyncio
+import json
 from collections import defaultdict
 from typing import Dict, List, Optional
 
@@ -32,7 +33,9 @@ from app.core.models.notifications import (
 from app.core.models.users import User
 from app.core.repository import QueryOptions, Repository
 from app.core.services import email_service, sms_service, whatsapp_service
+from app.core.services.cache import get_cache_service
 from app.core.services.cloud_messaging import MockCloudMessagingService
+from app.core.services.notification_pubsub import NOTIFICATION_CHANNEL
 from app.core.utils.datetime_helper import utc_now
 from app.core.utils.celery import run_async
 
@@ -40,9 +43,6 @@ from app.core.utils.celery import run_async
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 BATCH_SIZE = 1000
-
-
-
 
 
 # ── Step 1: Fan-out task ─────────────────────────────────────────────────────
@@ -263,10 +263,29 @@ async def _process_batch(notification_id: str, recipient_ids: List[str]) -> None
                 # pyrefly: ignore [not-callable]
                 send_whatsapp_batch.delay(notification_id, delivery_ids)
             elif channel == NotificationChannel.IN_APP.value:
-                # In-app delivery is implicit — the recipient row is enough
+                # Mark in-app deliveries as delivered
                 await delivery_repo.bulk_update(
                     delivery_ids, {"status": DeliveryStatus.DELIVERED.value}
                 )
+                # Publish real-time WebSocket events via Redis Pub/Sub
+                cache = get_cache_service()
+                notification_payload = {
+                    "notification_id": notification.id,
+                    "type": notification.type.value,
+                    "title": notification.title,
+                    "body": notification.body,
+                    "data": notification.data,
+                    "priority": notification.priority.value,
+                    "created_at": notification.created_at.isoformat(),
+                }
+                for recipient in recipients:
+                    message = json.dumps(
+                        {
+                            "user_id": recipient.recipient_id,
+                            "notification": notification_payload,
+                        }
+                    )
+                    await cache.publish(NOTIFICATION_CHANNEL, message)
 
         logger.info(
             f"[Pipeline] Batch complete: {len(deliveries)} deliveries created, "

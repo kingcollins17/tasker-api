@@ -5,6 +5,11 @@ from .cache import CacheService, get_cache_service
 from .payment import PaymentGateway, PaystackPaymentGateway, get_paystack_gateway
 from .storage import StorageService, MockStorageService, get_storage_service
 from .cloud_messaging import CloudMessagingService, MockCloudMessagingService, get_cloud_messaging_service
+from .connection_manager import ConnectionManager, get_connection_manager
+from .notification_pubsub import (
+    start_notification_listener,
+    stop_notification_listener,
+)
 from .otp import (
     OTPService,
     OTPError,
@@ -42,6 +47,7 @@ __all__ = [
     "MockStorageService",
     "CloudMessagingService",
     "MockCloudMessagingService",
+    "ConnectionManager",
     "OTPService",
     "OTPError",
     "OTPRateLimitError",
@@ -55,6 +61,9 @@ __all__ = [
     "get_otp_service",
     "get_storage_service",
     "get_cloud_messaging_service",
+    "get_connection_manager",
+    "start_notification_listener",
+    "stop_notification_listener",
 ]
 
 

@@ -7,7 +7,11 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.core.services import get_cache_service
+from app.core.services import (
+    get_cache_service,
+    start_notification_listener,
+    stop_notification_listener,
+)
 from app.celery_app import celery_app  # Ensure Celery app is loaded and bound
 from app.features.users.router import router as users_router
 from app.features.regions.router import router as regions_router
@@ -42,37 +46,13 @@ async def lifespan(app: FastAPI):
     print(f"Starting up {settings.PROJECT_NAME}...")
     await init_db()
 
-    # Start Celery worker and beat processes using multiprocessing
-    # try:
-    #     multiprocessing.set_start_method("spawn", force=True)
-    # except RuntimeError:
-    #     pass
-
-    # celery_process = multiprocessing.Process(target=run_celery_worker, daemon=True)
-    # celery_process.start()
-    # print("Celery worker process started.")
-
-    # celery_beat_process = multiprocessing.Process(target=run_celery_beat, daemon=True)
-    # celery_beat_process.start()
-    # print("Celery beat process started.")
+    # Start the Redis Pub/Sub listener for real-time in-app notifications
+    await start_notification_listener()
 
     yield
     # Shutdown logic
-    # print(f"Shutting down {settings.PROJECT_NAME}...")
-    # if celery_process and celery_process.is_alive():
-    #     print("Terminating Celery worker process...")
-    #     celery_process.terminate()
-    #     celery_process.join(timeout=5)
-    #     if celery_process.is_alive():
-    #         celery_process.kill()
 
-    # if celery_beat_process and celery_beat_process.is_alive():
-    #     print("Terminating Celery beat process...")
-    #     celery_beat_process.terminate()
-    #     celery_beat_process.join(timeout=5)
-    #     if celery_beat_process.is_alive():
-    #         celery_beat_process.kill()
-
+    await stop_notification_listener()
     await get_cache_service().close()
 
 
