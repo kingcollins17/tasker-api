@@ -221,6 +221,15 @@ class VerifyOTP(BaseModel):
 class CustomerProfileUpdate(BaseModel):
     first_name: Optional[str] = Field(None, description="Updated first name")
     last_name: Optional[str] = Field(None, description="Updated last name")
+    phone_number: Optional[str] = Field(
+        None, description="Updated phone number")
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return format_nigerian_phone(v)
+        return v
 
 
 class UpdateLocation(BaseModel):

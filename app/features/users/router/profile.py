@@ -106,7 +106,8 @@ async def update_seeker_profile(
         updated_user = await user_service.update_customer_profile(
             user_id=current_user.id,
             first_name=schema.first_name,
-            last_name=schema.last_name
+            last_name=schema.last_name,
+            phone_number=schema.phone_number
         )
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(updated_user),

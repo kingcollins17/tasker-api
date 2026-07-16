@@ -409,17 +409,22 @@ class UserService:
         # 1. Update phone number on the User model if requested
         if phone_number is not None:
             phone_number = format_nigerian_phone(phone_number)
-            # Check uniqueness
-            existing = await self.user_repo.get_all(
-                QueryOptions(filters={"phone_number": phone_number})
-            )
-            if existing and existing[0].id != user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="A user with this phone number already exists.",
-                )
 
-            await self.user_repo.update(user_id, {"phone_number": phone_number})
+            user = await self.user_repo.get(user_id)
+            if user and user.phone_number != phone_number:
+                # Check uniqueness
+                existing = await self.user_repo.get_all(
+                    QueryOptions(filters={"phone_number": phone_number})
+                )
+                if existing and existing[0].id != user_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="A user with this phone number already exists.",
+                    )
+
+                await self.user_repo.update(
+                    user_id, {"phone_number": phone_number, "phone_verified": False}
+                )
 
         # 2. Update provider profile details
         profiles = await self.provider_repo.get_all(
@@ -487,8 +492,28 @@ class UserService:
         user_id: str,
         first_name: Optional[str] = None,
         last_name: Optional[str] = None,
+        phone_number: Optional[str] = None,
     ) -> User:
-        """Update customer (seeker) profile details (first_name, last_name)."""
+        """Update customer (seeker) profile details (first_name, last_name) and user details (phone_number)."""
+
+        if phone_number is not None:
+            phone_number = format_nigerian_phone(phone_number)
+
+            user = await self.user_repo.get(user_id)
+            if user and user.phone_number != phone_number:
+                # Check uniqueness
+                existing = await self.user_repo.get_all(
+                    QueryOptions(filters={"phone_number": phone_number})
+                )
+                if existing and existing[0].id != user_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="A user with this phone number already exists.",
+                    )
+
+                await self.user_repo.update(
+                    user_id, {"phone_number": phone_number, "phone_verified": False}
+                )
 
         profiles = await self.customer_repo.get_all(
             QueryOptions(filters={"user_id": user_id})
@@ -568,19 +593,19 @@ class UserService:
         token_devices = await self.device_repo.get_all(
             QueryOptions(filters={"messaging_token": token})
         )
-        
+
         # 2. Check if the user already has a device for this platform
         user_platform_devices = await self.device_repo.get_all(
             QueryOptions(filters={"user_id": user_id, "platform": platform})
         )
-        
+
         if token_devices:
             token_device = token_devices[0]
             if user_platform_devices and user_platform_devices[0].id != token_device.id:
                 # User has an existing device for this platform, but token is linked to a different device record.
                 # Delete old platform device to prevent unique constraint failure.
                 await self.device_repo.delete(user_platform_devices[0].id)
-            
+
             # Update the existing token device to the current user and platform
             await self.device_repo.update(
                 token_device.id,
