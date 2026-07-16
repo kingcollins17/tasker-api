@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
-
+import json
+from datetime import datetime
+from app.core.services.cache import get_cache_service
+from app.core.services.notification_pubsub import NOTIFICATION_CHANNEL
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.deps import GetCurrentUser
 from app.core.error_handler import AppErrorHandler
@@ -163,3 +166,24 @@ async def notifications_websocket(
     except Exception:
         manager.disconnect(user_id, websocket)
 
+
+@router.post("/test-in-app/{user_id}")
+async def test_in_app_notification(user_id: str):
+    """Test endpoint for sending an in-app notification directly via Redis Pub/Sub."""
+    cache = get_cache_service()
+    notification_payload = {
+        "notification_id": "test-1234",
+        "type": "test",
+        "title": "Test Notification",
+        "body": "This is a test in-app notification",
+        "data": {},
+        "priority": "normal",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    message = json.dumps({
+        "user_id": user_id,
+        "notification": notification_payload
+    })
+    
+    receivers = await cache.publish(NOTIFICATION_CHANNEL, message)
+    return {"status": "sent", "receivers": receivers, "user_id": user_id}
