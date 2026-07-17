@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from app.core.models.tasks import TaskStatus, TaskBidStatus, TaskAssignmentStatus, LocationType
+from app.core.schemas.users import MinimalProviderResponse
 
 # Tasks Schemas
 class LocationCreate(BaseModel):
@@ -76,6 +77,21 @@ class TaskBidResponse(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
+class TaskMinimalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    title: Optional[str] = None
+    category_id: Optional[str] = None
+    service_id: Optional[str] = None
+    status: Optional[TaskStatus] = None
+
+class TaskBidWithTaskResponse(TaskBidResponse):
+    task: Optional[TaskMinimalResponse] = None
+
+class TaskBidWithProviderResponse(TaskBidResponse):
+    provider: Optional[MinimalProviderResponse] = None
+
 # Task Assignment Response (referenced in TaskResponse)
 class TaskAssignmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -90,6 +106,9 @@ class TaskAssignmentResponse(BaseModel):
     completed_at: Optional[datetime] = None
     status: Optional[TaskAssignmentStatus] = None
 
+class TaskAssignmentWithTaskResponse(TaskAssignmentResponse):
+    task: Optional[TaskMinimalResponse] = None
+
 # Task Attachment Response
 class TaskAttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -103,6 +122,23 @@ class TaskAttachmentResponse(BaseModel):
     url: Optional[str] = None
     type: Optional[str] = None
     created_at: Optional[datetime] = None
+
+# Task List Response
+class TaskListResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: Optional[str] = None
+    customer_id: Optional[str] = None
+    title: Optional[str] = None
+    category_id: Optional[str] = None
+    service_id: Optional[str] = None
+    budget_min: Optional[float] = None
+    budget_max: Optional[float] = None
+    pricing_model: Optional[str] = None
+    status: Optional[TaskStatus] = None
+    created_at: Optional[datetime] = None
+    scheduled_start_at: Optional[datetime] = None
+    distance_km: Optional[float] = None
 
 # Task Response
 class TaskResponse(BaseModel):
@@ -136,3 +172,8 @@ class TaskBidCreate(BaseModel):
     price: float = Field(..., ge=0, description="Bid amount")
     message: Optional[str] = Field(default=None, description="Message to the customer")
     estimated_duration: Optional[str] = Field(default=None, description="Estimated work duration, e.g. 2 hours")
+
+class TaskBidUpdate(BaseModel):
+    price: Optional[float] = Field(None, ge=0, description="Bid amount")
+    message: Optional[str] = Field(None, description="Message to the customer")
+    estimated_duration: Optional[str] = Field(None, description="Estimated work duration, e.g. 2 hours")

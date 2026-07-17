@@ -33,6 +33,7 @@ from app.features.tasks.schemas import (
     TaskLocationUpdate,
     TaskLocationResponse,
     TaskAttachmentResponse,
+    TaskListResponse,
 )
 
 from app.core.models.tasks import TaskAttachment
@@ -86,7 +87,7 @@ async def create_task(
 
 @router.get(
     "",
-    response_model=BaseAPIResponse[PaginatedData[TaskResponse]],
+    response_model=BaseAPIResponse[PaginatedData[TaskListResponse]],
     status_code=status.HTTP_200_OK,
 )
 async def list_tasks(
@@ -130,13 +131,13 @@ async def list_tasks(
             expires_at=expires_at,
             customer_id=customer_id,
         )
-        data = PaginatedData[TaskResponse](
-            items=[TaskResponse.model_validate(t) for t in tasks],
+        data = PaginatedData[TaskListResponse](
+            items=[TaskListResponse.model_validate(t) for t in tasks],
             total=total,
             page=page,
             per_page=per_page,
         )
-        return BaseAPIResponse[PaginatedData[TaskResponse]](
+        return BaseAPIResponse[PaginatedData[TaskListResponse]](
             data=data,
             detail="Tasks retrieved successfully.",
             status_code=status.HTTP_200_OK,
