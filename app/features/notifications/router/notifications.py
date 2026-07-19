@@ -1,6 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from app.core.services.cache import get_cache_service
 from app.core.services.notification_pubsub import NOTIFICATION_CHANNEL
 from app.core.api_response import BaseAPIResponse, PaginatedData
@@ -178,12 +186,9 @@ async def test_in_app_notification(user_id: str):
         "body": "This is a test in-app notification",
         "data": {},
         "priority": "normal",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    message = json.dumps({
-        "user_id": user_id,
-        "notification": notification_payload
-    })
-    
+    message = json.dumps({"user_id": user_id, "notification": notification_payload})
+
     receivers = await cache.publish(NOTIFICATION_CHANNEL, message)
     return {"status": "sent", "receivers": receivers, "user_id": user_id}
