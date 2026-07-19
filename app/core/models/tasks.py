@@ -97,6 +97,9 @@ class Task(SQLModel, table=True):
         back_populates="task",
         sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
     )
+    category: Optional["ServiceCategory"] = Relationship(
+        sa_relationship_kwargs={"lazy": "joined"}
+    )
 
 
 class TaskLocation(SQLModel, table=True):

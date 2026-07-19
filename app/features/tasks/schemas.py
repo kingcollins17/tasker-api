@@ -3,6 +3,7 @@ from typing import Optional, List
 from datetime import datetime
 from app.core.models.tasks import TaskStatus, TaskBidStatus, TaskAssignmentStatus, LocationType
 from app.core.schemas.users import MinimalProviderResponse
+from app.features.services.schemas import CategoryResponse
 
 # Tasks Schemas
 class LocationCreate(BaseModel):
@@ -139,6 +140,7 @@ class TaskListResponse(BaseModel):
     created_at: Optional[datetime] = None
     scheduled_start_at: Optional[datetime] = None
     distance_km: Optional[float] = None
+    category: Optional[CategoryResponse] = None
 
 # Task Response
 class TaskResponse(BaseModel):
