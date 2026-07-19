@@ -101,6 +101,14 @@ class Task(SQLModel, table=True):
         sa_relationship_kwargs={"lazy": "joined"}
     )
 
+    @property
+    def distance_km(self) -> Optional[float]:
+        if self.locations:
+            for loc in self.locations:
+                if getattr(loc, "distance_km", None) is not None:
+                    return loc.distance_km
+        return None
+
 
 class TaskLocation(SQLModel, table=True):
     __tablename__ = "task_locations"  # type: ignore
