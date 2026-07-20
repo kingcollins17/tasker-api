@@ -37,6 +37,46 @@ router = APIRouter(tags=["Bids"])
 get_current_provider = GetCurrentUser(required_type=UserType.PROVIDER)
 
 
+@router.get(
+    "/tasks/{task_id}/my-bid",
+    response_model=BaseAPIResponse[TaskBidResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_my_bid_for_task(
+    task_id: str,
+    current_provider: UserResponse = Depends(get_current_provider),
+    bid_repo: Repository[TaskBid] = Depends(GetRepository(TaskBid)),
+):
+    """Retrieve the current provider's bid for a specific task."""
+    try:
+        query = select(TaskBid).where(
+            TaskBid.task_id == task_id,
+            TaskBid.provider_id == current_provider.id
+        )
+        result = await bid_repo.execute(query)
+        bid = result.scalar_one_or_none()
+        
+        if not bid:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Bid not found for this task."
+            )
+
+        return BaseAPIResponse[TaskBidResponse](
+            data=TaskBidResponse.model_validate(bid),
+            detail="Bid retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving the bid.",
+        )
+
+
 @router.post(
     "/tasks/{task_id}/bids",
     response_model=BaseAPIResponse[TaskBidResponse],
@@ -56,10 +96,15 @@ async def create_bid(
 
         task = await task_service.get_task(task_id)
         if task and task.customer_id:
+            provider_name = (
+                current_provider.provider_profile.first_name
+                if current_provider.provider_profile and current_provider.provider_profile.first_name
+                else "A provider"
+            )
             notification_schema = CreateNotification(
                 type=NotificationType.NEW_MESSAGE,
                 title="New Bid Received",
-                body="A new bid has been placed on your task.",
+                body=f"{provider_name} placed a bid on your task.",
                 data={"task_id": task_id, "bid_id": bid.id},
                 recipient_ids=[task.customer_id],
                 priority=NotificationPriority.NORMAL,
@@ -366,10 +411,15 @@ async def update_bid(
             update_data["updated_at"] = utc_now()
             bid = await bid_repo.update(bid_id, update_data)
 
+            provider_name = (
+                current_provider.provider_profile.first_name
+                if current_provider.provider_profile and current_provider.provider_profile.first_name
+                else "A provider"
+            )
             notification_schema = CreateNotification(
                 type=NotificationType.NEW_MESSAGE,
                 title="Bid Updated",
-                body="A provider has updated their bid on your task.",
+                body=f"{provider_name} updated their bid on your task.",
                 data={"task_id": bid.task_id, "bid_id": bid.id},
                 recipient_ids=[task.customer_id],
                 priority=NotificationPriority.NORMAL,
