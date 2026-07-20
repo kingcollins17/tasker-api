@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from app.core.models.tasks import TaskStatus, TaskBidStatus, TaskAssignmentStatus, LocationType
-from app.core.schemas.users import MinimalProviderResponse
+from app.core.schemas.users import MinimalProviderResponse, MinimalCustomerResponse
 from app.features.services.schemas import CategoryResponse
 
 # Tasks Schemas
@@ -167,6 +167,7 @@ class TaskResponse(BaseModel):
     bids: Optional[List[TaskBidResponse]] = None
     assignment: Optional[TaskAssignmentResponse] = None
     attachments: Optional[List[TaskAttachmentResponse]] = None
+    customer: Optional[MinimalCustomerResponse] = None
 
 
 # Bids Schemas

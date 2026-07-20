@@ -25,7 +25,7 @@ from app.core.deps import (
     GetCurrentUser,
 )
 from app.features.users.schemas import UserResponse
-from app.core.schemas.users import MinimalProviderResponse
+from app.core.schemas.users import MinimalProviderResponse, MinimalCustomerResponse
 from app.features.tasks.schemas import (
     TaskCreate,
     TaskUpdate,
@@ -166,8 +166,31 @@ async def get_task(task_id: str, task_service: TaskService = Depends(get_task_se
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task with ID {task_id} not found.",
             )
+        task_data = TaskResponse.model_validate(task)
+        if task.customer_id:
+            customer_user = await task_service.user_repo.get(task.customer_id)
+            if customer_user:
+                fullname = None
+                if customer_user.customer_profile:
+                    first_name = customer_user.customer_profile.first_name or ""
+                    last_name = customer_user.customer_profile.last_name or ""
+                    fullname = f"{first_name} {last_name}".strip() or None
+                gender = None
+                if customer_user.provider_profile:
+                    gender = customer_user.provider_profile.gender
+
+                task_data.customer = MinimalCustomerResponse(
+                    id=customer_user.id,
+                    fullname=fullname,
+                    email=customer_user.email,
+                    phone_number=customer_user.phone_number,
+                    average_ratings=customer_user.average_ratings,
+                    credibility_score=customer_user.credibility_score,
+                    gender=gender
+                )
+
         return BaseAPIResponse[TaskResponse](
-            data=TaskResponse.model_validate(task),
+            data=task_data,
             detail="Task retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )

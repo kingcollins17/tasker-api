@@ -39,7 +39,7 @@ get_current_provider = GetCurrentUser(required_type=UserType.PROVIDER)
 
 @router.get(
     "/tasks/{task_id}/my-bid",
-    response_model=BaseAPIResponse[TaskBidResponse],
+    response_model=BaseAPIResponse[TaskBidWithTaskResponse],
     status_code=status.HTTP_200_OK,
 )
 async def get_my_bid_for_task(
@@ -49,21 +49,29 @@ async def get_my_bid_for_task(
 ):
     """Retrieve the current provider's bid for a specific task."""
     try:
-        query = select(TaskBid).where(
-            TaskBid.task_id == task_id,
-            TaskBid.provider_id == current_provider.id
+        query = (
+            select(TaskBid, Task)
+            .join(Task, TaskBid.task_id == Task.id)
+            .where(
+                TaskBid.task_id == task_id,
+                TaskBid.provider_id == current_provider.id
+            )
         )
         result = await bid_repo.execute(query)
-        bid = result.scalar_one_or_none()
+        row = result.first()
         
-        if not bid:
+        if not row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Bid not found for this task."
             )
 
-        return BaseAPIResponse[TaskBidResponse](
-            data=TaskBidResponse.model_validate(bid),
+        bid, task = row
+        bid_data = TaskBidWithTaskResponse.model_validate(bid)
+        bid_data.task = TaskMinimalResponse.model_validate(task)
+
+        return BaseAPIResponse[TaskBidWithTaskResponse](
+            data=bid_data,
             detail="Bid retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
