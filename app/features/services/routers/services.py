@@ -1,15 +1,17 @@
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlmodel import select, func, asc, desc, col
 from sqlalchemy.orm import selectinload
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.repository import GetRepository, Repository
-from app.core.models.services import Service, ProviderServiceLink
+from app.core.models.services import Service, ProviderServiceLink, ServiceCategory
+from app.core.models.tasks import Task
 from app.core.models.users import User
 from app.core.error_handler import AppErrorHandler
 from app.features.services.schemas import (
     ServiceResponse,
     ServiceAvailabilityResponse,
+    CategoryResponse,
 )
 from app.core.schemas.users import MinimalProviderResponse
 from app.features.users.schemas import UserResponse
@@ -17,6 +19,118 @@ from app.core.queries.services_queries import ServicesQueries
 from app.core.services.cache import CacheService, get_cache_service
 
 router = APIRouter(prefix="/services", tags=["Services"])
+
+
+@router.get(
+    "/categories/top",
+    response_model=BaseAPIResponse[List[CategoryResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_top_categories(
+    limit: int = Query(10, ge=1, le=50),
+    task_repo: Repository[Task] = Depends(GetRepository(Task)),
+    category_repo: Repository[ServiceCategory] = Depends(GetRepository(ServiceCategory)),
+):
+    """Retrieve the top categories with the highest number of tasks."""
+    try:
+        statement = (
+            select(Task.category_id, func.count(Task.id).label("task_count"))
+            .where(Task.category_id.is_not(None))
+            .group_by(Task.category_id)
+            .order_by(desc("task_count"))
+            .limit(limit)
+        )
+        
+        results = await task_repo.execute(statement)
+        rows = results.all()
+        
+        category_ids = [row.category_id for row in rows]
+        
+        if not category_ids:
+            return BaseAPIResponse[List[CategoryResponse]](
+                data=[],
+                detail="No top categories found.",
+                status_code=status.HTTP_200_OK,
+            )
+            
+        category_statement = select(ServiceCategory).where(ServiceCategory.id.in_(category_ids))
+        categories_result = await category_repo.execute(category_statement)
+        categories = categories_result.all()
+        
+        category_map = {cat.id: cat for cat in categories}
+        sorted_categories = [category_map[cid] for cid in category_ids if cid in category_map]
+        
+        return BaseAPIResponse[List[CategoryResponse]](
+            data=[CategoryResponse.model_validate(c) for c in sorted_categories],
+            detail="Top categories retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving top categories.",
+        )
+
+
+@router.get(
+    "/top",
+    response_model=BaseAPIResponse[List[ServiceResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_top_services(
+    limit: int = Query(10, ge=1, le=50),
+    task_repo: Repository[Task] = Depends(GetRepository(Task)),
+    service_repo: Repository[Service] = Depends(GetRepository(Service)),
+):
+    """Retrieve the top services with the highest number of tasks."""
+    try:
+        statement = (
+            select(Task.service_id, func.count(Task.id).label("task_count"))
+            .where(Task.service_id.is_not(None))
+            .group_by(Task.service_id)
+            .order_by(desc("task_count"))
+            .limit(limit)
+        )
+        
+        results = await task_repo.execute(statement)
+        rows = results.all()
+        
+        service_ids = [row.service_id for row in rows]
+        
+        if not service_ids:
+            return BaseAPIResponse[List[ServiceResponse]](
+                data=[],
+                detail="No top services found.",
+                status_code=status.HTTP_200_OK,
+            )
+            
+        service_statement = (
+            select(Service)
+            .where(Service.id.in_(service_ids))
+            .options(selectinload(Service.category))  # type: ignore
+        )
+        services_result = await service_repo.execute(service_statement)
+        services = services_result.all()
+        
+        service_map = {svc.id: svc for svc in services}
+        sorted_services = [service_map[sid] for sid in service_ids if sid in service_map]
+        
+        return BaseAPIResponse[List[ServiceResponse]](
+            data=[ServiceResponse.model_validate(s) for s in sorted_services],
+            detail="Top services retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving top services.",
+        )
 
 
 @router.get(
