@@ -23,9 +23,25 @@ from app.core.models.tasks import (
     LocationType,
 )
 from app.core.models.users import UserType, User, ProviderProfile, UserLocation
-from app.core.models.services import ProviderServiceLink
+from app.core.models.services import ProviderServiceLink, Service
+from app.core.models.transactions import Transaction, TransactionType, TransactionStatus
 from app.features.tasks.schemas import TaskCreate, TaskUpdate, TaskBidCreate
 from app.core.queries.task_queries import TaskQueries
+from app.core.services.payment import (
+    PaymentGateway,
+    get_paystack_gateway,
+    PaymentInitializationResponse,
+)
+from app.features.notifications.services import (
+    NotificationService,
+    get_notification_service,
+)
+from app.features.notifications.schemas import CreateNotification
+from app.core.models.notifications import (
+    NotificationType,
+    NotificationChannel,
+    NotificationPriority,
+)
 
 
 class TaskService:
@@ -38,6 +54,10 @@ class TaskService:
         history_repo: Repository[TaskStatusHistory],
         attachment_repo: Repository[TaskAttachment],
         user_repo: Repository[User],
+        transaction_repo: Repository[Transaction],
+        service_repo: Repository[Service],
+        payment_gateway: PaymentGateway,
+        notification_service: NotificationService,
     ):
         self.task_repo = task_repo
         self.location_repo = location_repo
@@ -46,9 +66,24 @@ class TaskService:
         self.history_repo = history_repo
         self.attachment_repo = attachment_repo
         self.user_repo = user_repo
+        self.transaction_repo = transaction_repo
+        self.service_repo = service_repo
+        self.payment_gateway = payment_gateway
+        self.notification_service = notification_service
 
     def _generate_pin(self) -> str:
         return f"{random.randint(0, 9999):04d}"
+
+    async def _getPaymentAmount(self, task: Task, bid_price: float) -> float:
+        """Adds the take rate to calculated amount"""
+        take_rate = 0.10  # default 10 percent
+        if task.service_id:
+            service = await self.service_repo.get(task.service_id)
+            if service and service.take_rate is not None:
+                take_rate = service.take_rate
+
+        total_amount = bid_price + (bid_price * take_rate)
+        return total_amount
 
     async def create_task(self, customer_id: str, schema: TaskCreate) -> Task:
         # Fetch customer to get their region_id
@@ -468,7 +503,9 @@ class TaskService:
         assert updated_bid is not None, "Updated bid not found"
         return updated_bid
 
-    async def accept_bid(self, bid_id: str, customer_id: str) -> TaskAssignment:
+    async def accept_bid(
+        self, bid_id: str, customer_id: str
+    ) -> PaymentInitializationResponse:
         bid = await self.bid_repo.get(bid_id)
         if not bid:
             raise HTTPException(
@@ -496,43 +533,40 @@ class TaskService:
                 detail="Only pending bids can be accepted",
             )
 
-        await self.bid_repo.update(
-            bid_id, {"status": TaskBidStatus.ACCEPTED, "updated_at": utc_now()}
+        customer = await self.user_repo.get(customer_id)
+        if not customer or not customer.email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Customer email is required for payment",
+            )
+        fullname = None
+        if (
+            customer.provider_profile
+            and customer.provider_profile.first_name
+            and customer.provider_profile.last_name
+        ):
+            fullname = f"{customer.provider_profile.first_name} {customer.provider_profile.last_name}"
+
+        # Calculate total amount to collect including platform take rate
+        total_amount = await self._getPaymentAmount(task, bid.price)
+
+        # Initialize Payment
+        payment_response = await self.payment_gateway.receive_payment(
+            email=customer.email,
+            amount=total_amount,
+            user_id=customer.id,
+            fullname=fullname,
+            phone_number=customer.phone_number,
+            metadata={"bid_id": bid.id, "task_id": task.id},
         )
 
-        other_bids = await self.bid_repo.get_all(
-            QueryOptions(filters={"task_id": task.id, "status": TaskBidStatus.PENDING})
-        )
-        for other_bid in other_bids:
-            if other_bid.id != bid_id:
-                await self.bid_repo.update(
-                    other_bid.id,
-                    {"status": TaskBidStatus.REJECTED, "updated_at": utc_now()},
-                )
+        if not payment_response.checkout_url:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Payment gateway could not generate checkout url",
+            )
 
-        assignment = TaskAssignment(
-            task_id=task.id,
-            provider_id=bid.provider_id,
-            accepted_bid_id=bid.id,
-            accepted_price=bid.price,
-            status=TaskAssignmentStatus.ASSIGNED,
-        )
-        assignment = await self.assignment_repo.add(assignment)
-
-        old_status = task.status
-        await self.task_repo.update(
-            task.id, {"status": TaskStatus.ASSIGNED, "updated_at": utc_now()}
-        )
-
-        history = TaskStatusHistory(
-            task_id=task.id,
-            old_status=old_status,
-            new_status=TaskStatus.ASSIGNED,
-            changed_by=customer_id,
-        )
-        await self.history_repo.add(history)
-
-        return assignment
+        return payment_response
 
     async def get_providers_near_task(
         self, task_id: str, radius_km: float
@@ -578,6 +612,10 @@ def get_task_service(
         GetRepository(TaskAttachment)
     ),
     user_repo: Repository[User] = Depends(GetRepository(User)),
+    transaction_repo: Repository[Transaction] = Depends(GetRepository(Transaction)),
+    service_repo: Repository[Service] = Depends(GetRepository(Service)),
+    payment_gateway: PaymentGateway = Depends(get_paystack_gateway),
+    notification_service: NotificationService = Depends(get_notification_service),
 ) -> TaskService:
     return TaskService(
         task_repo=task_repo,
@@ -587,4 +625,8 @@ def get_task_service(
         history_repo=history_repo,
         attachment_repo=attachment_repo,
         user_repo=user_repo,
+        transaction_repo=transaction_repo,
+        service_repo=service_repo,
+        payment_gateway=payment_gateway,
+        notification_service=notification_service,
     )

@@ -1,9 +1,9 @@
 from sqlmodel import select, col
 from sqlalchemy import func
-from typing import Any
+from typing import Any, List, Optional
 from app.core.models.users import User, ProviderProfile, UserLocation
 from app.core.models.services import ProviderServiceLink
-from app.core.models.tasks import Task, TaskLocation
+from app.core.models.tasks import Task, TaskLocation, TaskStatus, TaskBid
 
 
 class TaskQueries:
@@ -45,3 +45,54 @@ class TaskQueries:
             .limit(100)
         )
         return stmt
+
+    @staticmethod
+    def get_customer_tasks_with_bid_counts_query(
+        customer_id: str,
+        statuses: List[TaskStatus],
+        category_id: Optional[str] = None,
+        service_id: Optional[str] = None,
+        search: Optional[str] = None,
+        sort_by: str = "scheduled_start_at",
+        sort_desc: bool = True,
+    ) -> Any:
+        statement = (
+            select(Task, func.count(TaskBid.id).label("bids_count"))
+            .outerjoin(TaskBid, Task.id == TaskBid.task_id)
+            .where(Task.customer_id == customer_id)
+            .group_by(Task.id)
+        )
+        count_statement = (
+            select(func.count())
+            .select_from(Task)
+            .where(Task.customer_id == customer_id)
+        )
+
+        if statuses:
+            statement = statement.where(Task.status.in_(statuses))
+            count_statement = count_statement.where(Task.status.in_(statuses))
+
+        if category_id:
+            statement = statement.where(Task.category_id == category_id)
+            count_statement = count_statement.where(Task.category_id == category_id)
+
+        if service_id:
+            statement = statement.where(Task.service_id == service_id)
+            count_statement = count_statement.where(Task.service_id == service_id)
+
+        if search:
+            search_pattern = f"%{search}%"
+            search_filter = (col(Task.title).ilike(search_pattern)) | (
+                col(Task.description).ilike(search_pattern)
+            )
+            statement = statement.where(search_filter)
+            count_statement = count_statement.where(search_filter)
+
+        if sort_by and hasattr(Task, sort_by):
+            sort_col = getattr(Task, sort_by)
+            statement = statement.order_by(sort_col.desc() if sort_desc else sort_col)
+
+            if sort_by != "updated_at":
+                statement = statement.order_by(Task.updated_at.desc())
+
+        return statement, count_statement

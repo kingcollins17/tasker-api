@@ -4,12 +4,23 @@ from typing import List, Optional
 from sqlmodel import select, func
 from sqlalchemy import desc
 
+from app.core.services.payment import PaymentInitializationResponse
+
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.deps import GetCurrentUser
 from app.features.users.schemas import UserResponse
 from app.core.models.users import UserType, User
 from app.core.models.tasks import TaskBid, TaskBidStatus, TaskStatus, Task
-from app.core.models.notifications import NotificationType, NotificationPriority
+from app.core.models.notifications import (
+    NotificationType,
+    NotificationPriority,
+    NotificationChannel,
+)
+from app.features.notifications.schemas import CreateNotification
+from app.features.notifications.services import (
+    NotificationService,
+    get_notification_service,
+)
 from app.core.repository import GetRepository, Repository
 from app.features.tasks.schemas import (
     TaskBidCreate,
@@ -53,17 +64,16 @@ async def get_my_bid_for_task(
             select(TaskBid, Task)
             .join(Task, TaskBid.task_id == Task.id)
             .where(
-                TaskBid.task_id == task_id,
-                TaskBid.provider_id == current_provider.id
+                TaskBid.task_id == task_id, TaskBid.provider_id == current_provider.id
             )
         )
         result = await bid_repo.execute(query)
         row = result.first()
-        
+
         if not row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Bid not found for this task."
+                detail="Bid not found for this task.",
             )
 
         bid, task = row
@@ -106,7 +116,8 @@ async def create_bid(
         if task and task.customer_id:
             provider_name = (
                 current_provider.provider_profile.first_name
-                if current_provider.provider_profile and current_provider.provider_profile.first_name
+                if current_provider.provider_profile
+                and current_provider.provider_profile.first_name
                 else "A provider"
             )
             notification_schema = CreateNotification(
@@ -235,7 +246,9 @@ async def get_my_bids(
 )
 async def get_task_bids(
     task_id: str,
-    sort_by: Optional[str] = Query(None, description="Field to sort by (e.g. price, created_at)"),
+    sort_by: Optional[str] = Query(
+        None, description="Field to sort by (e.g. price, created_at)"
+    ),
     sort_desc: bool = Query(True, description="Sort descending"),
     current_user: UserResponse = Depends(GetCurrentUser()),
     task_service: TaskService = Depends(get_task_service),
@@ -270,10 +283,12 @@ async def get_task_bids(
                 query = query.order_by(order_column)
         else:
             # Default sorting for bids: best providers ranked first
-            query = query.order_by(desc(User.average_ratings), desc(User.credibility_score))
+            query = query.order_by(
+                desc(User.average_ratings), desc(User.credibility_score)
+            )
 
         results = await bid_repo.execute(query)
-        
+
         items = []
         for bid_model, user_model in results.unique().all():
             fullname = None
@@ -341,20 +356,43 @@ async def withdraw_bid(
 
 @router.post(
     "/bids/{bid_id}/accept",
-    response_model=BaseAPIResponse[TaskAssignmentResponse],
+    response_model=BaseAPIResponse[PaymentInitializationResponse],
     status_code=status.HTTP_200_OK,
 )
 async def accept_bid(
     bid_id: str,
+    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(GetCurrentUser()),
     task_service: TaskService = Depends(get_task_service),
+    notification_service: NotificationService = Depends(get_notification_service),
+    task_repo: Repository[Task] = Depends(GetRepository(Task)),
 ):
-    """Accept a bid and assign the task to the provider (restricted to the task customer)."""
+    """Accept a bid and initialize payment for the task."""
     try:
-        assignment = await task_service.accept_bid(bid_id, current_user.id)
-        return BaseAPIResponse[TaskAssignmentResponse](
-            data=TaskAssignmentResponse.model_validate(assignment),
-            detail="Bid accepted and provider assigned successfully.",
+        payment_info = await task_service.accept_bid(bid_id, current_user.id)
+
+        task_id = (
+            payment_info.metadata.get("task_id") if payment_info.metadata else None
+        )
+        task = await task_repo.get(task_id) if task_id else None
+        task_title = task.title if task else "your task"
+
+        notification_schema = CreateNotification(
+            type=NotificationType.TASK_ACCEPTED,
+            title="Complete Payment to Book Task",
+            body=f"Your task '{task_title}' is ready to be booked. Please complete the payment to book the provider.",
+            data={"checkout_url": payment_info.checkout_url, "task_id": task_id},
+            channels=[NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+            priority=NotificationPriority.HIGH,
+            recipient_ids=[current_user.id],
+        )
+        background_tasks.add_task(
+            notification_service.create_notification, notification_schema
+        )
+
+        return BaseAPIResponse[PaymentInitializationResponse](
+            data=PaymentInitializationResponse.model_validate(payment_info),
+            detail="Payment initialized successfully. Please complete payment to book task.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException:
@@ -421,7 +459,8 @@ async def update_bid(
 
             provider_name = (
                 current_provider.provider_profile.first_name
-                if current_provider.provider_profile and current_provider.provider_profile.first_name
+                if current_provider.provider_profile
+                and current_provider.provider_profile.first_name
                 else "A provider"
             )
             notification_schema = CreateNotification(

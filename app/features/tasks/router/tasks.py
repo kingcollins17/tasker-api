@@ -36,10 +36,12 @@ from app.features.tasks.schemas import (
     TaskListResponse,
 )
 
-from app.core.models.tasks import TaskAttachment
+from app.core.models.tasks import TaskAttachment, Task
 from app.features.tasks.services import TaskService, get_task_service
 from app.core.error_handler import AppErrorHandler
 from app.core.models.tasks import TaskStatus
+from app.core.queries.task_queries import TaskQueries
+from app.core.repository import Repository, GetRepository
 from app.features.tasks.celery_tasks import process_new_task_workflow
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
@@ -153,6 +155,134 @@ async def list_tasks(
 
 
 @router.get(
+    "/active",
+    response_model=BaseAPIResponse[PaginatedData[TaskListResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def list_active_tasks(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    category_id: Optional[str] = Query(None),
+    service_id: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    sort_by: str = Query("scheduled_start_at"),
+    sort_desc: bool = Query(True),
+    current_user: UserResponse = Depends(
+        GetCurrentUser(required_type=UserType.CUSTOMER)
+    ),
+    task_repo: Repository[Task] = Depends(GetRepository(Task)),
+):
+    """Retrieve a list of active tasks (assigned or in progress) for the signed in customer."""
+    try:
+        stmt, count_stmt = TaskQueries.get_customer_tasks_with_bid_counts_query(
+            customer_id=current_user.id,
+            statuses=[TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS],
+            category_id=category_id,
+            service_id=service_id,
+            search=search,
+            sort_by=sort_by,
+            sort_desc=sort_desc,
+        )
+
+        count_result = await task_repo.execute(count_stmt)
+        total = count_result.first() or 0
+
+        stmt = stmt.offset((page - 1) * per_page).limit(per_page)
+        results = await task_repo.execute(stmt)
+        tasks_with_counts = list(results.unique().all())
+
+        items = []
+        for task, bids_count in tasks_with_counts:
+            resp = TaskListResponse.model_validate(task)
+            resp.bids_count = bids_count
+            items.append(resp)
+
+        data = PaginatedData[TaskListResponse](
+            items=items,
+            total=total,
+            page=page,
+            per_page=per_page,
+        )
+        return BaseAPIResponse[PaginatedData[TaskListResponse]](
+            data=data,
+            detail="Active tasks retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching active tasks.",
+        )
+
+
+@router.get(
+    "/pending",
+    response_model=BaseAPIResponse[PaginatedData[TaskListResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def list_pending_tasks(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    category_id: Optional[str] = Query(None),
+    service_id: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    sort_by: str = Query("scheduled_start_at"),
+    sort_desc: bool = Query(True),
+    current_user: UserResponse = Depends(
+        GetCurrentUser(required_type=UserType.CUSTOMER)
+    ),
+    task_repo: Repository[Task] = Depends(GetRepository(Task)),
+):
+    """Retrieve a list of pending tasks (open, matching, or bidding) for the signed in customer."""
+    try:
+        stmt, count_stmt = TaskQueries.get_customer_tasks_with_bid_counts_query(
+            customer_id=current_user.id,
+            statuses=[TaskStatus.OPEN, TaskStatus.MATCHING, TaskStatus.BIDDING],
+            category_id=category_id,
+            service_id=service_id,
+            search=search,
+            sort_by=sort_by,
+            sort_desc=sort_desc,
+        )
+
+        count_result = await task_repo.execute(count_stmt)
+        total = count_result.first() or 0
+
+        stmt = stmt.offset((page - 1) * per_page).limit(per_page)
+        results = await task_repo.execute(stmt)
+        tasks_with_counts = list(results.unique().all())
+
+        items = []
+        for task, bids_count in tasks_with_counts:
+            resp = TaskListResponse.model_validate(task)
+            resp.bids_count = bids_count
+            items.append(resp)
+
+        data = PaginatedData[TaskListResponse](
+            items=items,
+            total=total,
+            page=page,
+            per_page=per_page,
+        )
+        return BaseAPIResponse[PaginatedData[TaskListResponse]](
+            data=data,
+            detail="Pending tasks retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching pending tasks.",
+        )
+
+
+@router.get(
     "/{task_id}",
     response_model=BaseAPIResponse[TaskResponse],
     status_code=status.HTTP_200_OK,
@@ -186,7 +316,7 @@ async def get_task(task_id: str, task_service: TaskService = Depends(get_task_se
                     phone_number=customer_user.phone_number,
                     average_ratings=customer_user.average_ratings,
                     credibility_score=customer_user.credibility_score,
-                    gender=gender
+                    gender=gender,
                 )
 
         return BaseAPIResponse[TaskResponse](

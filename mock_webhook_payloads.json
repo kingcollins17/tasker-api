@@ -1,0 +1,64 @@
+[
+  {
+    "description": "Mock payload for a successful charge (Customer Payment)",
+    "payload": {
+      "event": "charge.success",
+      "data": {
+        "reference": "chrg_succ_12345",
+        "amount": 165.00,
+        "status": "success",
+        "metadata": {
+          "user_id": "user_customer_uuid",
+          "task_id": "task_uuid",
+          "bid_id": "bid_uuid"
+        }
+      }
+    }
+  },
+  {
+    "description": "Mock payload for a failed charge (Customer Payment Failed)",
+    "payload": {
+      "event": "charge.failed",
+      "data": {
+        "reference": "chrg_fail_12345",
+        "amount": 165.00,
+        "status": "failed",
+        "metadata": {
+          "user_id": "user_customer_uuid",
+          "task_id": "task_uuid",
+          "bid_id": "bid_uuid"
+        }
+      }
+    }
+  },
+  {
+    "description": "Mock payload for a successful transfer (Provider Payout)",
+    "payload": {
+      "event": "transfer.success",
+      "data": {
+        "reference": "trf_succ_12345",
+        "amount": 150.00,
+        "status": "success",
+        "metadata": {
+          "user_id": "user_provider_uuid",
+          "task_id": "task_uuid"
+        }
+      }
+    }
+  },
+  {
+    "description": "Mock payload for a failed transfer (Provider Payout Failed)",
+    "payload": {
+      "event": "transfer.failed",
+      "data": {
+        "reference": "trf_fail_12345",
+        "amount": 150.00,
+        "status": "failed",
+        "metadata": {
+          "user_id": "user_provider_uuid",
+          "task_id": "task_uuid"
+        }
+      }
+    }
+  }
+]

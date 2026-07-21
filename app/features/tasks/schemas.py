@@ -141,6 +141,8 @@ class TaskListResponse(BaseModel):
     scheduled_start_at: Optional[datetime] = None
     distance_km: Optional[float] = None
     category: Optional[CategoryResponse] = None
+    bids_count: Optional[int] = 0
+    assignment: Optional[TaskAssignmentResponse] = None
 
 # Task Response
 class TaskResponse(BaseModel):
@@ -164,7 +166,6 @@ class TaskResponse(BaseModel):
     completion_pin: Optional[str] = None
     updated_at: Optional[datetime] = None
     locations: Optional[List[TaskLocationResponse]] = None
-    bids: Optional[List[TaskBidResponse]] = None
     assignment: Optional[TaskAssignmentResponse] = None
     attachments: Optional[List[TaskAttachmentResponse]] = None
     customer: Optional[MinimalCustomerResponse] = None

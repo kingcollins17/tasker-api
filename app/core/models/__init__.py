@@ -42,6 +42,11 @@ from .tasks import (
     TaskStatusHistory,
     TaskAttachment,
 )
+from .transactions import (
+    Transaction,
+    TransactionType,
+    TransactionStatus,
+)
 
 __all__ = [
     "UserType",
@@ -79,5 +84,8 @@ __all__ = [
     "TaskAssignment",
     "TaskStatusHistory",
     "TaskAttachment",
+    "Transaction",
+    "TransactionType",
+    "TransactionStatus",
 ]
 

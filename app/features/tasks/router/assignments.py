@@ -118,7 +118,7 @@ async def get_task_assignment(
         assignment_result = await assignment_repo.execute(
             select(TaskAssignment).where(TaskAssignment.task_id == task_id)
         )
-        assignment = assignment_result.scalars().first()
+        assignment = assignment_result.first()
         
         if not assignment:
             raise HTTPException(
