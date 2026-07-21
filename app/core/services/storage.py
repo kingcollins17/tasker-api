@@ -1,17 +1,17 @@
 from abc import ABC, abstractmethod
 import uuid
 import os
+import random
 from typing import Union, BinaryIO, Optional
 from fastapi import UploadFile
+
 
 class StorageService(ABC):
     """Abstract base class representing a file storage service."""
 
     @abstractmethod
     async def upload_file(
-        self,
-        file: Union[UploadFile, bytes, BinaryIO],
-        filename: Optional[str] = None
+        self, file: Union[UploadFile, bytes, BinaryIO], filename: Optional[str] = None
     ) -> str:
         """Uploads a file and returns its URL.
 
@@ -47,9 +47,7 @@ class MockStorageService(StorageService):
         self.base_url = base_url
 
     async def upload_file(
-        self,
-        file: Union[UploadFile, bytes, BinaryIO],
-        filename: Optional[str] = None
+        self, file: Union[UploadFile, bytes, BinaryIO], filename: Optional[str] = None
     ) -> str:
         """Simulates uploading a file by generating a mock URL.
 
@@ -58,25 +56,18 @@ class MockStorageService(StorageService):
             filename: Optional filename to use.
 
         Returns:
-            str: A mock URL containing a unique prefix and the original filename.
+            str: A mock URL pointing to a random Unsplash image.
         """
-        resolved_filename = filename
-        
-        if not resolved_filename:
-            if isinstance(file, UploadFile):
-                resolved_filename = file.filename
-            elif hasattr(file, "name"):
-                # File-like object (e.g. open file descriptor)
-                resolved_filename = os.path.basename(file.name)
-        
-        if not resolved_filename:
-            resolved_filename = "uploaded_file"
-        
-        # Avoid collisions by prefixing with a truncated random UUID
-        unique_prefix = uuid.uuid4().hex[:8]
-        mock_filename = f"{unique_prefix}_{resolved_filename}"
-        
-        return f"{self.base_url}/{mock_filename}"
+        mock_image_urls = [
+            "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?q=80&w=1742&auto=format&fit=crop",
+            "https://images.unsplash.com/photo-1498050108023-c5249f4df085?q=80&w=1744&auto=format&fit=crop",
+            "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?q=80&w=1740&auto=format&fit=crop",
+            "https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?q=80&w=1740&auto=format&fit=crop",
+            "https://images.unsplash.com/photo-1555066931-4365d14bab8c?q=80&w=1740&auto=format&fit=crop",
+            "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?q=80&w=1768&auto=format&fit=crop",
+            "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=1740&auto=format&fit=crop",
+        ]
+        return random.choice(mock_image_urls)
 
     async def delete_file(self, file_url: str) -> bool:
         """Simulates deleting a file.
@@ -88,6 +79,7 @@ class MockStorageService(StorageService):
             bool: True to simulate a successful deletion.
         """
         from app.core.logging import logger
+
         logger.info(f"[MOCK STORAGE] Deleting file: {file_url}")
         return True
 

@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, Literal, List
 from datetime import datetime
 from app.core.models.users import UserType, KYCStatus
+from app.core.schemas.users import PaymentAccountResponse
 from app.core.utils.phone_helper import format_nigerian_phone
 
 
@@ -117,6 +118,7 @@ class UserResponse(BaseModel):
     provider_profile: Optional[ProviderProfileResponse] = None
     devices: Optional[List[UserDeviceResponse]] = []
     location: Optional[UserLocationResponse] = None
+    payment_account: Optional[PaymentAccountResponse] = None
 
 
 

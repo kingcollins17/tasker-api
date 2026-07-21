@@ -285,11 +285,13 @@ async def get_providers_for_service_in_region(
         for u in users:
             fullname = None
             gender = None
+            profile_picture_url = None
             if u.provider_profile:
                 first_name = u.provider_profile.first_name or ""
                 last_name = u.provider_profile.last_name or ""
                 fullname = f"{first_name} {last_name}".strip() or None
                 gender = u.provider_profile.gender
+                profile_picture_url = u.provider_profile.selfie_url
 
             items.append(
                 MinimalProviderResponse(
@@ -299,6 +301,7 @@ async def get_providers_for_service_in_region(
                     average_ratings=u.average_ratings,
                     credibility_score=u.credibility_score,
                     gender=gender,
+                    profile_picture_url=profile_picture_url,
                 )
             )
 

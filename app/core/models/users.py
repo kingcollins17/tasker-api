@@ -49,9 +49,9 @@ class User(SQLModel, table=True):
         back_populates="user",
         sa_relationship_kwargs={"uselist": False, "lazy": "joined"}
     )
-    payment_accounts: List["PaymentAccount"] = Relationship(
+    payment_account: Optional["PaymentAccount"] = Relationship(
         back_populates="user",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+        sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan", "lazy": "joined"}
     )
     devices: List["UserDevice"] = Relationship(
         back_populates="user",
@@ -100,6 +100,7 @@ class PaymentAccount(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     user_id: str = Field(
         foreign_key="users.id",
+        unique=True,
         index=True,
         ondelete="CASCADE"
     )
@@ -118,7 +119,7 @@ class PaymentAccount(SQLModel, table=True):
         sa_column=Column(JSON)
     )
     
-    user: User = Relationship(back_populates="payment_accounts")
+    user: User = Relationship(back_populates="payment_account")
 
 
 class CustomerProfile(SQLModel, table=True):
