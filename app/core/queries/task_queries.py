@@ -1,20 +1,26 @@
 from sqlmodel import select, col
 from sqlalchemy import func
 from typing import Any, List, Optional
-from app.core.models.users import User, ProviderProfile, UserLocation
+from app.core.models.users import (
+    User,
+    ProviderProfile,
+    UserLocation,
+    DutyStatus,
+    KYCStatus,
+)
 from app.core.models.services import ProviderServiceLink
-from app.core.models.tasks import Task, TaskLocation, TaskStatus, TaskBid
+from app.core.models.tasks import Task, TaskLocation, TaskStatus, TaskDispatchAttempt
 
 
 class TaskQueries:
     @staticmethod
-    def get_providers_near_task_query(
+    def get_providers_near_task(
         task: Task,
         task_loc: TaskLocation,
         radius_km: float,
         select_ids_only: bool = False,
     ) -> Any:
-        """Builds a SQLModel query statement to fetch providers near a task."""
+        """Builds a SQLModel query statement to fetch available providers near a task."""
         distance_m = radius_km * 1000
 
         base_select = select(User.id) if select_ids_only else select(User)
@@ -26,8 +32,16 @@ class TaskQueries:
                 col(ProviderServiceLink.provider_id) == ProviderProfile.user_id,
             )
             .join(UserLocation, col(UserLocation.user_id) == User.id)
-            .where(col(ProviderServiceLink.service_id) == task.service_id)
+            .where(
+                col(User.is_active) == True,
+                col(ProviderProfile.is_online) == True,
+                col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE,
+                col(ProviderProfile.status) == KYCStatus.VERIFIED,
+            )
         )
+
+        if task.service_id:
+            stmt = stmt.where(col(ProviderServiceLink.service_id) == task.service_id)
 
         if task.region_id:
             stmt = stmt.where(col(User.region_id) == task.region_id)
@@ -47,7 +61,7 @@ class TaskQueries:
         return stmt
 
     @staticmethod
-    def get_customer_tasks_with_bid_counts_query(
+    def get_customer_tasks_query(
         customer_id: str,
         statuses: List[TaskStatus],
         category_id: Optional[str] = None,
@@ -56,12 +70,7 @@ class TaskQueries:
         sort_by: str = "scheduled_start_at",
         sort_desc: bool = True,
     ) -> Any:
-        statement = (
-            select(Task, func.count(TaskBid.id).label("bids_count"))
-            .outerjoin(TaskBid, Task.id == TaskBid.task_id)
-            .where(Task.customer_id == customer_id)
-            .group_by(Task.id)
-        )
+        statement = select(Task).where(Task.customer_id == customer_id)
         count_statement = (
             select(func.count())
             .select_from(Task)

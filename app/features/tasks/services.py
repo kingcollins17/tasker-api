@@ -2,46 +2,54 @@ import math
 import random
 from datetime import datetime
 from typing import List, Optional, Tuple
-from fastapi import Depends, HTTPException, status
-from sqlmodel import select, func, desc, col
-from sqlalchemy import cast
-from sqlalchemy.orm import contains_eager, with_expression
-from geoalchemy2 import Geography
 
-from app.core.utils.datetime_helper import utc_now
-from app.core.repository import Repository, QueryOptions, GetRepository
-from app.core.models.tasks import (
-    Task,
-    TaskLocation,
-    TaskBid,
-    TaskAssignment,
-    TaskStatusHistory,
-    TaskAttachment,
-    TaskStatus,
-    TaskBidStatus,
-    TaskAssignmentStatus,
-    LocationType,
+from fastapi import Depends, HTTPException, status
+from geoalchemy2 import Geography
+from sqlalchemy import cast
+from sqlalchemy.orm import contains_eager
+from sqlmodel import col, desc, func, select
+
+from app.core.models.notifications import (
+    NotificationChannel,
+    NotificationPriority,
+    NotificationType,
 )
-from app.core.models.users import UserType, User, ProviderProfile, UserLocation
-from app.core.models.services import ProviderServiceLink, Service
-from app.core.models.transactions import Transaction, TransactionType, TransactionStatus
-from app.features.tasks.schemas import TaskCreate, TaskUpdate, TaskBidCreate
+from app.core.models.services import PricingRule, Service, ServiceCategory
+from app.core.models.tasks import (
+    DispatchAttemptStatus,
+    LocationType,
+    Task,
+    TaskAssignment,
+    TaskAssignmentStatus,
+    TaskAttachment,
+    TaskDispatchAttempt,
+    TaskLocation,
+    TaskStatus,
+    TaskStatusHistory,
+)
+from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
+from app.core.models.users import ProviderProfile, User, UserLocation, UserType
 from app.core.queries.task_queries import TaskQueries
+from app.core.repository import GetRepository, QueryOptions, Repository
 from app.core.services.payment import (
     PaymentGateway,
-    get_paystack_gateway,
     PaymentInitializationResponse,
+    get_paystack_gateway,
 )
+from app.core.utils.datetime_helper import utc_now
+from app.core.utils.geo import calculate_locations_distance
+from app.features.notifications.schemas import CreateNotification
 from app.features.notifications.services import (
     NotificationService,
     get_notification_service,
 )
-from app.features.notifications.schemas import CreateNotification
-from app.core.models.notifications import (
-    NotificationType,
-    NotificationChannel,
-    NotificationPriority,
+from app.features.services.pricing_engine import (
+    PricingBreakdown,
+    PricingCalculationRequest,
+    PricingEngine,
+    get_pricing_engine,
 )
+from app.features.tasks.schemas import TaskCreate, TaskUpdate, TaskPriceEstimateRequest
 
 
 class TaskService:
@@ -49,7 +57,7 @@ class TaskService:
         self,
         task_repo: Repository[Task],
         location_repo: Repository[TaskLocation],
-        bid_repo: Repository[TaskBid],
+        attempt_repo: Repository[TaskDispatchAttempt],
         assignment_repo: Repository[TaskAssignment],
         history_repo: Repository[TaskStatusHistory],
         attachment_repo: Repository[TaskAttachment],
@@ -58,10 +66,11 @@ class TaskService:
         service_repo: Repository[Service],
         payment_gateway: PaymentGateway,
         notification_service: NotificationService,
+        pricing_engine: PricingEngine,
     ):
         self.task_repo = task_repo
         self.location_repo = location_repo
-        self.bid_repo = bid_repo
+        self.attempt_repo = attempt_repo
         self.assignment_repo = assignment_repo
         self.history_repo = history_repo
         self.attachment_repo = attachment_repo
@@ -70,20 +79,10 @@ class TaskService:
         self.service_repo = service_repo
         self.payment_gateway = payment_gateway
         self.notification_service = notification_service
+        self.pricing_engine = pricing_engine
 
     def _generate_pin(self) -> str:
         return f"{random.randint(0, 9999):04d}"
-
-    async def _getPaymentAmount(self, task: Task, bid_price: float) -> float:
-        """Adds the take rate to calculated amount"""
-        take_rate = 0.10  # default 10 percent
-        if task.service_id:
-            service = await self.service_repo.get(task.service_id)
-            if service and service.take_rate is not None:
-                take_rate = service.take_rate
-
-        total_amount = bid_price + (bid_price * take_rate)
-        return total_amount
 
     async def create_task(self, customer_id: str, schema: TaskCreate) -> Task:
         # Fetch customer to get their region_id
@@ -93,6 +92,17 @@ class TaskService:
         start_pin = self._generate_pin()
         completion_pin = self._generate_pin()
 
+        # Calculate upfront pricing breakdown
+        dist_km = calculate_locations_distance(schema.locations)
+
+        pricing_req = PricingCalculationRequest(
+            category_id=schema.category_id,
+            service_id=schema.service_id,
+            region_id=region_id,
+            distance_km=dist_km,
+        )
+        breakdown = await self.pricing_engine.calculate_price(pricing_req)
+
         # Create Task
         task = Task(
             customer_id=customer_id,
@@ -101,9 +111,15 @@ class TaskService:
             description=schema.description,
             category_id=schema.category_id,
             service_id=schema.service_id,
-            budget_min=schema.budget_min,
-            budget_max=schema.budget_max,
-            pricing_model=schema.pricing_model or "fixed",
+            base_price=breakdown.base_price,
+            distance_fee=breakdown.distance_fee,
+            time_fee=breakdown.time_fee,
+            urgency_fee=breakdown.urgency_fee,
+            complexity_fee=breakdown.complexity_fee,
+            surge_multiplier=breakdown.surge_multiplier,
+            customer_total_price=breakdown.customer_total_price,
+            platform_fee=breakdown.platform_fee,
+            provider_payout=breakdown.provider_payout,
             scheduled_start_at=(
                 schema.scheduled_start_at.replace(tzinfo=None)
                 if schema.scheduled_start_at
@@ -148,6 +164,29 @@ class TaskService:
 
         return task
 
+    async def estimate_task_price(
+        self,
+        schema: TaskPriceEstimateRequest,
+        customer_id: Optional[str] = None,
+    ) -> PricingBreakdown:
+        """Calculates upfront price breakdown for a task request before creation."""
+        region_id = None
+        if customer_id:
+            user = await self.user_repo.get(customer_id)
+            region_id = user.region_id if user else None
+
+        dist_km = calculate_locations_distance(schema.locations)
+
+        pricing_req = PricingCalculationRequest(
+            category_id=schema.category_id,
+            service_id=schema.service_id,
+            region_id=region_id,
+            distance_km=dist_km,
+            is_urgent=schema.is_urgent,
+        )
+
+        return await self.pricing_engine.calculate_price(pricing_req)
+
     async def get_task(self, task_id: str) -> Optional[Task]:
         return await self.task_repo.get(task_id)
 
@@ -165,8 +204,6 @@ class TaskService:
         sort_by: str = "created_at",
         sort_desc: bool = True,
         region_id: Optional[str] = None,
-        budget_min: Optional[float] = None,
-        budget_max: Optional[float] = None,
         scheduled_start_at: Optional[datetime] = None,
         expires_at: Optional[datetime] = None,
         customer_id: Optional[str] = None,
@@ -197,14 +234,6 @@ class TaskService:
         if region_id:
             statement = statement.where(Task.region_id == region_id)
             count_statement = count_statement.where(Task.region_id == region_id)
-
-        if budget_min is not None:
-            statement = statement.where(col(Task.budget_min) >= budget_min)
-            count_statement = count_statement.where(col(Task.budget_min) >= budget_min)
-
-        if budget_max is not None:
-            statement = statement.where(col(Task.budget_max) <= budget_max)
-            count_statement = count_statement.where(col(Task.budget_max) <= budget_max)
 
         if scheduled_start_at:
             statement = statement.where(
@@ -334,13 +363,10 @@ class TaskService:
             "description",
             "category_id",
             "service_id",
-            "budget_min",
-            "budget_max",
-            "pricing_model",
             "scheduled_start_at",
             "expires_at",
         ]:
-            val = getattr(schema, key)
+            val = getattr(schema, key, None)
             if val is not None:
                 updates[key] = val
 
@@ -400,119 +426,10 @@ class TaskService:
         await self.history_repo.add(history)
         return True
 
-    async def create_bid(
-        self, task_id: str, provider_id: str, schema: TaskBidCreate
-    ) -> TaskBid:
-        task = await self.task_repo.get(task_id)
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
-            )
-        if task.customer_id == provider_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Customers cannot bid on their own tasks",
-            )
-
-        if task.status not in [TaskStatus.OPEN, TaskStatus.BIDDING]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Bids are only allowed on open or active bidding tasks",
-            )
-
-        existing_bids = await self.bid_repo.get_all(
-            QueryOptions(
-                filters={
-                    "task_id": task_id,
-                    "provider_id": provider_id,
-                    "status": TaskBidStatus.PENDING,
-                }
-            )
-        )
-        if existing_bids:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="You already have an active bid on this task",
-            )
-
-        bid = TaskBid(
-            task_id=task_id,
-            provider_id=provider_id,
-            price=schema.price,
-            message=schema.message,
-            estimated_duration=schema.estimated_duration,
-            status=TaskBidStatus.PENDING,
-        )
-        bid = await self.bid_repo.add(bid)
-
-        if task.status == TaskStatus.OPEN:
-            await self.task_repo.update(
-                task_id, {"status": TaskStatus.BIDDING, "updated_at": utc_now()}
-            )
-            history = TaskStatusHistory(
-                task_id=task.id,
-                old_status=TaskStatus.OPEN,
-                new_status=TaskStatus.BIDDING,
-                changed_by=provider_id,
-            )
-            await self.history_repo.add(history)
-
-        return bid
-
-    async def get_task_bids(
-        self, task_id: str, user_id: str, user_type: UserType
-    ) -> List[TaskBid]:
-        task = await self.task_repo.get(task_id)
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
-            )
-
-        if task.customer_id == user_id:
-            return await self.bid_repo.get_all(
-                QueryOptions(filters={"task_id": task_id})
-            )
-
-        if user_type == UserType.PROVIDER:
-            return await self.bid_repo.get_all(
-                QueryOptions(filters={"task_id": task_id, "provider_id": user_id})
-            )
-
-        return []
-
-    async def withdraw_bid(self, bid_id: str, provider_id: str) -> TaskBid:
-        bid = await self.bid_repo.get(bid_id)
-        if not bid:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Bid not found"
-            )
-        if bid.provider_id != provider_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to withdraw this bid",
-            )
-        if bid.status != TaskBidStatus.PENDING:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot withdraw bid with status: {bid.status}",
-            )
-
-        updated_bid = await self.bid_repo.update(
-            bid_id, {"status": TaskBidStatus.WITHDRAWN, "updated_at": utc_now()}
-        )
-        assert updated_bid is not None, "Updated bid not found"
-        return updated_bid
-
-    async def accept_bid(
-        self, bid_id: str, customer_id: str
+    async def initiate_task_payment(
+        self, task_id: str, customer_id: str
     ) -> PaymentInitializationResponse:
-        bid = await self.bid_repo.get(bid_id)
-        if not bid:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Bid not found"
-            )
-
-        task = await self.task_repo.get(bid.task_id)
+        task = await self.task_repo.get(task_id)
         if not task:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
@@ -520,17 +437,12 @@ class TaskService:
         if task.customer_id != customer_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to accept bids for this task",
+                detail="Not authorized to initiate payment for this task",
             )
-        if task.status not in [TaskStatus.OPEN, TaskStatus.BIDDING]:
+        if task.status not in [TaskStatus.OPEN, TaskStatus.SEARCHING]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot accept bids for a task that is not open/bidding",
-            )
-        if bid.status != TaskBidStatus.PENDING:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only pending bids can be accepted",
+                detail="Payment can only be initialized for open tasks",
             )
 
         customer = await self.user_repo.get(customer_id)
@@ -547,17 +459,20 @@ class TaskService:
         ):
             fullname = f"{customer.provider_profile.first_name} {customer.provider_profile.last_name}"
 
-        # Calculate total amount to collect including platform take rate
-        total_amount = await self._getPaymentAmount(task, bid.price)
+        total_amount = task.customer_total_price or 0.0
+        if total_amount <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Task total price has not been calculated or is invalid",
+            )
 
-        # Initialize Payment
         payment_response = await self.payment_gateway.receive_payment(
             email=customer.email,
             amount=total_amount,
             user_id=customer.id,
             fullname=fullname,
             phone_number=customer.phone_number,
-            metadata={"bid_id": bid.id, "task_id": task.id},
+            metadata={"task_id": task.id},
         )
 
         if not payment_response.checkout_url:
@@ -587,10 +502,8 @@ class TaskService:
         if not task_loc or not task_loc.geography_point:
             return []
 
-        distance_m = radius_km * 1000
-
         # Query providers
-        stmt = TaskQueries.get_providers_near_task_query(
+        stmt = TaskQueries.get_providers_near_task(
             task, task_loc, radius_km, select_ids_only=False
         )
 
@@ -601,7 +514,9 @@ class TaskService:
 def get_task_service(
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
     location_repo: Repository[TaskLocation] = Depends(GetRepository(TaskLocation)),
-    bid_repo: Repository[TaskBid] = Depends(GetRepository(TaskBid)),
+    attempt_repo: Repository[TaskDispatchAttempt] = Depends(
+        GetRepository(TaskDispatchAttempt)
+    ),
     assignment_repo: Repository[TaskAssignment] = Depends(
         GetRepository(TaskAssignment)
     ),
@@ -616,11 +531,12 @@ def get_task_service(
     service_repo: Repository[Service] = Depends(GetRepository(Service)),
     payment_gateway: PaymentGateway = Depends(get_paystack_gateway),
     notification_service: NotificationService = Depends(get_notification_service),
+    pricing_engine: PricingEngine = Depends(get_pricing_engine),
 ) -> TaskService:
     return TaskService(
         task_repo=task_repo,
         location_repo=location_repo,
-        bid_repo=bid_repo,
+        attempt_repo=attempt_repo,
         assignment_repo=assignment_repo,
         history_repo=history_repo,
         attachment_repo=attachment_repo,
@@ -629,4 +545,5 @@ def get_task_service(
         service_repo=service_repo,
         payment_gateway=payment_gateway,
         notification_service=notification_service,
+        pricing_engine=pricing_engine,
     )

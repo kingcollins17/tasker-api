@@ -10,7 +10,6 @@ from fastapi import (
     Query,
     status,
     HTTPException,
-    BackgroundTasks,
     UploadFile,
     File,
 )
@@ -28,6 +27,7 @@ from app.features.users.schemas import UserResponse
 from app.core.schemas.users import MinimalProviderResponse, MinimalCustomerResponse
 from app.features.tasks.schemas import (
     TaskCreate,
+    TaskPriceEstimateRequest,
     TaskUpdate,
     TaskResponse,
     TaskLocationUpdate,
@@ -35,6 +35,7 @@ from app.features.tasks.schemas import (
     TaskAttachmentResponse,
     TaskListResponse,
 )
+from app.features.services.pricing_engine import PricingBreakdown
 
 from app.core.models.tasks import TaskAttachment, Task
 from app.features.tasks.services import TaskService, get_task_service
@@ -42,7 +43,8 @@ from app.core.error_handler import AppErrorHandler
 from app.core.models.tasks import TaskStatus
 from app.core.queries.task_queries import TaskQueries
 from app.core.repository import Repository, GetRepository
-from app.features.tasks.celery_tasks import process_new_task_workflow
+
+from app.features.tasks.celery.dispatch import start_dispatch_workflow
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -54,7 +56,6 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 )
 async def create_task(
     schema: TaskCreate,
-    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(
         GetCurrentUser(
             required_email_verified=True,
@@ -69,8 +70,8 @@ async def create_task(
     try:
         task = await task_service.create_task(current_user.id, schema)
 
-        # pyrefly: ignore [bad-argument-type]
-        background_tasks.add_task(process_new_task_workflow.delay, task.id)
+        # pyrefly: ignore [not-callable]
+        start_dispatch_workflow.delay(task.id)  
 
         return BaseAPIResponse[TaskResponse](
             data=TaskResponse.model_validate(task),
@@ -84,6 +85,35 @@ async def create_task(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while creating the task.",
+        )
+
+
+@router.post(
+    "/price-breakdown",
+    response_model=BaseAPIResponse[PricingBreakdown],
+    status_code=status.HTTP_200_OK,
+)
+async def get_task_price_breakdown(
+    schema: TaskPriceEstimateRequest,
+    current_user: Optional[Union[UserResponse, AdminUser]] = Depends(GetCurrentUserOrAdminOptional()),
+    task_service: TaskService = Depends(get_task_service),
+):
+    """Calculate and return upfront price breakdown for a task request before posting."""
+    try:
+        user_id = current_user.id if current_user and hasattr(current_user, "id") else None
+        breakdown = await task_service.estimate_task_price(schema, customer_id=user_id)
+        return BaseAPIResponse[PricingBreakdown](
+            data=breakdown,
+            detail="Price breakdown calculated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while calculating price breakdown.",
         )
 
 
@@ -105,8 +135,6 @@ async def list_tasks(
     sort_by: str = Query("created_at"),
     sort_desc: bool = Query(True),
     region_id: Optional[str] = Query(None),
-    budget_min: Optional[float] = Query(None, ge=0.0),
-    budget_max: Optional[float] = Query(None, ge=0.0),
     scheduled_start_at: Optional[datetime] = Query(None),
     expires_at: Optional[datetime] = Query(None),
     customer_id: Optional[str] = Query(None),
@@ -127,8 +155,6 @@ async def list_tasks(
             sort_by=sort_by,
             sort_desc=sort_desc,
             region_id=region_id,
-            budget_min=budget_min,
-            budget_max=budget_max,
             scheduled_start_at=scheduled_start_at,
             expires_at=expires_at,
             customer_id=customer_id,
@@ -174,7 +200,7 @@ async def list_active_tasks(
 ):
     """Retrieve a list of active tasks (assigned or in progress) for the signed in customer."""
     try:
-        stmt, count_stmt = TaskQueries.get_customer_tasks_with_bid_counts_query(
+        stmt, count_stmt = TaskQueries.get_customer_tasks_query(
             customer_id=current_user.id,
             statuses=[TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS],
             category_id=category_id,
@@ -189,13 +215,9 @@ async def list_active_tasks(
 
         stmt = stmt.offset((page - 1) * per_page).limit(per_page)
         results = await task_repo.execute(stmt)
-        tasks_with_counts = list(results.unique().all())
+        tasks = list(results.scalars().all())
 
-        items = []
-        for task, bids_count in tasks_with_counts:
-            resp = TaskListResponse.model_validate(task)
-            resp.bids_count = bids_count
-            items.append(resp)
+        items = [TaskListResponse.model_validate(t) for t in tasks]
 
         data = PaginatedData[TaskListResponse](
             items=items,
@@ -236,11 +258,11 @@ async def list_pending_tasks(
     ),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
 ):
-    """Retrieve a list of pending tasks (open, matching, or bidding) for the signed in customer."""
+    """Retrieve a list of pending tasks (open, matching, or searching) for the signed in customer."""
     try:
-        stmt, count_stmt = TaskQueries.get_customer_tasks_with_bid_counts_query(
+        stmt, count_stmt = TaskQueries.get_customer_tasks_query(
             customer_id=current_user.id,
-            statuses=[TaskStatus.OPEN, TaskStatus.MATCHING, TaskStatus.BIDDING],
+            statuses=[TaskStatus.OPEN, TaskStatus.SEARCHING],
             category_id=category_id,
             service_id=service_id,
             search=search,
@@ -253,13 +275,9 @@ async def list_pending_tasks(
 
         stmt = stmt.offset((page - 1) * per_page).limit(per_page)
         results = await task_repo.execute(stmt)
-        tasks_with_counts = list(results.unique().all())
+        tasks = list(results.scalars().all())
 
-        items = []
-        for task, bids_count in tasks_with_counts:
-            resp = TaskListResponse.model_validate(task)
-            resp.bids_count = bids_count
-            items.append(resp)
+        items = [TaskListResponse.model_validate(t) for t in tasks]
 
         data = PaginatedData[TaskListResponse](
             items=items,

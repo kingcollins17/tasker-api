@@ -7,7 +7,18 @@ from app.core.api_response import BaseAPIResponse
 from app.core.deps import GetCurrentUser
 from app.core.models.users import UserType
 from app.core.models.services import Service, ProviderServiceLink
-from app.features.users.schemas import UserResponse, ProviderProfileUpdate, CustomerProfileUpdate, UpdateLocation, UpdateCloudMessagingToken, AttachProviderService, ServiceResponse, UpdateRegion
+from app.features.users.schemas import (
+    UserResponse,
+    ProviderProfileUpdate,
+    CustomerProfileUpdate,
+    UpdateLocation,
+    UpdateCloudMessagingToken,
+    AttachProviderService,
+    ServiceResponse,
+    UpdateRegion,
+    UpdateOnlineStatus,
+    LocationPing,
+)
 from app.features.users.services import UserService, get_user_service
 
 router = APIRouter()
@@ -261,3 +272,58 @@ async def update_region(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred: {str(e)}"
         )
+
+
+@router.put("/online-status", response_model=BaseAPIResponse[UserResponse], status_code=status.HTTP_200_OK)
+async def update_online_status(
+    schema: UpdateOnlineStatus,
+    current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
+    user_service: UserService = Depends(get_user_service),
+):
+    """Toggle online presence status for the authenticated service provider."""
+    try:
+        updated_user = await user_service.update_provider_online_status(
+            user_id=current_user.id,
+            is_online=schema.is_online,
+        )
+        return BaseAPIResponse[UserResponse](
+            data=UserResponse.model_validate(updated_user),
+            detail=f"Provider online status set to {schema.is_online}.",
+            statusCode=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while updating online status.",
+        )
+
+
+@router.post("/location/ping", response_model=BaseAPIResponse[None], status_code=status.HTTP_200_OK)
+async def ping_location(
+    schema: LocationPing,
+    current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
+    user_service: UserService = Depends(get_user_service),
+):
+    """Real-time provider location heartbeat ping to Redis geospatial index."""
+    try:
+        await user_service.ping_provider_location(
+            user_id=current_user.id,
+            latitude=schema.latitude,
+            longitude=schema.longitude,
+        )
+        return BaseAPIResponse[None](
+            detail="Provider location ping received.",
+            statusCode=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while pinging location.",
+        )
+

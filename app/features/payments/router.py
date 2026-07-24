@@ -15,19 +15,25 @@ from pydantic import BaseModel
 from sqlmodel import select, desc, func
 
 from app.core.api_response import BaseAPIResponse, PaginatedData
-
 from app.core.deps import GetCurrentUser
-from app.features.users.schemas import UserResponse
-from app.features.payments.schemas import TransactionResponse
-from app.core.models.transactions import Transaction, TransactionType, TransactionStatus
-from app.core.repository import GetRepository, Repository
 from app.core.error_handler import AppErrorHandler
+from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
+from app.core.models.users import UserType
+from app.core.repository import GetRepository, Repository
 from app.features.payments.processors import (
     PaymentWebhookProcessor,
     TransferWebhookProcessor,
     get_payment_processor,
     get_transfer_processor,
 )
+from app.features.payments.schemas import (
+    ProviderDebtSummaryResponse,
+    SettleDebtRequest,
+    SettleDebtResponse,
+    TransactionResponse,
+)
+from app.features.payments.services import PaymentService, get_payment_service
+from app.features.users.schemas import UserResponse
 
 logger = logging.getLogger(__name__)
 
@@ -133,3 +139,68 @@ async def list_my_transactions(
     except Exception as e:
         AppErrorHandler.handleError(e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve transactions")
+
+
+@router.get(
+    "/debts/summary",
+    response_model=BaseAPIResponse[ProviderDebtSummaryResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_my_debt_summary(
+    current_user: UserResponse = Depends(
+        GetCurrentUser(required_type=UserType.PROVIDER)
+    ),
+    service: PaymentService = Depends(get_payment_service),
+):
+    """Fetch provider's current outstanding commission debt summary."""
+    try:
+        summary = await service.get_provider_debt_summary(current_user.id)
+        return BaseAPIResponse[ProviderDebtSummaryResponse](
+            data=summary,
+            detail="Debt summary retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve debt summary.",
+        )
+
+
+@router.post(
+    "/debts/settle",
+    response_model=BaseAPIResponse[SettleDebtResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def settle_commission_debt(
+    payload: SettleDebtRequest,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.PROVIDER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    service: PaymentService = Depends(get_payment_service),
+):
+    """Initialize Paystack payment link for a provider to pay up their commission debt."""
+    try:
+        response = await service.initialize_debt_settlement(
+            current_user.id, request_amount=payload.amount
+        )
+        return BaseAPIResponse[SettleDebtResponse](
+            data=response,
+            detail="Debt settlement checkout link initialized successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initialize debt settlement.",
+        )

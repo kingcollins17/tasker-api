@@ -2,7 +2,7 @@ import re
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, Literal, List
 from datetime import datetime
-from app.core.models.users import UserType, KYCStatus
+from app.core.models.users import UserType, KYCStatus, DutyStatus
 from app.core.schemas.users import PaymentAccountResponse
 from app.core.utils.phone_helper import format_nigerian_phone
 
@@ -74,6 +74,9 @@ class ProviderProfileResponse(BaseModel):
     rejection_reason: Optional[str] = None
     verified_at: Optional[datetime] = None
     address_line: Optional[str] = None
+    is_online: Optional[bool] = None
+    duty_status: Optional[DutyStatus] = None
+    last_heartbeat_at: Optional[datetime] = None
     services: List[ServiceResponse] = []
 
 
@@ -259,3 +262,13 @@ class AttachProviderService(BaseModel):
 
 class UpdateRegion(BaseModel):
     region_id: Optional[str] = Field(None, description="The ID of the region to associate with the user")
+
+
+class UpdateOnlineStatus(BaseModel):
+    is_online: bool = Field(..., description="True to set provider online, False to set offline")
+
+
+class LocationPing(BaseModel):
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude coordinate")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude coordinate")
+

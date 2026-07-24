@@ -12,6 +12,8 @@ from app.core.utils.datetime_helper import utc_now
 class TransactionType(str, enum.Enum):
     TASK_PAYMENT = "task_payment"
     PROVIDER_PAYOUT = "provider_payout"
+    CASH_COMMISSION_DEBT = "cash_commission_debt"
+    DEBT_SETTLEMENT = "debt_settlement"
     REFUND = "refund"
     DISPUTE_SETTLEMENT = "dispute_settlement"
 
@@ -29,10 +31,11 @@ class Transaction(SQLModel, table=True):
         default_factory=lambda: str(uuid4()), primary_key=True, index=True
     )
     amount: float = Field(
-        description="Positive for incoming (e.g. payment), negative for outgoing (e.g. payout/refund)"
+        description="Positive for incoming (e.g. payment), negative for outgoing (e.g. payout/refund/debt)"
     )
     transaction_type: TransactionType = Field(index=True)
     status: TransactionStatus = Field(index=True, default=TransactionStatus.PENDING)
+    payment_mode: Optional[str] = Field(default=None, nullable=True, description="Payment mode: cash or online")
     user_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True)
     task_id: Optional[str] = Field(default=None, foreign_key="tasks.id", index=True)
     reference: Optional[str] = Field(default=None, index=True, description="External payment gateway reference")
