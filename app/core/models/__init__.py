@@ -1,6 +1,7 @@
 from .users import (
     UserType,
     KYCStatus,
+    DutyStatus,
     User,
     ProviderProfile,
     CustomerProfile,
@@ -17,6 +18,8 @@ from .services import (
     Service,
     ProviderServiceLink,
     ServiceCategory,
+    PricingRuleType,
+    PricingRule,
 )
 from .regions import Region
 from .spatial import PointType, GeometryType
@@ -34,10 +37,13 @@ from .notifications import (
 from .tasks import (
     TaskStatus,
     TaskBidStatus,
+    DispatchAttemptStatus,
+    PriceAdjustmentStatus,
     TaskAssignmentStatus,
     Task,
     TaskLocation,
-    TaskBid,
+    TaskDispatchAttempt,
+    TaskPriceAdjustment,
     TaskAssignment,
     TaskStatusHistory,
     TaskAttachment,
@@ -47,10 +53,15 @@ from .transactions import (
     TransactionType,
     TransactionStatus,
 )
+from .payments import (
+    DebtReason,
+    ProviderDebt,
+)
 
 __all__ = [
     "UserType",
     "KYCStatus",
+    "DutyStatus",
     "AdminRole",
     "User",
     "ProviderProfile",
@@ -61,6 +72,8 @@ __all__ = [
     "Service",
     "ProviderServiceLink",
     "ServiceCategory",
+    "PricingRuleType",
+    "PricingRule",
     "Region",
     "PointType",
     "GeometryType",
@@ -77,15 +90,21 @@ __all__ = [
     "UserDevice",
     "TaskStatus",
     "TaskBidStatus",
+    "DispatchAttemptStatus",
+    "PriceAdjustmentStatus",
     "TaskAssignmentStatus",
     "Task",
     "TaskLocation",
-    "TaskBid",
+    "TaskDispatchAttempt",
+    "TaskPriceAdjustment",
     "TaskAssignment",
     "TaskStatusHistory",
     "TaskAttachment",
     "Transaction",
     "TransactionType",
     "TransactionStatus",
+    "DebtReason",
+    "ProviderDebt",
 ]
+
 

@@ -1,7 +1,9 @@
+
 from typing import List, Optional, Tuple
 
 from fastapi import Depends
 from sqlmodel import select, func, col
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.logging import log_error, logger
 from app.core.models.notifications import (
@@ -288,3 +290,14 @@ def get_notification_service(
         preference_repo=preference_repo,
         user_repo=user_repo,
     )
+
+
+def get_notification_service_manual(session: AsyncSession):
+    return NotificationService(
+    
+            notification_repo=Repository(Notification, session),
+            recipient_repo=Repository(NotificationRecipient, session),
+            preference_repo=Repository(NotificationPreference, session),
+            delivery_repo=Repository(NotificationDelivery, session),
+            user_repo=Repository(User, session),
+        )

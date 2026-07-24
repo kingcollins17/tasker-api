@@ -1,23 +1,42 @@
-from .email import EmailService
-from .sms import SMSService
-from .whatsapp import WhatsAppService
+from fastapi import Depends
+
 from .cache import CacheService, get_cache_service
-from .payment import PaymentGateway, PaystackPaymentGateway, get_paystack_gateway
-from .storage import StorageService, MockStorageService, get_storage_service
-from .cloud_messaging import CloudMessagingService, MockCloudMessagingService, get_cloud_messaging_service
+from .cloud_messaging import (
+    CloudMessagingService,
+    MockCloudMessagingService,
+    get_cloud_messaging_service,
+)
 from .connection_manager import ConnectionManager, get_connection_manager
+from .email import EmailService
 from .notification_pubsub import (
     start_notification_listener,
     stop_notification_listener,
 )
 from .otp import (
-    OTPService,
     OTPError,
-    OTPRateLimitError,
-    OTPVerificationError,
     OTPMaxAttemptsReachedError,
+    OTPRateLimitError,
+    OTPService,
+    OTPVerificationError,
 )
-from fastapi import Depends
+from .payment import PaymentGateway, PaystackPaymentGateway, get_paystack_gateway
+from .provider_location import (
+    LocationPoint,
+    NearbyProviderResult,
+    PostGISProviderLocationService,
+    ProviderLocationPing,
+    ProviderLocationService,
+    RedisProviderLocationService,
+    get_provider_location_service,
+)
+from .sms import SMSService
+from .storage import MockStorageService, StorageService, get_storage_service
+from .whatsapp import WhatsAppService
+from app.features.services.pricing_engine import (
+    PricingBreakdown,
+    PricingCalculationRequest,
+    PricingEngine,
+)
 
 # Instantiate singleton instances for application-wide use
 email_service = EmailService()
@@ -53,18 +72,25 @@ __all__ = [
     "OTPRateLimitError",
     "OTPVerificationError",
     "OTPMaxAttemptsReachedError",
+    "PricingEngine",
+    "PricingCalculationRequest",
+    "PricingBreakdown",
+    "ProviderLocationService",
+    "RedisProviderLocationService",
+    "PostGISProviderLocationService",
+    "LocationPoint",
+    "ProviderLocationPing",
+    "NearbyProviderResult",
     "email_service",
     "sms_service",
     "whatsapp_service",
     "get_cache_service",
     "get_paystack_gateway",
     "get_otp_service",
+    "get_provider_location_service",
     "get_storage_service",
     "get_cloud_messaging_service",
     "get_connection_manager",
     "start_notification_listener",
     "stop_notification_listener",
 ]
-
-
-

@@ -1,9 +1,11 @@
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
 from datetime import datetime
-from app.core.models.tasks import TaskStatus, TaskBidStatus, TaskAssignmentStatus, LocationType
-from app.core.schemas.users import MinimalProviderResponse, MinimalCustomerResponse
+from typing import List, Optional
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.core.models.tasks import LocationType, TaskAssignmentStatus, TaskStatus
+from app.core.schemas.users import MinimalCustomerResponse, MinimalProviderResponse
 from app.features.services.schemas import CategoryResponse
+
 
 # Tasks Schemas
 class LocationCreate(BaseModel):
@@ -15,31 +17,35 @@ class LocationCreate(BaseModel):
     state: Optional[str] = Field(default=None, description="State")
     country: Optional[str] = Field(default=None, description="Country")
 
+
 class TaskCreate(BaseModel):
     title: str = Field(..., min_length=1, description="Title of the task")
     description: str = Field(..., min_length=1, description="Detailed description of the task")
     category_id: Optional[str] = Field(default=None, description="Category of the task")
     service_id: Optional[str] = Field(default=None, description="Specific service type of the task")
-    budget_min: Optional[float] = Field(default=None, ge=0, description="Minimum budget")
-    budget_max: Optional[float] = Field(default=None, ge=0, description="Maximum budget")
-    pricing_model: Optional[str] = Field(default="fixed", description="Pricing model, e.g. fixed or hourly")
     expires_at: Optional[datetime] = Field(default=None, description="Expiration date/time of the task")
     scheduled_start_at: Optional[datetime] = Field(default=None, description="When the user would like the task to start")
-    
     locations: List[LocationCreate] = Field(..., min_length=1, max_length=2, description="List of task locations (1 or 2)")
+
+
+class TaskPriceEstimateRequest(BaseModel):
+    category_id: Optional[str] = Field(default=None, description="Category ID of the task")
+    service_id: Optional[str] = Field(default=None, description="Specific service ID of the task")
+    is_urgent: Optional[bool] = Field(default=False, description="Whether immediate or same-day dispatch is requested")
+    locations: Optional[List[LocationCreate]] = Field(default=None, description="List of task locations to compute distance fee")
+
+
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(default=None)
     description: Optional[str] = Field(default=None)
     category_id: Optional[str] = Field(default=None)
     service_id: Optional[str] = Field(default=None)
-    budget_min: Optional[float] = Field(default=None, ge=0)
-    budget_max: Optional[float] = Field(default=None, ge=0)
-    pricing_model: Optional[str] = Field(default=None)
     expires_at: Optional[datetime] = Field(default=None)
     scheduled_start_at: Optional[datetime] = Field(default=None)
     status: Optional[TaskStatus] = Field(default=None)
-    
+
+
 class TaskLocationUpdate(BaseModel):
     latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
     longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
@@ -48,9 +54,10 @@ class TaskLocationUpdate(BaseModel):
     state: Optional[str] = Field(default=None)
     country: Optional[str] = Field(default=None)
 
+
 class TaskLocationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: Optional[str] = None
     task_id: Optional[str] = None
     location_type: Optional[str] = None
@@ -64,19 +71,6 @@ class TaskLocationResponse(BaseModel):
     updated_at: Optional[datetime] = None
     distance_km: Optional[float] = None
 
-# Task Bid Response (referenced in TaskResponse)
-class TaskBidResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    
-    id: Optional[str] = None
-    task_id: Optional[str] = None
-    provider_id: Optional[str] = None
-    price: Optional[float] = None
-    message: Optional[str] = None
-    estimated_duration: Optional[str] = None
-    status: Optional[TaskBidStatus] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
 
 class TaskMinimalResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -87,33 +81,28 @@ class TaskMinimalResponse(BaseModel):
     service_id: Optional[str] = None
     status: Optional[TaskStatus] = None
 
-class TaskBidWithTaskResponse(TaskBidResponse):
-    task: Optional[TaskMinimalResponse] = None
 
-class TaskBidWithProviderResponse(TaskBidResponse):
-    provider: Optional[MinimalProviderResponse] = None
-
-# Task Assignment Response (referenced in TaskResponse)
 class TaskAssignmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: Optional[str] = None
     task_id: Optional[str] = None
     provider_id: Optional[str] = None
-    accepted_bid_id: Optional[str] = None
+    accepted_dispatch_attempt_id: Optional[str] = None
     accepted_price: Optional[float] = None
     assigned_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     status: Optional[TaskAssignmentStatus] = None
 
+
 class TaskAssignmentWithTaskResponse(TaskAssignmentResponse):
     task: Optional[TaskMinimalResponse] = None
 
-# Task Attachment Response
+
 class TaskAttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: Optional[str] = None
     task_id: Optional[str] = None
     storage_key: Optional[str] = None
@@ -124,30 +113,35 @@ class TaskAttachmentResponse(BaseModel):
     type: Optional[str] = None
     created_at: Optional[datetime] = None
 
-# Task List Response
+
 class TaskListResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: Optional[str] = None
     customer_id: Optional[str] = None
     title: Optional[str] = None
     category_id: Optional[str] = None
     service_id: Optional[str] = None
-    budget_min: Optional[float] = None
-    budget_max: Optional[float] = None
-    pricing_model: Optional[str] = None
+    base_price: Optional[float] = None
+    distance_fee: Optional[float] = None
+    time_fee: Optional[float] = None
+    urgency_fee: Optional[float] = None
+    complexity_fee: Optional[float] = None
+    surge_multiplier: Optional[float] = None
+    customer_total_price: Optional[float] = None
+    platform_fee: Optional[float] = None
+    provider_payout: Optional[float] = None
     status: Optional[TaskStatus] = None
     created_at: Optional[datetime] = None
     scheduled_start_at: Optional[datetime] = None
     distance_km: Optional[float] = None
     category: Optional[CategoryResponse] = None
-    bids_count: Optional[int] = 0
     assignment: Optional[TaskAssignmentResponse] = None
 
-# Task Response
+
 class TaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: Optional[str] = None
     customer_id: Optional[str] = None
     region_id: Optional[str] = None
@@ -155,9 +149,15 @@ class TaskResponse(BaseModel):
     description: Optional[str] = None
     category_id: Optional[str] = None
     service_id: Optional[str] = None
-    budget_min: Optional[float] = None
-    budget_max: Optional[float] = None
-    pricing_model: Optional[str] = None
+    base_price: Optional[float] = None
+    distance_fee: Optional[float] = None
+    time_fee: Optional[float] = None
+    urgency_fee: Optional[float] = None
+    complexity_fee: Optional[float] = None
+    surge_multiplier: Optional[float] = None
+    customer_total_price: Optional[float] = None
+    platform_fee: Optional[float] = None
+    provider_payout: Optional[float] = None
     status: Optional[TaskStatus] = None
     created_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
@@ -169,15 +169,3 @@ class TaskResponse(BaseModel):
     assignment: Optional[TaskAssignmentResponse] = None
     attachments: Optional[List[TaskAttachmentResponse]] = None
     customer: Optional[MinimalCustomerResponse] = None
-
-
-# Bids Schemas
-class TaskBidCreate(BaseModel):
-    price: float = Field(..., ge=0, description="Bid amount")
-    message: Optional[str] = Field(default=None, description="Message to the customer")
-    estimated_duration: Optional[str] = Field(default=None, description="Estimated work duration, e.g. 2 hours")
-
-class TaskBidUpdate(BaseModel):
-    price: Optional[float] = Field(None, ge=0, description="Bid amount")
-    message: Optional[str] = Field(None, description="Message to the customer")
-    estimated_duration: Optional[str] = Field(None, description="Estimated work duration, e.g. 2 hours")

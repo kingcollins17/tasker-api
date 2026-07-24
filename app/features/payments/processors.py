@@ -1,15 +1,26 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
 from datetime import datetime
+from typing import Any, Dict, Optional
 
 from fastapi import Depends
 from app.core.models.notifications import NotificationType
+from app.core.models.tasks import (
+    DispatchAttemptStatus,
+    PaymentStatus,
+    Task,
+    TaskAssignment,
+    TaskDispatchAttempt,
+    TaskStatus,
+)
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
-from app.core.models.tasks import TaskAssignment, Task, TaskBid, TaskStatus, TaskBidStatus
-from app.core.repository import Repository, GetRepository
+from app.core.repository import GetRepository, Repository
 from app.features.notifications.schemas import CreateNotification
 from app.features.notifications.services import NotificationService, get_notification_service
+from app.features.payments.celery.tasks import (
+    process_debt_settlement,
+    process_provider_payout,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +51,12 @@ class PaymentWebhookProcessor(WebhookProcessor):
         notification_service: NotificationService,
         task_assignment_repo: Repository[TaskAssignment],
         task_repo: Repository[Task],
-        bid_repo: Repository[TaskBid],
+        attempt_repo: Repository[TaskDispatchAttempt],
     ):
         super().__init__(transaction_repo, notification_service)
         self.task_assignment_repo = task_assignment_repo
         self.task_repo = task_repo
-        self.bid_repo = bid_repo
+        self.attempt_repo = attempt_repo
 
     async def process(self, event: str, data: Dict[str, Any]) -> None:
         if event == "charge.success":
@@ -59,19 +70,61 @@ class PaymentWebhookProcessor(WebhookProcessor):
         metadata = data.get("metadata") or {}
         user_id = metadata.get("user_id")
         task_id = metadata.get("task_id")
+        event_type = metadata.get("type")
 
-        if not isinstance(reference, str) or not isinstance(user_id, str):
-            logger.error("Missing required fields (reference or user_id) in charge.success payload")
+        if not isinstance(reference, str):
+            logger.error("Missing required reference in charge.success payload")
             return
 
-        logger.info(f"Processing successful charge for reference: {reference}")
+        # 1. Handle Provider Debt Settlement Payment
+        if event_type == "debt_settlement":
+            provider_id = metadata.get("provider_id") or user_id
+            if provider_id:
+                logger.info(
+                    f"Triggering debt settlement task for provider {provider_id}, amount: ₦{amount:,.2f}"
+                )
+                # pyrefly: ignore [not-callable]
+                process_debt_settlement.delay(provider_id, amount, reference)
+            return
 
-        transaction = await self.__create_transaction(amount, TransactionStatus.SUCCESS, user_id, task_id, reference, data)
-        
+        # 2. Handle Online Task Payment
         if isinstance(task_id, str):
-            await self.__create_task_assignment(metadata, task_id)
-        
-        await self.__dispatch_success_notification(user_id, amount, reference, transaction.id)
+            logger.info(f"Processing successful online payment for task {task_id}, reference: {reference}")
+            task = await self.task_repo.get(task_id)
+            if task:
+                task.payment_status = PaymentStatus.PAID
+                await self.task_repo.add(task)
+
+                # Log successful task payment transaction
+                transaction = Transaction(
+                    amount=amount,
+                    transaction_type=TransactionType.TASK_PAYMENT,
+                    status=TransactionStatus.SUCCESS,
+                    payment_mode="online",
+                    user_id=user_id or task.customer_id,
+                    task_id=task.id,
+                    reference=reference,
+                    metadata_info=data,
+                )
+                await self.transaction_repo.add(transaction)
+
+                # Immediately trigger transfer out payout to provider via Celery task
+                if task.assigned_provider_id and task.provider_payout:
+                    logger.info(
+                        f"Immediately triggering provider payout for provider {task.assigned_provider_id} on task {task.id}"
+                    )
+                    # pyrefly: ignore [not-callable]
+                    process_provider_payout.delay(
+                        task.id, task.assigned_provider_id, task.provider_payout
+                    )
+
+                if user_id:
+                    await self.__dispatch_success_notification(user_id, amount, reference, transaction.id)
+                return
+
+        if isinstance(user_id, str):
+            transaction = await self.__create_transaction(amount, TransactionStatus.SUCCESS, user_id, task_id, reference, data)
+            await self.__dispatch_success_notification(user_id, amount, reference, transaction.id)
 
     async def _handle_charge_failed(self, data: Dict[str, Any]) -> None:
         reference = data.get("reference")
@@ -106,29 +159,29 @@ class PaymentWebhookProcessor(WebhookProcessor):
         return transaction
 
     async def __create_task_assignment(self, metadata: Dict[str, Any], task_id: str) -> None:
-        bid_id = metadata.get("bid_id")
-        if not bid_id or not task_id:
+        attempt_id = metadata.get("attempt_id") or metadata.get("dispatch_attempt_id")
+        if not attempt_id or not task_id:
             return
 
-        bid = await self.bid_repo.get(bid_id)
-        if not bid:
+        attempt = await self.attempt_repo.get(attempt_id)
+        if not attempt:
             return
 
         assignment = TaskAssignment(
             task_id=task_id,
-            provider_id=bid.provider_id,
-            accepted_bid_id=bid_id,
-            accepted_price=bid.price,
+            provider_id=attempt.provider_id,
+            accepted_dispatch_attempt_id=attempt_id,
+            accepted_price=attempt.offered_payout,
         )
         await self.task_assignment_repo.add(assignment)
         
         await self.task_repo.update(task_id, {"status": TaskStatus.ASSIGNED})
-        await self.bid_repo.update(bid_id, {"status": TaskBidStatus.ACCEPTED})
-        logger.info(f"Created assignment for task {task_id} with bid {bid_id}")
+        await self.attempt_repo.update(attempt_id, {"status": DispatchAttemptStatus.ACCEPTED})
+        logger.info(f"Created assignment for task {task_id} with attempt {attempt_id}")
 
         task = await self.task_repo.get(task_id)
         if task:
-            await self.__dispatch_provider_booked_notification(bid.provider_id, task)
+            await self.__dispatch_provider_booked_notification(attempt.provider_id, task)
 
     async def __dispatch_provider_booked_notification(self, provider_id: str, task: Task) -> None:
         if not provider_id:
@@ -288,14 +341,14 @@ def get_payment_processor(
     notification_service: NotificationService = Depends(get_notification_service),
     task_assignment_repo: Repository[TaskAssignment] = Depends(GetRepository(TaskAssignment)),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
-    bid_repo: Repository[TaskBid] = Depends(GetRepository(TaskBid)),
+    attempt_repo: Repository[TaskDispatchAttempt] = Depends(GetRepository(TaskDispatchAttempt)),
 ) -> PaymentWebhookProcessor:
     return PaymentWebhookProcessor(
         transaction_repo=transaction_repo,
         notification_service=notification_service,
         task_assignment_repo=task_assignment_repo,
         task_repo=task_repo,
-        bid_repo=bid_repo,
+        attempt_repo=attempt_repo,
     )
 
 
