@@ -34,6 +34,8 @@ from app.features.payments.schemas import (
 )
 from app.features.payments.services import PaymentService, get_payment_service
 from app.features.users.schemas import UserResponse
+from app.core.services.logger_service import LoggerService, get_logger_service
+from app.core.utils.timer import Timer
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +87,11 @@ async def process_payment_webhook(
         )
 
 
-@router.get("/transactions", response_model=BaseAPIResponse[PaginatedData[TransactionResponse]], status_code=status.HTTP_200_OK)
+@router.get(
+    "/transactions",
+    response_model=BaseAPIResponse[PaginatedData[TransactionResponse]],
+    status_code=status.HTTP_200_OK,
+)
 async def list_my_transactions(
     current_user: UserResponse = Depends(GetCurrentUser()),
     transaction_repo: Repository[Transaction] = Depends(GetRepository(Transaction)),
@@ -106,12 +112,17 @@ async def list_my_transactions(
         if status_filter:
             statement = statement.where(Transaction.status == status_filter)
 
-        count_query = select(func.count(Transaction.id)).where(Transaction.user_id == current_user.id)
+        # pyrefly: ignore [bad-argument-type]
+        count_query = select(func.count(Transaction.id)).where(
+            Transaction.user_id == current_user.id
+        )
         if transaction_type:
-            count_query = count_query.where(Transaction.transaction_type == transaction_type)
+            count_query = count_query.where(
+                Transaction.transaction_type == transaction_type
+            )
         if status_filter:
             count_query = count_query.where(Transaction.status == status_filter)
-            
+
         total = (await transaction_repo.execute(count_query)).one()
 
         if hasattr(Transaction, sort_by):
@@ -122,7 +133,7 @@ async def list_my_transactions(
 
         results = await transaction_repo.execute(statement)
         transactions = list(results.unique().all())
-        
+
         data = PaginatedData[TransactionResponse](
             items=[TransactionResponse.model_validate(t) for t in transactions],
             total=total,
@@ -138,7 +149,10 @@ async def list_my_transactions(
         raise
     except Exception as e:
         AppErrorHandler.handleError(e)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve transactions")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve transactions",
+        )
 
 
 @router.get(

@@ -1,3 +1,5 @@
+from app.core.utils.timer import Timer
+from app.core.services.logger_service import LoggerService, get_logger_service
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select
@@ -20,8 +22,12 @@ router = APIRouter(prefix="/payouts", tags=["payouts"])
 
 
 @router.get("/banks", response_model=BaseAPIResponse[List[BankResponse]])
-async def get_supported_banks():
+async def get_supported_banks(
+    system_logger: LoggerService = Depends(get_logger_service)
+):
     try:
+        timer = Timer()
+        timer.start()
         banks = [
             BankResponse(id="1", bank_code="044", name="Access Bank", logo_url=None),
             BankResponse(id="2", bank_code="011", name="First Bank", logo_url=None),
@@ -34,10 +40,12 @@ async def get_supported_banks():
             BankResponse(id="5", bank_code="032", name="Union Bank", logo_url=None),
             BankResponse(id="6", bank_code="057", name="Zenith Bank", logo_url=None),
         ]
+        await system_logger.metric('get_supported_banks', timer.stop(), source='payouts.get_supported_banks')
         return BaseAPIResponse(
             message="Supported banks retrieved successfully", data=banks
         )
     except Exception as e:
+        await system_logger.error(f'get_supported_banks error: {str(e)}', source='payouts.get_supported_banks')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -49,8 +57,11 @@ async def get_supported_banks():
 async def get_payment_account(
     current_user: UserResponse = Depends(GetCurrentUser()),
     payment_repo: Repository[PaymentAccount] = Depends(GetRepository(PaymentAccount)),
+    system_logger: LoggerService = Depends(get_logger_service)
 ):
     try:
+        timer = Timer()
+        timer.start()
         stmt = select(PaymentAccount).where(PaymentAccount.user_id == current_user.id)
         result = await payment_repo.execute(stmt)
         account = result.one_or_none()
@@ -61,12 +72,15 @@ async def get_payment_account(
                 detail="Payment account not found",
             )
 
+        await system_logger.metric('get_payment_account', timer.stop(), source='payouts.get_payment_account')
         return BaseAPIResponse(
             message="Payment account retrieved successfully", data=account
         )
-    except HTTPException:
+    except HTTPException as e:
+        await system_logger.warn('get_payment_account failed', source='payouts.get_payment_account', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
         raise
     except Exception as e:
+        await system_logger.error(f'get_payment_account error: {str(e)}', source='payouts.get_payment_account')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -80,8 +94,11 @@ async def create_or_update_payment_account(
     current_user: UserResponse = Depends(GetCurrentUser()),
     payment_repo: Repository[PaymentAccount] = Depends(GetRepository(PaymentAccount)),
     payment_gateway: PaymentGateway = Depends(get_paystack_gateway),
+    system_logger: LoggerService = Depends(get_logger_service)
 ):
     try:
+        timer = Timer()
+        timer.start()
         if account_data.account_number and (len(account_data.account_number) != 11 or not account_data.account_number.isdigit()):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -125,8 +142,10 @@ async def create_or_update_payment_account(
             account = await payment_repo.add(account)
             message = "Payment account created successfully"
 
+        await system_logger.metric('create_or_update_payment_account', timer.stop(), source='payouts.create_or_update_payment_account')
         return BaseAPIResponse(message=message, data=account)
     except Exception as e:
+        await system_logger.error(f'create_or_update_payment_account error: {str(e)}', source='payouts.create_or_update_payment_account')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -140,8 +159,11 @@ async def create_or_update_payment_account(
 async def verify_bank_account(
     account_number: str,
     bank_code: str,
+    system_logger: LoggerService = Depends(get_logger_service)
 ):
     try:
+        timer = Timer()
+        timer.start()
         if account_number.startswith("3177"):
             data = BankAccountVerificationResponse(
                 account_number=account_number,
@@ -149,15 +171,18 @@ async def verify_bank_account(
                 bank_name="Access Bank",
                 bank_code=bank_code,
             )
+            await system_logger.metric('verify_bank_account', timer.stop(), source='payouts.verify_bank_account')
             return BaseAPIResponse(message="Account verified successfully", data=data)
         else:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Account could not be verified",
             )
-    except HTTPException:
+    except HTTPException as e:
+        await system_logger.warn('verify_bank_account failed', source='payouts.verify_bank_account', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
         raise
     except Exception as e:
+        await system_logger.error(f'verify_bank_account error: {str(e)}', source='payouts.verify_bank_account')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

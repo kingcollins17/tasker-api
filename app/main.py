@@ -20,6 +20,7 @@ from app.features.notifications.router import router as notifications_router
 from app.features.tasks.router import router as tasks_router
 from app.features.payments.router import router as payments_router
 from app.features.reviews.router import router as reviews_router
+from app.features.system.router import router as system_router
 
 # Global variables to hold the celery processes references
 celery_process = None
@@ -98,6 +99,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router, prefix=f"{API_V1_PREFIX}")
     app.include_router(payments_router, prefix=f"{API_V1_PREFIX}")
     app.include_router(reviews_router, prefix=f"{API_V1_PREFIX}", tags=["Reviews & Credibility"])
+    app.include_router(system_router, prefix=f"{API_V1_PREFIX}/system", tags=["System"])
 
     @app.get("/")
     async def read_root():

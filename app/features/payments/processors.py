@@ -16,11 +16,16 @@ from app.core.models.tasks import (
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
 from app.core.repository import GetRepository, Repository
 from app.features.notifications.schemas import CreateNotification
-from app.features.notifications.services import NotificationService, get_notification_service
+from app.features.notifications.services import (
+    NotificationService,
+    get_notification_service,
+)
 from app.features.payments.celery.tasks import (
     process_debt_settlement,
     process_provider_payout,
 )
+from app.core.services.logger_service import LoggerService, get_logger_service
+from app.core.utils.timer import Timer
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +37,11 @@ class WebhookProcessor(ABC):
         self,
         transaction_repo: Repository[Transaction],
         notification_service: NotificationService,
+        system_logger: LoggerService,
     ):
         self.transaction_repo = transaction_repo
         self.notification_service = notification_service
+        self.system_logger = system_logger
 
     @abstractmethod
     async def process(self, event: str, data: Dict[str, Any]) -> None:
@@ -52,17 +59,32 @@ class PaymentWebhookProcessor(WebhookProcessor):
         task_assignment_repo: Repository[TaskAssignment],
         task_repo: Repository[Task],
         attempt_repo: Repository[TaskDispatchAttempt],
+        system_logger: LoggerService,
     ):
-        super().__init__(transaction_repo, notification_service)
+        super().__init__(transaction_repo, notification_service, system_logger)
         self.task_assignment_repo = task_assignment_repo
         self.task_repo = task_repo
         self.attempt_repo = attempt_repo
 
     async def process(self, event: str, data: Dict[str, Any]) -> None:
-        if event == "charge.success":
-            await self._handle_charge_success(data)
-        elif event == "charge.failed":
-            await self._handle_charge_failed(data)
+        try:
+            timer = Timer()
+            timer.start()
+            if event == "charge.success":
+                await self._handle_charge_success(data)
+            elif event == "charge.failed":
+                await self._handle_charge_failed(data)
+            await self.system_logger.metric(
+                f"Processed payment webhook: {event}",
+                timer.stop(),
+                source="payments.webhook",
+            )
+        except Exception as e:
+            await self.system_logger.error(
+                f"Error processing payment webhook ({event}): {str(e)}",
+                source="payments.webhook",
+                metadata={"data": data},
+            )
 
     async def _handle_charge_success(self, data: Dict[str, Any]) -> None:
         reference = data.get("reference")
@@ -89,7 +111,9 @@ class PaymentWebhookProcessor(WebhookProcessor):
 
         # 2. Handle Online Task Payment
         if isinstance(task_id, str):
-            logger.info(f"Processing successful online payment for task {task_id}, reference: {reference}")
+            logger.info(
+                f"Processing successful online payment for task {task_id}, reference: {reference}"
+            )
             task = await self.task_repo.get(task_id)
             if task:
                 task.payment_status = PaymentStatus.PAID
@@ -119,12 +143,18 @@ class PaymentWebhookProcessor(WebhookProcessor):
                     )
 
                 if user_id:
-                    await self.__dispatch_success_notification(user_id, amount, reference, transaction.id)
+                    await self.__dispatch_success_notification(
+                        user_id, amount, reference, transaction.id
+                    )
                 return
 
         if isinstance(user_id, str):
-            transaction = await self.__create_transaction(amount, TransactionStatus.SUCCESS, user_id, task_id, reference, data)
-            await self.__dispatch_success_notification(user_id, amount, reference, transaction.id)
+            transaction = await self.__create_transaction(
+                amount, TransactionStatus.SUCCESS, user_id, task_id, reference, data
+            )
+            await self.__dispatch_success_notification(
+                user_id, amount, reference, transaction.id
+            )
 
     async def _handle_charge_failed(self, data: Dict[str, Any]) -> None:
         reference = data.get("reference")
@@ -134,16 +164,26 @@ class PaymentWebhookProcessor(WebhookProcessor):
         task_id = metadata.get("task_id")
 
         if not isinstance(reference, str) or not isinstance(user_id, str):
-            logger.error("Missing required fields (reference or user_id) in charge.failed payload")
+            logger.error(
+                "Missing required fields (reference or user_id) in charge.failed payload"
+            )
             return
 
         logger.info(f"Processing failed charge for reference: {reference}")
 
-        await self.__create_transaction(amount, TransactionStatus.FAILED, user_id, task_id, reference, data)
+        await self.__create_transaction(
+            amount, TransactionStatus.FAILED, user_id, task_id, reference, data
+        )
         await self.__dispatch_failure_notification(user_id, amount, reference)
 
     async def __create_transaction(
-        self, amount: float, status: TransactionStatus, user_id: str, task_id: Optional[str], reference: str, data: Dict[str, Any]
+        self,
+        amount: float,
+        status: TransactionStatus,
+        user_id: str,
+        task_id: Optional[str],
+        reference: str,
+        data: Dict[str, Any],
     ) -> Transaction:
         transaction = Transaction(
             amount=amount,
@@ -155,10 +195,14 @@ class PaymentWebhookProcessor(WebhookProcessor):
             metadata_info=data,
         )
         await self.transaction_repo.add(transaction)
-        logger.info(f"Created transaction for charge: {reference} with status: {status}")
+        logger.info(
+            f"Created transaction for charge: {reference} with status: {status}"
+        )
         return transaction
 
-    async def __create_task_assignment(self, metadata: Dict[str, Any], task_id: str) -> None:
+    async def __create_task_assignment(
+        self, metadata: Dict[str, Any], task_id: str
+    ) -> None:
         attempt_id = metadata.get("attempt_id") or metadata.get("dispatch_attempt_id")
         if not attempt_id or not task_id:
             return
@@ -174,16 +218,22 @@ class PaymentWebhookProcessor(WebhookProcessor):
             accepted_price=attempt.offered_payout,
         )
         await self.task_assignment_repo.add(assignment)
-        
+
         await self.task_repo.update(task_id, {"status": TaskStatus.ASSIGNED})
-        await self.attempt_repo.update(attempt_id, {"status": DispatchAttemptStatus.ACCEPTED})
+        await self.attempt_repo.update(
+            attempt_id, {"status": DispatchAttemptStatus.ACCEPTED}
+        )
         logger.info(f"Created assignment for task {task_id} with attempt {attempt_id}")
 
         task = await self.task_repo.get(task_id)
         if task:
-            await self.__dispatch_provider_booked_notification(attempt.provider_id, task)
+            await self.__dispatch_provider_booked_notification(
+                attempt.provider_id, task
+            )
 
-    async def __dispatch_provider_booked_notification(self, provider_id: str, task: Task) -> None:
+    async def __dispatch_provider_booked_notification(
+        self, provider_id: str, task: Task
+    ) -> None:
         if not provider_id:
             return
 
@@ -204,7 +254,7 @@ class PaymentWebhookProcessor(WebhookProcessor):
 
     def __format_scheduled_time(self, dt: datetime) -> str:
         now = datetime.now()
-        time_str = dt.strftime("%I:%M %p").lstrip('0').replace(':00', '')
+        time_str = dt.strftime("%I:%M %p").lstrip("0").replace(":00", "")
         if dt.date() == now.date():
             return f"{time_str} today"
         elif (dt.date() - now.date()).days == 1:
@@ -222,7 +272,7 @@ class PaymentWebhookProcessor(WebhookProcessor):
     ) -> None:
         if not user_id:
             return
-            
+
         schema = CreateNotification(
             type=NotificationType.PAYMENT_RECEIVED,
             title="Payment Successful",
@@ -238,7 +288,7 @@ class PaymentWebhookProcessor(WebhookProcessor):
     ) -> None:
         if not user_id:
             return
-            
+
         schema = CreateNotification(
             type=NotificationType.PAYMENT_FAILED,
             title="Payment Failed",
@@ -254,10 +304,24 @@ class TransferWebhookProcessor(WebhookProcessor):
     """Handles outgoing payouts/transfers."""
 
     async def process(self, event: str, data: Dict[str, Any]) -> None:
-        if event == "transfer.success":
-            await self._handle_transfer_success(data)
-        elif event == "transfer.failed":
-            await self._handle_transfer_failed(data)
+        try:
+            timer = Timer()
+            timer.start()
+            if event == "transfer.success":
+                await self._handle_transfer_success(data)
+            elif event == "transfer.failed":
+                await self._handle_transfer_failed(data)
+            await self.system_logger.metric(
+                f"Processed transfer webhook: {event}",
+                timer.stop(),
+                source="payments.webhook",
+            )
+        except Exception as e:
+            await self.system_logger.error(
+                f"Error processing transfer webhook ({event}): {str(e)}",
+                source="payments.webhook",
+                metadata={"data": data},
+            )
 
     async def _handle_transfer_success(self, data: Dict[str, Any]) -> None:
         reference = data.get("reference")
@@ -267,19 +331,23 @@ class TransferWebhookProcessor(WebhookProcessor):
         task_id = metadata.get("task_id")
 
         if not isinstance(reference, str) or not isinstance(user_id, str):
-            logger.error("Missing required fields (reference or user_id) in transfer.success payload")
-            return
-        
-        logger.info(f"Processing successful transfer for reference: {reference}")
-        
-        await self.__create_transaction(amount, TransactionStatus.SUCCESS, user_id, task_id, reference, data)
-        await self.__dispatch_notification(
-                user_id,
-                NotificationType.PAYMENT_RECEIVED,
-                "Payout Successful",
-                f"Your payout of {amount} has been processed successfully.",
-                reference
+            logger.error(
+                "Missing required fields (reference or user_id) in transfer.success payload"
             )
+            return
+
+        logger.info(f"Processing successful transfer for reference: {reference}")
+
+        await self.__create_transaction(
+            amount, TransactionStatus.SUCCESS, user_id, task_id, reference, data
+        )
+        await self.__dispatch_notification(
+            user_id,
+            NotificationType.PAYMENT_RECEIVED,
+            "Payout Successful",
+            f"Your payout of {amount} has been processed successfully.",
+            reference,
+        )
 
     async def _handle_transfer_failed(self, data: Dict[str, Any]) -> None:
         reference = data.get("reference")
@@ -287,24 +355,34 @@ class TransferWebhookProcessor(WebhookProcessor):
         metadata = data.get("metadata") or {}
         user_id = metadata.get("user_id")
         task_id = metadata.get("task_id")
-        
+
         if not isinstance(reference, str) or not isinstance(user_id, str):
-            logger.error("Missing required fields (reference or user_id) in transfer.failed payload")
+            logger.error(
+                "Missing required fields (reference or user_id) in transfer.failed payload"
+            )
             return
 
         logger.info(f"Processing failed transfer for reference: {reference}")
-        
-        await self.__create_transaction(amount, TransactionStatus.FAILED, user_id, task_id, reference, data)
+
+        await self.__create_transaction(
+            amount, TransactionStatus.FAILED, user_id, task_id, reference, data
+        )
         await self.__dispatch_notification(
-                user_id,
-                NotificationType.PAYMENT_FAILED,
-                "Payout Failed",
-                "There was an issue processing your payout. Please check your details.",
-                reference
-            )
+            user_id,
+            NotificationType.PAYMENT_FAILED,
+            "Payout Failed",
+            "There was an issue processing your payout. Please check your details.",
+            reference,
+        )
 
     async def __create_transaction(
-        self, amount: float, status: TransactionStatus, user_id: str, task_id: Optional[str], reference: str, data: Dict[str, Any]
+        self,
+        amount: float,
+        status: TransactionStatus,
+        user_id: str,
+        task_id: Optional[str],
+        reference: str,
+        data: Dict[str, Any],
     ) -> Transaction:
         transaction = Transaction(
             amount=-abs(float(amount)),
@@ -316,11 +394,18 @@ class TransferWebhookProcessor(WebhookProcessor):
             metadata_info=data,
         )
         await self.transaction_repo.add(transaction)
-        logger.info(f"Created transaction for transfer: {reference} with status: {status}")
+        logger.info(
+            f"Created transaction for transfer: {reference} with status: {status}"
+        )
         return transaction
 
     async def __dispatch_notification(
-        self, user_id: str, type: NotificationType, title: str, body: str, reference: str
+        self,
+        user_id: str,
+        type: NotificationType,
+        title: str,
+        body: str,
+        reference: str,
     ) -> None:
         if not user_id:
             return
@@ -339,9 +424,14 @@ class TransferWebhookProcessor(WebhookProcessor):
 def get_payment_processor(
     transaction_repo: Repository[Transaction] = Depends(GetRepository(Transaction)),
     notification_service: NotificationService = Depends(get_notification_service),
-    task_assignment_repo: Repository[TaskAssignment] = Depends(GetRepository(TaskAssignment)),
+    task_assignment_repo: Repository[TaskAssignment] = Depends(
+        GetRepository(TaskAssignment)
+    ),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
-    attempt_repo: Repository[TaskDispatchAttempt] = Depends(GetRepository(TaskDispatchAttempt)),
+    attempt_repo: Repository[TaskDispatchAttempt] = Depends(
+        GetRepository(TaskDispatchAttempt)
+    ),
+    system_logger: LoggerService = Depends(get_logger_service),
 ) -> PaymentWebhookProcessor:
     return PaymentWebhookProcessor(
         transaction_repo=transaction_repo,
@@ -349,14 +439,17 @@ def get_payment_processor(
         task_assignment_repo=task_assignment_repo,
         task_repo=task_repo,
         attempt_repo=attempt_repo,
+        system_logger=system_logger,
     )
 
 
 def get_transfer_processor(
     transaction_repo: Repository[Transaction] = Depends(GetRepository(Transaction)),
     notification_service: NotificationService = Depends(get_notification_service),
+    system_logger: LoggerService = Depends(get_logger_service),
 ) -> TransferWebhookProcessor:
     return TransferWebhookProcessor(
         transaction_repo=transaction_repo,
         notification_service=notification_service,
+        system_logger=system_logger,
     )
