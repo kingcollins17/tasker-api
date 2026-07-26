@@ -238,7 +238,7 @@ async def list_active_tasks(
 
         stmt = stmt.offset((page - 1) * per_page).limit(per_page)
         results = await task_repo.execute(stmt)
-        tasks = list(results.scalars().all())
+        tasks = list(results.all())
 
         items = [TaskListResponse.model_validate(t) for t in tasks]
 
@@ -304,7 +304,7 @@ async def list_pending_tasks(
 
         stmt = stmt.offset((page - 1) * per_page).limit(per_page)
         results = await task_repo.execute(stmt)
-        tasks = list(results.scalars().all())
+        tasks = list(results.all())
 
         items = [TaskListResponse.model_validate(t) for t in tasks]
 

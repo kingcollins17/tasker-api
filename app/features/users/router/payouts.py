@@ -99,7 +99,7 @@ async def create_or_update_payment_account(
     try:
         timer = Timer()
         timer.start()
-        if account_data.account_number and (len(account_data.account_number) != 11 or not account_data.account_number.isdigit()):
+        if account_data.account_number and (len(account_data.account_number) != 10 or not account_data.account_number.isdigit()):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Account number must be exactly 11 digits",
@@ -147,6 +147,7 @@ async def create_or_update_payment_account(
     except Exception as e:
         await system_logger.error(f'create_or_update_payment_account error: {str(e)}', source='payouts.create_or_update_payment_account')
         AppErrorHandler.handleError(e)
+        if isinstance(e, HTTPException): raise e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to save payment account",
