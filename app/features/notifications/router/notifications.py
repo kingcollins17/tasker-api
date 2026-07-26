@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import (
     APIRouter,
     Depends,
@@ -176,16 +177,33 @@ async def notifications_websocket(
 
 
 @router.post("/test-in-app/{user_id}")
-async def test_in_app_notification(user_id: str):
+async def test_in_app_notification(
+    user_id: str,
+    task_id: Optional[str] = None,
+    type: Optional[str] = "test",
+    title: Optional[str] = "Test Notification",
+    body: Optional[str] = "This is a test in-app notification",
+    data: Optional[dict] = None,
+    priority: Optional[str] = "normal",
+
+    # service: NotificationService = Depends(get_notification_service),
+):
     """Test endpoint for sending an in-app notification directly via Redis Pub/Sub."""
     cache = get_cache_service()
+    
+    data = data or {}
+    if task_id:
+        data["task_id"] = task_id
+    if type:
+        data['type']=type
+        
     notification_payload = {
         "notification_id": "test-1234",
-        "type": "test",
-        "title": "Test Notification",
-        "body": "This is a test in-app notification",
-        "data": {},
-        "priority": "normal",
+        "type": type,
+        "title": title,
+        "body": body,
+        "data": data,
+        "priority": priority,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     message = json.dumps({"user_id": user_id, "notification": notification_payload})
