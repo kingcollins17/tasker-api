@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.models.tasks import LocationType, TaskAssignmentStatus, TaskStatus
+from app.core.models.tasks import LocationType, TaskAssignmentStatus, TaskStatus, DispatchAttemptStatus
 from app.core.schemas.users import MinimalCustomerResponse, MinimalProviderResponse
 from app.features.services.schemas import CategoryResponse
 
@@ -169,3 +169,18 @@ class TaskResponse(BaseModel):
     assignment: Optional[TaskAssignmentResponse] = None
     attachments: Optional[List[TaskAttachmentResponse]] = None
     customer: Optional[MinimalCustomerResponse] = None
+
+
+class TaskDispatchAttemptResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    task_id: Optional[str] = None
+    provider_id: Optional[str] = None
+    sequence_order: Optional[int] = None
+    match_score: Optional[float] = None
+    offered_payout: Optional[float] = None
+    pinged_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    responded_at: Optional[datetime] = None
+    status: Optional[DispatchAttemptStatus] = None

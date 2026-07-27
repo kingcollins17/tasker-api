@@ -18,6 +18,7 @@ from app.core.models.tasks import (
     TaskAssignment,
     TaskAssignmentStatus,
     TaskStatus,
+    TaskDispatchAttempt,
 )
 from app.core.repository import GetRepository, Repository
 from app.core.utils.datetime_helper import lagos_now
@@ -25,6 +26,7 @@ from app.features.tasks.schemas import (
     TaskAssignmentResponse,
     TaskAssignmentWithTaskResponse,
     TaskMinimalResponse,
+    TaskDispatchAttemptResponse,
 )
 from app.features.tasks.celery.dispatch import (
     complete_task_assignment,
@@ -231,6 +233,65 @@ async def get_task_assignment(
         )
 
 
+@router.get(
+    "/tasks/{task_id}/dispatch/pending",
+    response_model=BaseAPIResponse[TaskDispatchAttemptResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_pending_dispatch(
+    task_id: str,
+    current_user: UserResponse = Depends(GetCurrentUser()),
+    attempt_repo: Repository[TaskDispatchAttempt] = Depends(
+        GetRepository(TaskDispatchAttempt)
+    ),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """Retrieve the most recent pending dispatch attempt for a given task."""
+    try:
+        timer = Timer()
+        timer.start()
+
+        # Find the pending dispatch attempt for this task
+        stmt = (
+            select(TaskDispatchAttempt)
+            .where(
+                TaskDispatchAttempt.task_id == task_id,
+                TaskDispatchAttempt.status == DispatchAttemptStatus.PENDING
+            )
+            # pyrefly: ignore [bad-argument-type]
+            .order_by(desc(TaskDispatchAttempt.pinged_at))
+            .limit(1)
+        )
+        
+        result = await attempt_repo.execute(stmt)
+        attempt = result.one_or_none()
+
+        if not attempt:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No pending dispatch attempt found for this task.",
+            )
+
+        data = TaskDispatchAttemptResponse.model_validate(attempt)
+
+        await system_logger.metric('get_pending_dispatch', timer.stop(), source='assignments.get_pending_dispatch')
+        return BaseAPIResponse[TaskDispatchAttemptResponse](
+            data=data,
+            detail="Pending dispatch attempt retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn('get_pending_dispatch failed', source='assignments.get_pending_dispatch', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise
+    except Exception as e:
+        await system_logger.error(f'get_pending_dispatch error: {str(e)}', source='assignments.get_pending_dispatch')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving the pending dispatch attempt.",
+        )
+
+
 @router.post(
     "/tasks/{task_id}/dispatch/respond",
     response_model=BaseAPIResponse[None],
@@ -357,7 +418,7 @@ async def start_task(
         stmt = select(TaskAssignment).where(TaskAssignment.task_id == task_id)
         assignment: Optional[TaskAssignment] = (
             await assignment_repo.execute(stmt)
-        ).scalar_one_or_none()
+        ).one_or_none()
         if assignment:
             assignment.status = TaskAssignmentStatus.IN_PROGRESS
             assignment.started_at = now
