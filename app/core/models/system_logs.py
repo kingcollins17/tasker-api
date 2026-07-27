@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from sqlmodel import Field, SQLModel, JSON
 from sqlalchemy import Column
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 
 class LogLevel(str, Enum):
     INFO = "INFO"
@@ -25,5 +25,5 @@ class SystemLog(SQLModel, table=True):
         default=None,
         sa_column=Column("metadata", JSON, nullable=True)
     )
-    created_at: datetime = Field(default_factory=utc_now, index=True)
+    created_at: datetime = Field(default_factory=lagos_now, index=True)
 

@@ -28,7 +28,6 @@ from app.core.models.notifications import (
     Notification,
     NotificationChannel,
     NotificationDelivery,
-    NotificationPreference,
     NotificationRecipient,
     RecipientStatus,
 )
@@ -38,7 +37,7 @@ from app.core.services import email_service, sms_service, whatsapp_service
 from app.core.services.cache import get_cache_service
 from app.core.services.cloud_messaging import MockCloudMessagingService
 from app.core.services.notification_pubsub import NOTIFICATION_CHANNEL
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now, now as timenow
 from app.core.utils.celery import run_async
 
 
@@ -92,7 +91,7 @@ async def _fan_out_notification(notification_id: str) -> None:
                 )
                 return
 
-            if notification.expires_at and utc_now() > notification.expires_at:
+            if notification.expires_at and lagos_now() > notification.expires_at:
                 logger.info(
                     f"[Pipeline] Notification {notification_id} expired, skipping delivery."
                 )
@@ -173,7 +172,6 @@ async def _process_batch(notification_id: str, recipient_ids: List[str]) -> None
             notification_repo = Repository(Notification, session)
             recipient_repo = Repository(NotificationRecipient, session)
             delivery_repo = Repository(NotificationDelivery, session)
-            preference_repo = Repository(NotificationPreference, session)
 
             notification = await notification_repo.get(notification_id)
             if not notification:
@@ -192,51 +190,21 @@ async def _process_batch(notification_id: str, recipient_ids: List[str]) -> None
             if not recipients:
                 return
 
-            # Build a map of user_id → [recipient_ids] for preference lookup
-            user_to_recipients: Dict[str, List[str]] = defaultdict(list)
-            recipient_to_user: Dict[str, str] = {}
-            for r in recipients:
-                user_to_recipients[r.recipient_id].append(r.id)
-                recipient_to_user[r.id] = r.recipient_id
-
-            unique_user_ids = list(user_to_recipients.keys())
-
-            # Load preferences for all users in this batch in one query
-            pref_stmt = (
-                select(NotificationPreference)
-                .where(col(NotificationPreference.user_id).in_(unique_user_ids))
-                .where(col(NotificationPreference.notification_type) == notification.type)
-            )
-            pref_result = await preference_repo.execute(pref_stmt)
-            all_prefs = list(pref_result.all())
-
-            # Build user_id → set of enabled channels
-            user_channels: Dict[str, List[NotificationChannel]] = {}
-            user_has_prefs: set = set()
-            for pref in all_prefs:
-                user_has_prefs.add(pref.user_id)
-                if pref.enabled:
-                    user_channels.setdefault(pref.user_id, []).append(pref.channel)
-
-            # Users with no preferences → default to all channels
-            default_channels = list(NotificationChannel)
-            for uid in unique_user_ids:
-                if uid not in user_has_prefs:
-                    user_channels[uid] = default_channels
+            # Determine channels to use for this notification
+            channels_to_send = []
+            if notification.channels is not None:
+                for c in notification.channels:
+                    try:
+                        channels_to_send.append(NotificationChannel(c))
+                    except ValueError:
+                        pass
+            else:
+                channels_to_send = list(NotificationChannel)
 
             # Build delivery objects
             deliveries: List[NotificationDelivery] = []
             for recipient in recipients:
-                enabled = user_channels.get(
-                    recipient.recipient_id, [NotificationChannel.IN_APP]
-                )
-
-                for channel in enabled:
-                    if (
-                        notification.channels is not None
-                        and channel.value not in notification.channels
-                    ):
-                        continue
+                for channel in channels_to_send:
                     deliveries.append(
                         NotificationDelivery(
                             recipient_id=recipient.id,
@@ -285,7 +253,7 @@ async def _process_batch(notification_id: str, recipient_ids: List[str]) -> None
                     cache = get_cache_service()
                     notification_payload = {
                         "notification_id": notification.id,
-                        "type": notification.type.value,
+                        "type": notification.type.value if notification.type else "system_alert",
                         "title": notification.title,
                         "body": notification.body,
                         "data": notification.data,
@@ -346,7 +314,7 @@ async def _send_email_batch(notification_id: str, delivery_ids: List[str]) -> No
 
             succeeded_ids: List[str] = []
             failed_ids: List[str] = []
-            now = utc_now()
+            now = lagos_now()
 
             for delivery_id in delivery_ids:
                 delivery = await delivery_repo.get(delivery_id)
@@ -439,7 +407,7 @@ async def _send_sms_batch(notification_id: str, delivery_ids: List[str]) -> None
             succeeded_ids: List[str] = []
             failed_ids: List[str] = []
             perm_failed_ids: List[str] = []
-            now = utc_now()
+            now = lagos_now()
 
             for delivery_id in delivery_ids:
                 delivery = await delivery_repo.get(delivery_id)
@@ -550,7 +518,7 @@ async def _send_push_batch(notification_id: str, delivery_ids: List[str]) -> Non
             succeeded_ids: List[str] = []
             failed_ids: List[str] = []
             perm_failed_ids: List[str] = []
-            now = utc_now()
+            now = lagos_now()
 
             for delivery_id in delivery_ids:
                 delivery = await delivery_repo.get(delivery_id)
@@ -662,7 +630,7 @@ async def _send_whatsapp_batch(notification_id: str, delivery_ids: List[str]) ->
             succeeded_ids: List[str] = []
             failed_ids: List[str] = []
             perm_failed_ids: List[str] = []
-            now = utc_now()
+            now = timenow()
 
             for delivery_id in delivery_ids:
                 delivery = await delivery_repo.get(delivery_id)

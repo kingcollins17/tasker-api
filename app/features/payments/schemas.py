@@ -49,3 +49,32 @@ class ProviderDebtSummaryResponse(BaseModel):
     """Summary of provider's total pending debt balance."""
     total_debt_owed: Optional[float] = None
     pending_debts_count: Optional[int] = None
+
+from app.core.models.payments import PayoutStatus
+
+class PayoutQueueResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: Optional[str] = None
+    provider_id: Optional[str] = None
+    customer_id: Optional[str] = None
+    task_id: Optional[str] = None
+    payout_amount: Optional[float] = None
+    customer_payment_amount: Optional[float] = None
+    status: Optional[PayoutStatus] = None
+    description: Optional[str] = None
+    payment_url: Optional[str] = None
+    url_generated_at: Optional[datetime] = None
+    reference: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+class CustomerPayoutStatsResponse(BaseModel):
+    total_payouts: Optional[int] = 0
+    total_pending: Optional[int] = 0
+    total_amount_pending: Optional[float] = 0.0
+    total_completed: Optional[int] = 0
+    total_amount_completed: Optional[float] = 0.0
+
+class ProviderEarningStatsResponse(BaseModel):
+    total_earnings: Optional[float] = 0.0
+

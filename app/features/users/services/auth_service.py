@@ -14,7 +14,7 @@ from app.core.services import (
     OTPVerificationError,
 )
 from app.core.utils import security
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.phone_helper import format_nigerian_phone
 from app.features.users.schemas import UserLogin, UserRegister
 

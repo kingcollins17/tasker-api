@@ -9,7 +9,7 @@ from app.core.models.services import ProviderServiceLink, Service
 from app.core.models.users import DutyStatus, KYCStatus, ProviderProfile, User
 from app.core.repository import QueryOptions, Repository
 from app.core.services.provider_location import ProviderLocationService
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.phone_helper import format_nigerian_phone
 
 
@@ -78,7 +78,7 @@ class ProviderProfileService:
             profile_updates["gender"] = gender
 
         if profile_updates:
-            profile_updates["updated_at"] = utc_now()
+            profile_updates["updated_at"] = lagos_now()
             await self.provider_repo.update(profile.id, profile_updates)
 
         # 3. Retrieve and return updated User instance with relationships
@@ -118,7 +118,7 @@ class ProviderProfileService:
                 "id_doc_url": id_doc_url,
                 "selfie_url": selfie_url,
                 "status": KYCStatus.SUBMITTED,
-                "updated_at": utc_now(),
+                "updated_at": lagos_now(),
             },
         )
         if not updated_profile:
@@ -142,7 +142,7 @@ class ProviderProfileService:
         profile = profiles[0]
 
         updated_profile = await self.provider_repo.update(
-            profile.id, {"selfie_url": selfie_url, "updated_at": utc_now()}
+            profile.id, {"selfie_url": selfie_url, "updated_at": lagos_now()}
         )
         if not updated_profile:
             raise HTTPException(
@@ -177,7 +177,7 @@ class ProviderProfileService:
                 "id_number": id_number,
                 "id_doc_url": id_doc_url,
                 "status": new_status,
-                "updated_at": utc_now(),
+                "updated_at": lagos_now(),
             },
         )
         if not updated_profile:
@@ -295,7 +295,7 @@ class ProviderProfileService:
             {
                 "is_online": is_online,
                 "duty_status": new_duty_status,
-                "updated_at": utc_now(),
+                "updated_at": lagos_now(),
             },
         )
 

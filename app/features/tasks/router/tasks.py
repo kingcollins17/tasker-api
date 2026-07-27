@@ -75,9 +75,6 @@ async def create_task(
         timer.start()
         task = await task_service.create_task(current_user.id, schema)
 
-        # pyrefly: ignore [not-callable]
-        start_dispatch_workflow.delay(task.id)  
-
         await system_logger.metric('create_task', timer.stop(), source='tasks.create_task')
         return BaseAPIResponse[TaskResponse](
             data=TaskResponse.model_validate(task),
@@ -93,6 +90,87 @@ async def create_task(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while creating the task.",
+        )
+
+
+@router.put(
+    "/{task_id}/draft/confirm",
+    response_model=BaseAPIResponse[TaskResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def confirm_draft(
+    task_id: str,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.CUSTOMER,
+        )
+    ),
+    task_service: TaskService = Depends(get_task_service),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """Confirm a draft task and start the dispatch workflow."""
+    try:
+        timer = Timer()
+        timer.start()
+        task = await task_service.confirm_draft(task_id, current_user.id)
+
+        # pyrefly: ignore [not-callable]
+        start_dispatch_workflow.delay(task.id)
+
+        await system_logger.metric('confirm_draft', timer.stop(), source='tasks.confirm_draft')
+        return BaseAPIResponse[TaskResponse](
+            data=TaskResponse.model_validate(task),
+            detail="Draft task confirmed and dispatch started.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn('confirm_draft failed', source='tasks.confirm_draft', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise
+    except Exception as e:
+        await system_logger.error(f'confirm_draft error: {str(e)}', source='tasks.confirm_draft')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while confirming the draft task.",
+        )
+
+
+@router.delete(
+    "/{task_id}/draft/cancel",
+    response_model=BaseAPIResponse[bool],
+    status_code=status.HTTP_200_OK,
+)
+async def cancel_draft(
+    task_id: str,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.CUSTOMER,
+        )
+    ),
+    task_service: TaskService = Depends(get_task_service),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """Cancel and delete a draft task."""
+    try:
+        timer = Timer()
+        timer.start()
+        success = await task_service.cancel_draft(task_id, current_user.id)
+
+        await system_logger.metric('cancel_draft', timer.stop(), source='tasks.cancel_draft')
+        return BaseAPIResponse[bool](
+            data=success,
+            detail="Draft task cancelled and deleted.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn('cancel_draft failed', source='tasks.cancel_draft', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise
+    except Exception as e:
+        await system_logger.error(f'cancel_draft error: {str(e)}', source='tasks.cancel_draft')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while cancelling the draft task.",
         )
 
 

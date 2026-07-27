@@ -8,7 +8,7 @@ from app.core.models.regions import Region
 from app.core.models.users import ProviderProfile, User, UserDevice, UserLocation, UserType
 from app.core.repository import QueryOptions, Repository
 from app.core.services.provider_location import ProviderLocationPing, ProviderLocationService
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 
 
 class UserLocationDeviceService:
@@ -52,7 +52,7 @@ class UserLocationDeviceService:
 
         if region_id:
             await self.user_repo.update(
-                user_id, {"region_id": region_id, "updated_at": utc_now()}
+                user_id, {"region_id": region_id, "updated_at": lagos_now()}
             )
 
         if locations:
@@ -61,7 +61,7 @@ class UserLocationDeviceService:
                 "latitude": latitude,
                 "longitude": longitude,
                 "address_line": address_line,
-                "updated_at": utc_now(),
+                "updated_at": lagos_now(),
             }
             if region_id:
                 updates["region_id"] = region_id
@@ -103,8 +103,8 @@ class UserLocationDeviceService:
                     "user_id": user_id,
                     "platform": platform,
                     "is_active": True,
-                    "last_login_at": utc_now(),
-                    "updated_at": utc_now(),
+                    "last_login_at": lagos_now(),
+                    "updated_at": lagos_now(),
                 },
             )
         else:
@@ -114,8 +114,8 @@ class UserLocationDeviceService:
                     {
                         "messaging_token": token,
                         "is_active": True,
-                        "last_login_at": utc_now(),
-                        "updated_at": utc_now(),
+                        "last_login_at": lagos_now(),
+                        "updated_at": lagos_now(),
                     },
                 )
             else:
@@ -188,5 +188,5 @@ class UserLocationDeviceService:
         # 3. Update heartbeat timestamp on profile
         await self.provider_repo.update(
             profile.id,
-            {"last_heartbeat_at": utc_now(), "updated_at": utc_now()},
+            {"last_heartbeat_at": lagos_now(), "updated_at": lagos_now()},
         )

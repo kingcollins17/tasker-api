@@ -38,18 +38,19 @@ from app.core.repository import Repository
 from app.core.services import RedisProviderLocationService, get_cache_service
 from app.core.services.provider_location import NearbyProviderResult
 from app.core.utils.celery import run_async
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from app.features.notifications.schemas import CreateNotification
 from sqlalchemy import func
 from sqlmodel import col, select
 
 from app.features.notifications.services import get_notification_service_manual
+from app.core.services.availability_service import get_availability_service_manual
 from app.features.tasks.celery.metrics import (
     sync_provider_metrics,
     sync_service_metrics,
 )
 from app.core.models.credibility import CredibilityLedgerEntry, CredibilityReason
-from app.features.credibility.services import CredibilityService
+from app.features.credibility.services import CredibilityService, get_credibility_service_manual
 from app.features.payments.celery.tasks import process_task_payment
 
 # ---------------------------------------------------------------------------
@@ -80,6 +81,7 @@ async def _make_dispatch_deps(session):
     cache_service = get_cache_service()
     geo_service = RedisProviderLocationService(cache_service=cache_service)
     notification_service = get_notification_service_manual(session)
+    availability_service = get_availability_service_manual(session)
     return (
         Repository(Task, session),
         Repository(TaskLocation, session),
@@ -90,6 +92,7 @@ async def _make_dispatch_deps(session):
         Repository(ProviderServiceLink, session),
         geo_service,
         notification_service,
+        availability_service,
     )
 
 
@@ -114,6 +117,7 @@ async def _find_and_score_candidates(task_id: str, session) -> List[_Candidate]:
         service_link_repo,
         geo_service,
         _,
+        availability_service,
     ) = await _make_dispatch_deps(session)
 
     task = await task_repo.get(task_id)
@@ -131,7 +135,7 @@ async def _find_and_score_candidates(task_id: str, session) -> List[_Candidate]:
             latitude=task_loc.latitude,
             longitude=task_loc.longitude,
             radius_km=10.0,
-            limit=100,
+            limit=2000,
         )
     )
     if not nearby_results:
@@ -156,12 +160,19 @@ async def _find_and_score_candidates(task_id: str, session) -> List[_Candidate]:
         .where(
             User.id.in_(provider_ids),  # type: ignore
             User.is_active == True,  # noqa: E712
-            ProviderProfile.is_online == True,  # noqa: E712
-            ProviderProfile.duty_status == DutyStatus.ONLINE_AVAILABLE,
             ProviderProfile.status == KYCStatus.VERIFIED,
             ProviderServiceLink.service_id == task.service_id,
         )
     )
+
+    target_time = task.scheduled_start_at if task.scheduled_start_at else lagos_now()
+    stmt_eligibility = stmt_eligibility.where(
+        ProviderProfile.is_online == True,
+        ProviderProfile.duty_status == DutyStatus.ONLINE_AVAILABLE,
+        availability_service.get_availability_sql_condition(target_time)
+    )
+
+    # Eligible candidates from database
     res_eligibility = await provider_profile_repo.execute(stmt_eligibility)
     rows = res_eligibility.all()
 
@@ -216,9 +227,10 @@ async def _create_dispatch_attempt(
         _,
         _,
         _,
+        _,
     ) = await _make_dispatch_deps(session)
 
-    now = utc_now()
+    now = lagos_now()
     attempt = TaskDispatchAttempt(
         task_id=task_id,
         provider_id=provider_id,
@@ -266,11 +278,13 @@ async def _dispatch_next_candidate_async(task_id: str) -> None:
                 _,
                 _,
                 notification_service,
+                _,
             ) = await _make_dispatch_deps(session)
 
             task = await task_repo.get(task_id)
             if not task:
                 logger.warning(f"dispatch_next_candidate: task {task_id} not found")
+                await system_logger.warn(f"dispatch_next_candidate: task {task_id} not found", source='celery.dispatch_next_candidate')
                 return
 
             stmt_attempts = select(TaskDispatchAttempt).where(
@@ -286,6 +300,10 @@ async def _dispatch_next_candidate_async(task_id: str) -> None:
                 logger.info(
                     f"dispatch_next_candidate: task {task_id} already has a pending ping — skipping"
                 )
+                await system_logger.info(
+                    f"dispatch_next_candidate: task {task_id} already has a pending ping — skipping",
+                    source='celery.dispatch_next_candidate'
+                )
                 return
 
             candidates = await _find_and_score_candidates(task_id, session)
@@ -297,21 +315,22 @@ async def _dispatch_next_candidate_async(task_id: str) -> None:
                 logger.info(
                     f"dispatch_next_candidate: no candidates left for task {task_id} — status set to CANCELLED"
                 )
+                await system_logger.info(
+                    f"dispatch_next_candidate: no candidates left for task {task_id} — status set to CANCELLED",
+                    source='celery.dispatch_next_candidate'
+                )
                 if task.customer_id:
-                    await notification_service.create_notification(
-                        CreateNotification(
-                            type=NotificationType.TASK_CANCELLED,
-                            title="No Providers Available",
-                            body=f"We couldn't find an available provider for your task '{task.title}'. The task has been cancelled.",
-                            priority=NotificationPriority.HIGH,
-                            recipient_ids=[task.customer_id],
-                            channels=["push", "in_app"],
-                            data={
-                                "task_id": task.id,
-                                "type": "task_cancelled",
-                                "reason": "no_candidates_available",
-                            },
-                        )
+                    await notification_service.notify(
+                        recepients=[task.customer_id],
+                        title="No Providers Available",
+                        body=f"We couldn't find an available provider for your task '{task.title}'. The task has been cancelled.",
+                        type=NotificationType.TASK_CANCELLED,
+                        channels=["push", "in_app"],
+                        data={
+                            "task_id": task.id,
+                            "type": "task_cancelled",
+                            "reason": "no_candidates_available",
+                        },
                     )
                 return
 
@@ -338,27 +357,24 @@ async def _dispatch_next_candidate_async(task_id: str) -> None:
             )
             time_mins = round(timeout_seconds / 60, 1)
 
-            await notification_service.create_notification(
-                CreateNotification(
-                    type=NotificationType.TASK_ACCEPTED,
-                    title="New Task Offer",
-                    body=(
-                        f"You have a new task offer '{task.title}' for "
-                        f"{payout_fmt}. Tap to respond within {time_mins} mins!"
+            await notification_service.notify(
+                recepients=[top.provider_id],
+                title="New Task Offer",
+                body=(
+                    f"You have a new task offer '{task.title}' for "
+                    f"{payout_fmt}. Tap to respond within {time_mins} mins!"
+                ),
+                type=NotificationType.TASK_ACCEPTED,
+                channels=["push", "in_app"],
+                data={
+                    "task_id": task.id,
+                    "dispatch_attempt_id": attempt.id,
+                    "offered_payout": offered_payout,
+                    "expires_at": (
+                        attempt.expires_at.isoformat() if attempt.expires_at else None
                     ),
-                    priority=NotificationPriority.HIGH,
-                    recipient_ids=[top.provider_id],
-                    channels=["push", "in_app"],
-                    data={
-                        "task_id": task.id,
-                        "dispatch_attempt_id": attempt.id,
-                        "offered_payout": offered_payout,
-                        "expires_at": (
-                            attempt.expires_at.isoformat() if attempt.expires_at else None
-                        ),
-                        "type": "job_ping",
-                    },
-                )
+                    "type": "job_ping",
+                },
             )
 
             # Schedule timeout — chained Celery task
@@ -370,6 +386,11 @@ async def _dispatch_next_candidate_async(task_id: str) -> None:
             logger.info(
                 f"dispatch_next_candidate: pinged provider {top.provider_id} "
                 f"for task {task_id} (timeout={timeout_seconds}s)"
+            )
+            await system_logger.info(
+                f"dispatch_next_candidate: pinged provider {top.provider_id} "
+                f"for task {task_id} (timeout={timeout_seconds}s)",
+                source='celery.dispatch_next_candidate'
             )
 
 
@@ -398,6 +419,7 @@ async def _handle_provider_response_async(
                 _,
                 _,
                 notification_service,
+                _,
             ) = await _make_dispatch_deps(session)
 
             stmt_attempt = select(TaskDispatchAttempt).where(
@@ -414,9 +436,14 @@ async def _handle_provider_response_async(
                     f"handle_provider_response: no pending attempt for "
                     f"task={task_id} provider={provider_id}"
                 )
+                await system_logger.warn(
+                    f"handle_provider_response: no pending attempt for "
+                    f"task={task_id} provider={provider_id}",
+                    source='celery.handle_provider_response'
+                )
                 return
 
-            now = utc_now()
+            now = lagos_now()
             attempt.status = DispatchAttemptStatus(response_status)
             attempt.responded_at = now
             await attempt_repo.add(attempt)
@@ -457,21 +484,18 @@ async def _handle_provider_response_async(
                                 f"{profile.first_name} {profile.last_name or ''}".strip()
                             )
 
-                        await notification_service.create_notification(
-                            CreateNotification(
-                                type=NotificationType.TASK_ACCEPTED,
-                                title="Task Accepted!",
-                                body=f"{provider_name} has accepted your task '{task.title}'.",
-                                priority=NotificationPriority.HIGH,
-                                recipient_ids=[task.customer_id],
-                                channels=["push", "in_app"],
-                                data={
-                                    "task_id": task.id,
-                                    "assignment_id": assignment.id,
-                                    "provider_id": provider_id,
-                                    "type": "task_accepted",
-                                },
-                            )
+                        await notification_service.notify(
+                            recepients=[task.customer_id],
+                            title="Task Accepted!",
+                            body=f"{provider_name} has accepted your task '{task.title}'.",
+                            type=NotificationType.TASK_ACCEPTED,
+                            channels=["push", "in_app"],
+                            data={
+                                "task_id": task.id,
+                                "assignment_id": assignment.id,
+                                "provider_id": provider_id,
+                                "type": "task_accepted",
+                            },
                         )
 
                 # Cancel any other pending attempts
@@ -487,6 +511,10 @@ async def _handle_provider_response_async(
 
                 logger.info(
                     f"handle_provider_response: task {task_id} ACCEPTED by provider {provider_id}"
+                )
+                await system_logger.info(
+                    f"handle_provider_response: task {task_id} ACCEPTED by provider {provider_id}",
+                    source='celery.handle_provider_response'
                 )
 
             else:
@@ -505,13 +533,18 @@ async def _handle_provider_response_async(
                     f"handle_provider_response: task {task_id} {response_status} by "
                     f"provider {provider_id} — cascading to next candidate"
                 )
+                await system_logger.info(
+                    f"handle_provider_response: task {task_id} {response_status} by "
+                    f"provider {provider_id} — cascading to next candidate",
+                    source='celery.handle_provider_response'
+                )
                 # Insert credibility penalty for declined/timed-out ping
                 decline_reason = (
                     CredibilityReason.JOB_TIMEOUT
                     if DispatchAttemptStatus(response_status) == DispatchAttemptStatus.TIMEOUT
                     else CredibilityReason.JOB_DECLINED
                 )
-                cred_service = CredibilityService(Repository(CredibilityLedgerEntry, session))
+                cred_service = get_credibility_service_manual(session)
                 await cred_service.add_credibility_entry(
                     user_id=provider_id,
                     reason=decline_reason,
@@ -545,6 +578,7 @@ async def _complete_task_assignment_async(
                 _,
                 _,
                 _,
+                _,
             ) = await _make_dispatch_deps(session)
 
             stmt_assign = select(TaskAssignment).where(TaskAssignment.task_id == task_id)
@@ -553,7 +587,7 @@ async def _complete_task_assignment_async(
             ).scalar_one_or_none()
             if assignment:
                 assignment.status = TaskAssignmentStatus.COMPLETED
-                assignment.completed_at = utc_now()
+                assignment.completed_at = lagos_now()
                 await assignment_repo.add(assignment)
 
             service_id = None
@@ -585,8 +619,12 @@ async def _complete_task_assignment_async(
             logger.info(
                 f"complete_task_assignment: task {task_id} completed by provider {provider_id} (payment_mode={payment_mode})"
             )
+            await system_logger.info(
+                f"complete_task_assignment: task {task_id} completed by provider {provider_id} (payment_mode={payment_mode})",
+                source='celery.complete_task_assignment'
+            )
             # Reward provider with credibility for completing a task
-            cred_service = CredibilityService(Repository(CredibilityLedgerEntry, session))
+            cred_service = get_credibility_service_manual(session)
             await cred_service.add_credibility_entry(
                 user_id=provider_id,
                 reason=CredibilityReason.TASK_COMPLETED,

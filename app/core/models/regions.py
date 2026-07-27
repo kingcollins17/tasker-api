@@ -1,6 +1,6 @@
 from uuid import uuid4
 from datetime import datetime
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from typing import Optional, Any
 from sqlmodel import Field, SQLModel
 from sqlalchemy import Column
@@ -21,6 +21,6 @@ class Region(SQLModel, table=True):
         default=None,
         sa_column=Column(GeometryType, nullable=True)
     )
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=lagos_now)
+    updated_at: datetime = Field(default_factory=lagos_now)
 

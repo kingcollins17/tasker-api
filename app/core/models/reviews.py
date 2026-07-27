@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel, Relationship
 
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 
 
 class TaskReview(SQLModel, table=True):
@@ -55,8 +55,8 @@ class TaskReview(SQLModel, table=True):
         description="Hidden until double-blind window expires or both parties have reviewed",
     )
     created_at: datetime = Field(
-        default_factory=utc_now, description="Review submission timestamp"
+        default_factory=lagos_now, description="Review submission timestamp"
     )
     updated_at: datetime = Field(
-        default_factory=utc_now, description="Record update timestamp"
+        default_factory=lagos_now, description="Record update timestamp"
     )

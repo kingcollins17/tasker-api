@@ -19,7 +19,7 @@ from app.core.models.tasks import (
 from app.core.models.users import ProviderProfile
 from app.core.repository import Repository
 from app.core.utils.celery import run_async
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 
 
 @shared_task(name="tasks.sync_provider_metrics")
@@ -54,7 +54,7 @@ async def _sync_provider_metrics_async(provider_id: str):
             attempt_repo = Repository(TaskDispatchAttempt, session)
             assignment_repo = Repository(TaskAssignment, session)
 
-            cutoff = utc_now() - timedelta(days=30)
+            cutoff = lagos_now() - timedelta(days=30)
 
             # 1. Calculate 30-day acceptance rate
             stmt_pings = select(TaskDispatchAttempt).where(

@@ -17,9 +17,10 @@ from sqlmodel import select, desc, func
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.deps import GetCurrentUser
 from app.core.error_handler import AppErrorHandler
+from app.core.models.payments import ProviderDebt, PayoutQueue, PayoutStatus
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
 from app.core.models.users import UserType
-from app.core.repository import GetRepository, Repository
+from app.core.repository import GetRepository, Repository, QueryOptions
 from app.features.payments.processors import (
     PaymentWebhookProcessor,
     TransferWebhookProcessor,
@@ -31,6 +32,7 @@ from app.features.payments.schemas import (
     SettleDebtRequest,
     SettleDebtResponse,
     TransactionResponse,
+    PayoutQueueResponse,
 )
 from app.features.payments.services import PaymentService, get_payment_service
 from app.features.users.schemas import UserResponse
@@ -54,8 +56,11 @@ async def process_payment_webhook(
     background_tasks: BackgroundTasks,
     payment_processor: PaymentWebhookProcessor = Depends(get_payment_processor),
     transfer_processor: TransferWebhookProcessor = Depends(get_transfer_processor),
+    system_logger: LoggerService = Depends(get_logger_service)
 ):
     try:
+        timer = Timer()
+        timer.start()
         # TODO: Implement webhook signature verification
         # e.g., signature = request.headers.get("x-paystack-signature")
 
@@ -75,11 +80,14 @@ async def process_payment_webhook(
         else:
             logger.info(f"Unhandled webhook event type: {payload.event}")
 
+        await system_logger.metric('process_payment_webhook', timer.stop(), source='payments.process_payment_webhook')
         return {"status": "success", "message": "Webhook processed successfully"}
 
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        await system_logger.warn('process_payment_webhook failed', source='payments.process_payment_webhook', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
     except Exception as e:
+        await system_logger.error(f'process_payment_webhook error: {str(e)}', source='payments.process_payment_webhook')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -101,8 +109,11 @@ async def list_my_transactions(
     sort_desc: bool = Query(True),
     transaction_type: Optional[TransactionType] = Query(None),
     status_filter: Optional[TransactionStatus] = Query(None, alias="status"),
+    system_logger: LoggerService = Depends(get_logger_service)
 ):
     try:
+        timer = Timer()
+        timer.start()
         statement = select(Transaction).where(Transaction.user_id == current_user.id)
 
         if transaction_type:
@@ -140,14 +151,18 @@ async def list_my_transactions(
             page=page,
             per_page=per_page,
         )
+        
+        await system_logger.metric('list_my_transactions', timer.stop(), source='payments.list_my_transactions')
         return BaseAPIResponse[PaginatedData[TransactionResponse]](
             data=data,
             detail="Transactions retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        await system_logger.warn('list_my_transactions failed', source='payments.list_my_transactions', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
     except Exception as e:
+        await system_logger.error(f'list_my_transactions error: {str(e)}', source='payments.list_my_transactions')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -165,18 +180,25 @@ async def get_my_debt_summary(
         GetCurrentUser(required_type=UserType.PROVIDER)
     ),
     service: PaymentService = Depends(get_payment_service),
+    system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Fetch provider's current outstanding commission debt summary."""
     try:
+        timer = Timer()
+        timer.start()
         summary = await service.get_provider_debt_summary(current_user.id)
+        
+        await system_logger.metric('get_my_debt_summary', timer.stop(), source='payments.get_my_debt_summary')
         return BaseAPIResponse[ProviderDebtSummaryResponse](
             data=summary,
             detail="Debt summary retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        await system_logger.warn('get_my_debt_summary failed', source='payments.get_my_debt_summary', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
     except Exception as e:
+        await system_logger.error(f'get_my_debt_summary error: {str(e)}', source='payments.get_my_debt_summary')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -199,22 +221,128 @@ async def settle_commission_debt(
         )
     ),
     service: PaymentService = Depends(get_payment_service),
+    system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Initialize Paystack payment link for a provider to pay up their commission debt."""
     try:
+        timer = Timer()
+        timer.start()
         response = await service.initialize_debt_settlement(
             current_user.id, request_amount=payload.amount
         )
+        
+        await system_logger.metric('settle_commission_debt', timer.stop(), source='payments.settle_commission_debt')
         return BaseAPIResponse[SettleDebtResponse](
             data=response,
             detail="Debt settlement checkout link initialized successfully.",
             status_code=status.HTTP_200_OK,
         )
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        await system_logger.warn('settle_commission_debt failed', source='payments.settle_commission_debt', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
     except Exception as e:
+        await system_logger.error(f'settle_commission_debt error: {str(e)}', source='payments.settle_commission_debt')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to initialize debt settlement.",
+        )
+
+
+@router.get(
+    "/customer/payouts",
+    response_model=BaseAPIResponse[PaginatedData[PayoutQueueResponse]],
+)
+async def list_customer_payouts(
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.CUSTOMER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_desc: bool = Query(True),
+    status_filter: Optional[PayoutStatus] = Query(None, alias="status"),
+    service: PaymentService = Depends(get_payment_service),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """List out payout queue items where the current user is the customer."""
+    try:
+        timer = Timer()
+        timer.start()
+        options = QueryOptions(
+            filters={"status": status_filter} if status_filter else {},
+            limit=per_page,
+            offset=(page - 1) * per_page,
+            order_by=sort_by,
+            descending=sort_desc,
+        )
+        data, total = await service.get_customer_payout_queues(current_user.id, options)
+        mapped_data = [PayoutQueueResponse.model_validate(p) for p in data]
+        
+        paginated_data = PaginatedData[PayoutQueueResponse](
+            items=mapped_data,
+            total=total,
+            page=page,
+            per_page=per_page,
+        )
+        
+        await system_logger.metric('list_customer_payouts', timer.stop(), source='payments.list_customer_payouts')
+        return BaseAPIResponse[PaginatedData[PayoutQueueResponse]](
+            data=paginated_data,
+            detail="Fetched customer payout queues successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn('list_customer_payouts failed', source='payments.list_customer_payouts', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
+    except Exception as e:
+        await system_logger.error(f'list_customer_payouts error: {str(e)}', source='payments.list_customer_payouts')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch payout queues.",
+        )
+
+
+@router.post(
+    "/customer/payouts/{payout_id}/reinitiate",
+    response_model=BaseAPIResponse[PayoutQueueResponse],
+)
+async def reinitiate_customer_payout(
+    payout_id: str,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.CUSTOMER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    service: PaymentService = Depends(get_payment_service),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """Reinitiate checkout for a pending customer payout."""
+    try:
+        timer = Timer()
+        timer.start()
+        payout = await service.reinitiate_payout(payout_id, current_user.id)
+        
+        await system_logger.metric('reinitiate_customer_payout', timer.stop(), source='payments.reinitiate_customer_payout')
+        return BaseAPIResponse[PayoutQueueResponse](
+            data=PayoutQueueResponse.model_validate(payout),
+            detail="Payout payment reinitiated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn('reinitiate_customer_payout failed', source='payments.reinitiate_customer_payout', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
+    except Exception as e:
+        await system_logger.error(f'reinitiate_customer_payout error: {str(e)}', source='payments.reinitiate_customer_payout')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reinitiate payout payment.",
         )

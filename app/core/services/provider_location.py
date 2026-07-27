@@ -11,7 +11,7 @@ from sqlmodel import select
 from app.core.models.users import ProviderProfile, UserLocation
 from app.core.repository import Repository
 from app.core.services.cache import CacheService, get_cache_service
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.geo import calculate_haversine_distance
 
 
@@ -107,7 +107,7 @@ class RedisProviderLocationService(ProviderLocationService):
         )
 
         if not ping.timestamp:
-            ping.timestamp = utc_now().isoformat()
+            ping.timestamp = lagos_now().isoformat()
 
         meta_key = f"{self.META_KEY_PREFIX}{ping.provider_id}"
         await self.cache.set_json(meta_key, ping.model_dump(), expire=ttl_seconds)
@@ -133,7 +133,7 @@ class RedisProviderLocationService(ProviderLocationService):
                 longitude=float(lon),
                 latitude=float(lat),
                 is_online=True,
-                timestamp=utc_now().isoformat(),
+                timestamp=lagos_now().isoformat(),
             )
         return None
 
@@ -218,7 +218,7 @@ class PostGISProviderLocationService(ProviderLocationService):
         result = await self.location_repo.execute(stmt)
         loc: Optional[UserLocation] = result.scalar_one_or_none()
 
-        now = utc_now()
+        now = lagos_now()
         if loc:
             loc.latitude = ping.latitude
             loc.longitude = ping.longitude
@@ -243,7 +243,7 @@ class PostGISProviderLocationService(ProviderLocationService):
         if loc:
             loc.latitude = None
             loc.longitude = None
-            loc.updated_at = utc_now()
+            loc.updated_at = lagos_now()
             await self.location_repo.add(loc)
             return True
         return False
@@ -257,7 +257,7 @@ class PostGISProviderLocationService(ProviderLocationService):
                 provider_id=provider_id,
                 latitude=loc.latitude,
                 longitude=loc.longitude,
-                timestamp=loc.updated_at.isoformat() if loc.updated_at else utc_now().isoformat(),
+                timestamp=loc.updated_at.isoformat() if loc.updated_at else lagos_now().isoformat(),
             )
         return None
 

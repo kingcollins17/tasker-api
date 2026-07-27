@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 
 
 class CredibilityReason(str, enum.Enum):
@@ -94,6 +94,6 @@ class CredibilityLedgerEntry(SQLModel, table=True):
         description="Optional JSON context for this ledger event",
     )
     created_at: datetime = Field(
-        default_factory=utc_now,
+        default_factory=lagos_now,
         description="Timestamp when this credibility event was recorded",
     )

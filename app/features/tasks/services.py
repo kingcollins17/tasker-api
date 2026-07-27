@@ -36,7 +36,7 @@ from app.core.services.payment import (
     PaymentInitializationResponse,
     get_paystack_gateway,
 )
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.geo import calculate_locations_distance
 from app.features.notifications.schemas import CreateNotification
 from app.features.notifications.services import (
@@ -130,7 +130,7 @@ class TaskService:
             expires_at=(
                 schema.expires_at.replace(tzinfo=None) if schema.expires_at else None
             ),
-            status=TaskStatus.OPEN,
+            status=TaskStatus.DRAFT,
         )
         task = await self.task_repo.add(task)
 
@@ -154,7 +154,7 @@ class TaskService:
         history = TaskStatusHistory(
             task_id=task.id,
             old_status=None,
-            new_status=TaskStatus.OPEN,
+            new_status=TaskStatus.DRAFT,
             changed_by=customer_id,
         )
         await self.history_repo.add(history)
@@ -163,6 +163,56 @@ class TaskService:
         await self.task_repo.refresh(task)
 
         return task
+
+    async def confirm_draft(self, task_id: str, current_user_id: str) -> Task:
+        task = await self.task_repo.get(task_id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
+            )
+        if task.customer_id != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to confirm this task",
+            )
+        if task.status != TaskStatus.DRAFT:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Task is not in draft status",
+            )
+
+        updates = {"status": TaskStatus.OPEN, "updated_at": lagos_now()}
+        await self.task_repo.update(task_id, updates)
+
+        history = TaskStatusHistory(
+            task_id=task.id,
+            old_status=TaskStatus.DRAFT,
+            new_status=TaskStatus.OPEN,
+            changed_by=current_user_id,
+        )
+        await self.history_repo.add(history)
+        await self.task_repo.refresh(task)
+        return task
+
+    async def cancel_draft(self, task_id: str, current_user_id: str) -> bool:
+        task = await self.task_repo.get(task_id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
+            )
+        if task.customer_id != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to cancel this task",
+            )
+        if task.status != TaskStatus.DRAFT:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Task is not in draft status",
+            )
+
+        await self.task_repo.delete(task_id)
+        return True
 
     async def estimate_task_price(
         self,
@@ -376,7 +426,7 @@ class TaskService:
             updates["status"] = new_status
 
         if updates:
-            updates["updated_at"] = utc_now()
+            updates["updated_at"] = lagos_now()
             await self.task_repo.update(task_id, updates)
             await self.task_repo.refresh(task)
 
@@ -414,7 +464,7 @@ class TaskService:
 
         old_status = task.status
         await self.task_repo.update(
-            task_id, {"status": TaskStatus.CANCELLED, "updated_at": utc_now()}
+            task_id, {"status": TaskStatus.CANCELLED, "updated_at": lagos_now()}
         )
 
         history = TaskStatusHistory(

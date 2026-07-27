@@ -1,5 +1,6 @@
-
+from app.core.models import NotificationChannel, NotificationType
 from typing import List, Optional, Tuple
+from datetime import datetime
 
 from fastapi import Depends
 from sqlmodel import select, func, col
@@ -9,15 +10,13 @@ from app.core.logging import log_error, logger
 from app.core.models.notifications import (
     Notification,
     NotificationDelivery,
-    NotificationPreference,
     NotificationRecipient,
     RecipientStatus,
 )
 from app.core.models.users import User
 from app.core.repository import GetRepository, QueryOptions, Repository
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from app.features.notifications.schemas import (
-    BulkUpdatePreferences,
     CreateNotification,
 )
 
@@ -34,14 +33,34 @@ class NotificationService:
         notification_repo: Repository[Notification],
         recipient_repo: Repository[NotificationRecipient],
         delivery_repo: Repository[NotificationDelivery],
-        preference_repo: Repository[NotificationPreference],
         user_repo: Repository[User],
     ):
         self.notification_repo = notification_repo
         self.recipient_repo = recipient_repo
         self.delivery_repo = delivery_repo
-        self.preference_repo = preference_repo
         self.user_repo = user_repo
+
+    async def notify(
+        self,
+        recepients: List[str],
+        title: str,
+        body: str,
+        type: Optional[NotificationType],
+        data: Optional[dict]=None,
+        channels: Optional[List[str]]=None,
+        expires_at: Optional[datetime]=None,
+    ):
+        await self.create_notification(
+            CreateNotification(
+                recipient_ids=recepients,
+                type=type,
+                title=title,
+                body=body,
+                data=data,
+                channels=channels,
+                expires_at=expires_at,
+            )
+        )
 
     # ── Create ───────────────────────────────────────────────────────────
 
@@ -58,7 +77,7 @@ class NotificationService:
             title=schema.title,
             body=schema.body,
             data=schema.data,
-            channels=[c.value for c in schema.channels] if schema.channels else None,
+            channels=[c.value if isinstance(c, NotificationChannel) else c for c in schema.channels] if schema.channels else None,
             priority=schema.priority,
             created_by=created_by,
             scheduled_for=schema.scheduled_for,
@@ -82,9 +101,13 @@ class NotificationService:
 
         try:
             # pyrefly: ignore [not-callable]
-            process_notification.delay(notification.id)  # pyright: ignore [reportCallIssue]
+            process_notification.delay(
+                notification.id
+            )  # pyright: ignore [reportCallIssue]
         except Exception as e:
-            logger.error(f"Failed to enqueue notification {notification.id} for processing: {e}")
+            logger.error(
+                f"Failed to enqueue notification {notification.id} for processing: {e}"
+            )
 
         return notification
 
@@ -180,7 +203,7 @@ class NotificationService:
     @log_error()
     async def mark_as_read(self, user_id: str, notification_ids: List[str]) -> int:
         """Mark notifications as read for a specific user. Returns number of rows updated."""
-        now = utc_now()
+        now = lagos_now()
         stmt = (
             select(NotificationRecipient)
             .where(col(NotificationRecipient.recipient_id) == user_id)
@@ -217,56 +240,7 @@ class NotificationService:
         result = await self.delivery_repo.execute(stmt)
         return list(result.all())
 
-    # ── Preferences ──────────────────────────────────────────────────────
-
-    @log_error()
-    async def get_preferences(self, user_id: str) -> List[NotificationPreference]:
-        """Return all notification preferences for a user."""
-        return await self.preference_repo.get_all(
-            QueryOptions(filters={"user_id": user_id})
-        )
-
-    @log_error()
-    async def update_preferences(
-        self,
-        user_id: str,
-        schema: BulkUpdatePreferences,
-    ) -> List[NotificationPreference]:
-        """Upsert notification preferences for a user."""
-        results: List[NotificationPreference] = []
-
-        for pref in schema.preferences:
-            # Check if preference already exists
-            existing = await self.preference_repo.get_all(
-                QueryOptions(
-                    filters={
-                        "user_id": user_id,
-                        "notification_type": pref.notification_type,
-                        "channel": pref.channel,
-                    }
-                )
-            )
-
-            if existing:
-                updated = await self.preference_repo.update(
-                    existing[0].id, {"enabled": pref.enabled}
-                )
-                if updated:
-                    results.append(updated)
-            else:
-                new_pref = NotificationPreference(
-                    user_id=user_id,
-                    notification_type=pref.notification_type,
-                    channel=pref.channel,
-                    enabled=pref.enabled,
-                )
-                new_pref = await self.preference_repo.add(new_pref)
-                results.append(new_pref)
-
-        return results
-
-
-# ── Dependency provider ──────────────────────────────────────────────────────
+    # ── Preferences removed ──────────────────────────────────────────────────────
 
 
 def get_notification_service(
@@ -277,9 +251,6 @@ def get_notification_service(
     delivery_repo: Repository[NotificationDelivery] = Depends(
         GetRepository(NotificationDelivery)
     ),
-    preference_repo: Repository[NotificationPreference] = Depends(
-        GetRepository(NotificationPreference)
-    ),
     user_repo: Repository[User] = Depends(GetRepository(User)),
 ) -> NotificationService:
     """FastAPI dependency provider for NotificationService."""
@@ -287,17 +258,14 @@ def get_notification_service(
         notification_repo=notification_repo,
         recipient_repo=recipient_repo,
         delivery_repo=delivery_repo,
-        preference_repo=preference_repo,
         user_repo=user_repo,
     )
 
 
 def get_notification_service_manual(session: AsyncSession):
     return NotificationService(
-    
-            notification_repo=Repository(Notification, session),
-            recipient_repo=Repository(NotificationRecipient, session),
-            preference_repo=Repository(NotificationPreference, session),
-            delivery_repo=Repository(NotificationDelivery, session),
-            user_repo=Repository(User, session),
-        )
+        notification_repo=Repository(Notification, session),
+        recipient_repo=Repository(NotificationRecipient, session),
+        delivery_repo=Repository(NotificationDelivery, session),
+        user_repo=Repository(User, session),
+    )

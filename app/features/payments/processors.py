@@ -6,15 +6,12 @@ from typing import Any, Dict, Optional
 from fastapi import Depends
 from app.core.models.notifications import NotificationType
 from app.core.models.tasks import (
-    DispatchAttemptStatus,
     PaymentStatus,
     Task,
-    TaskAssignment,
-    TaskDispatchAttempt,
-    TaskStatus,
 )
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
-from app.core.repository import GetRepository, Repository
+from app.core.models.payments import PayoutQueue, PayoutStatus
+from app.core.repository import GetRepository, Repository, QueryOptions
 from app.features.notifications.schemas import CreateNotification
 from app.features.notifications.services import (
     NotificationService,
@@ -56,15 +53,13 @@ class PaymentWebhookProcessor(WebhookProcessor):
         self,
         transaction_repo: Repository[Transaction],
         notification_service: NotificationService,
-        task_assignment_repo: Repository[TaskAssignment],
         task_repo: Repository[Task],
-        attempt_repo: Repository[TaskDispatchAttempt],
         system_logger: LoggerService,
+        payout_repo: Repository[PayoutQueue],
     ):
         super().__init__(transaction_repo, notification_service, system_logger)
-        self.task_assignment_repo = task_assignment_repo
         self.task_repo = task_repo
-        self.attempt_repo = attempt_repo
+        self.payout_repo = payout_repo
 
     async def process(self, event: str, data: Dict[str, Any]) -> None:
         try:
@@ -95,24 +90,24 @@ class PaymentWebhookProcessor(WebhookProcessor):
         event_type = metadata.get("type")
 
         if not isinstance(reference, str):
-            logger.error("Missing required reference in charge.success payload")
+            await self.system_logger.error("Missing required reference in charge.success payload", source="payments.webhook")
             return
 
         # 1. Handle Provider Debt Settlement Payment
         if event_type == "debt_settlement":
             provider_id = metadata.get("provider_id") or user_id
             if provider_id:
-                logger.info(
-                    f"Triggering debt settlement task for provider {provider_id}, amount: ₦{amount:,.2f}"
+                await self.system_logger.info(
+                    f"Triggering debt settlement task for provider {provider_id}, amount: ₦{amount:,.2f}", source="payments.webhook"
                 )
                 # pyrefly: ignore [not-callable]
                 process_debt_settlement.delay(provider_id, amount, reference)
             return
 
         # 2. Handle Online Task Payment
-        if isinstance(task_id, str):
-            logger.info(
-                f"Processing successful online payment for task {task_id}, reference: {reference}"
+        if event_type == "task_payment" and isinstance(task_id, str):
+            await self.system_logger.info(
+                f"Processing successful online payment for task {task_id}, reference: {reference}", source="payments.webhook"
             )
             task = await self.task_repo.get(task_id)
             if task:
@@ -132,10 +127,16 @@ class PaymentWebhookProcessor(WebhookProcessor):
                 )
                 await self.transaction_repo.add(transaction)
 
+                # Update PayoutQueue to CUSTOMER_PAID
+                payouts = await self.payout_repo.get_all(QueryOptions(filters={"task_id": task.id}))
+                if payouts:
+                    for p in payouts:
+                        await self.payout_repo.update(p.id, {"status": PayoutStatus.CUSTOMER_PAID})
+
                 # Immediately trigger transfer out payout to provider via Celery task
                 if task.assigned_provider_id and task.provider_payout:
-                    logger.info(
-                        f"Immediately triggering provider payout for provider {task.assigned_provider_id} on task {task.id}"
+                    await self.system_logger.info(
+                        f"Immediately triggering provider payout for provider {task.assigned_provider_id} on task {task.id}", source="payments.webhook"
                     )
                     # pyrefly: ignore [not-callable]
                     process_provider_payout.delay(
@@ -164,12 +165,12 @@ class PaymentWebhookProcessor(WebhookProcessor):
         task_id = metadata.get("task_id")
 
         if not isinstance(reference, str) or not isinstance(user_id, str):
-            logger.error(
-                "Missing required fields (reference or user_id) in charge.failed payload"
+            await self.system_logger.error(
+                "Missing required fields (reference or user_id) in charge.failed payload", source="payments.webhook"
             )
             return
 
-        logger.info(f"Processing failed charge for reference: {reference}")
+        await self.system_logger.info(f"Processing failed charge for reference: {reference}", source="payments.webhook")
 
         await self.__create_transaction(
             amount, TransactionStatus.FAILED, user_id, task_id, reference, data
@@ -195,77 +196,12 @@ class PaymentWebhookProcessor(WebhookProcessor):
             metadata_info=data,
         )
         await self.transaction_repo.add(transaction)
-        logger.info(
-            f"Created transaction for charge: {reference} with status: {status}"
+        await self.system_logger.info(
+            f"Created transaction for charge: {reference} with status: {status}", source="payments.webhook"
         )
         return transaction
 
-    async def __create_task_assignment(
-        self, metadata: Dict[str, Any], task_id: str
-    ) -> None:
-        attempt_id = metadata.get("attempt_id") or metadata.get("dispatch_attempt_id")
-        if not attempt_id or not task_id:
-            return
 
-        attempt = await self.attempt_repo.get(attempt_id)
-        if not attempt:
-            return
-
-        assignment = TaskAssignment(
-            task_id=task_id,
-            provider_id=attempt.provider_id,
-            accepted_dispatch_attempt_id=attempt_id,
-            accepted_price=attempt.offered_payout,
-        )
-        await self.task_assignment_repo.add(assignment)
-
-        await self.task_repo.update(task_id, {"status": TaskStatus.ASSIGNED})
-        await self.attempt_repo.update(
-            attempt_id, {"status": DispatchAttemptStatus.ACCEPTED}
-        )
-        logger.info(f"Created assignment for task {task_id} with attempt {attempt_id}")
-
-        task = await self.task_repo.get(task_id)
-        if task:
-            await self.__dispatch_provider_booked_notification(
-                attempt.provider_id, task
-            )
-
-    async def __dispatch_provider_booked_notification(
-        self, provider_id: str, task: Task
-    ) -> None:
-        if not provider_id:
-            return
-
-        body = f"You have been booked for the task '{task.title}'."
-        if task.scheduled_start_at:
-            time_str = self.__format_scheduled_time(task.scheduled_start_at)
-            body = f"You have been booked for the task '{task.title}' scheduled for {time_str}."
-
-        schema = CreateNotification(
-            type=NotificationType.TASK_ACCEPTED,
-            title="Task Booked",
-            body=body,
-            recipient_ids=[provider_id],
-            data={"task_id": task.id},
-        )
-        await self.notification_service.create_notification(schema)
-        logger.info(f"Dispatched provider booked notification to user: {provider_id}")
-
-    def __format_scheduled_time(self, dt: datetime) -> str:
-        now = datetime.now()
-        time_str = dt.strftime("%I:%M %p").lstrip("0").replace(":00", "")
-        if dt.date() == now.date():
-            return f"{time_str} today"
-        elif (dt.date() - now.date()).days == 1:
-            return f"{time_str} tomorrow"
-        else:
-            day = dt.day
-            if 4 <= day <= 20 or 24 <= day <= 30:
-                suffix = "th"
-            else:
-                suffix = ["st", "nd", "rd"][day % 10 - 1]
-            return f"{day}{suffix} {dt.strftime('%b')}"
 
     async def __dispatch_success_notification(
         self, user_id: str, amount: float, reference: str, transaction_id: str
@@ -273,15 +209,14 @@ class PaymentWebhookProcessor(WebhookProcessor):
         if not user_id:
             return
 
-        schema = CreateNotification(
-            type=NotificationType.PAYMENT_RECEIVED,
+        await self.notification_service.notify(
+            recepients=[user_id],
             title="Payment Successful",
             body=f"Your payment of {amount} has been received successfully.",
-            recipient_ids=[user_id],
+            type=NotificationType.PAYMENT_RECEIVED,
             data={"transaction_id": transaction_id, "reference": reference},
         )
-        await self.notification_service.create_notification(schema)
-        logger.info(f"Dispatched payment success notification to user: {user_id}")
+        await self.system_logger.info(f"Dispatched payment success notification to user: {user_id}", source="payments.webhook")
 
     async def __dispatch_failure_notification(
         self, user_id: str, amount: float, reference: str
@@ -289,19 +224,28 @@ class PaymentWebhookProcessor(WebhookProcessor):
         if not user_id:
             return
 
-        schema = CreateNotification(
-            type=NotificationType.PAYMENT_FAILED,
+        await self.notification_service.notify(
+            recepients=[user_id],
             title="Payment Failed",
             body=f"Your payment of {amount} could not be processed. Please try again.",
-            recipient_ids=[user_id],
+            type=NotificationType.PAYMENT_FAILED,
             data={"reference": reference},
         )
-        await self.notification_service.create_notification(schema)
-        logger.info(f"Dispatched payment failure notification to user: {user_id}")
+        await self.system_logger.info(f"Dispatched payment failure notification to user: {user_id}", source="payments.webhook")
 
 
 class TransferWebhookProcessor(WebhookProcessor):
     """Handles outgoing payouts/transfers."""
+
+    def __init__(
+        self,
+        transaction_repo: Repository[Transaction],
+        notification_service: NotificationService,
+        system_logger: LoggerService,
+        payout_repo: Repository[PayoutQueue],
+    ):
+        super().__init__(transaction_repo, notification_service, system_logger)
+        self.payout_repo = payout_repo
 
     async def process(self, event: str, data: Dict[str, Any]) -> None:
         try:
@@ -331,12 +275,18 @@ class TransferWebhookProcessor(WebhookProcessor):
         task_id = metadata.get("task_id")
 
         if not isinstance(reference, str) or not isinstance(user_id, str):
-            logger.error(
-                "Missing required fields (reference or user_id) in transfer.success payload"
+            await self.system_logger.error(
+                "Missing required fields (reference or user_id) in transfer.success payload", source="payments.webhook"
             )
             return
 
-        logger.info(f"Processing successful transfer for reference: {reference}")
+        await self.system_logger.info(f"Processing successful transfer for reference: {reference}", source="payments.webhook")
+
+        # Update PayoutQueue status
+        payouts = await self.payout_repo.get_all(QueryOptions(filters={"reference": reference}))
+        if payouts:
+            for p in payouts:
+                await self.payout_repo.update(p.id, {"status": PayoutStatus.COMPLETED})
 
         await self.__create_transaction(
             amount, TransactionStatus.SUCCESS, user_id, task_id, reference, data
@@ -357,12 +307,18 @@ class TransferWebhookProcessor(WebhookProcessor):
         task_id = metadata.get("task_id")
 
         if not isinstance(reference, str) or not isinstance(user_id, str):
-            logger.error(
-                "Missing required fields (reference or user_id) in transfer.failed payload"
+            await self.system_logger.error(
+                "Missing required fields (reference or user_id) in transfer.failed payload", source="payments.webhook"
             )
             return
 
-        logger.info(f"Processing failed transfer for reference: {reference}")
+        await self.system_logger.info(f"Processing failed transfer for reference: {reference}", source="payments.webhook")
+
+        # Update PayoutQueue status
+        payouts = await self.payout_repo.get_all(QueryOptions(filters={"reference": reference}))
+        if payouts:
+            for p in payouts:
+                await self.payout_repo.update(p.id, {"status": PayoutStatus.CANCELLED})
 
         await self.__create_transaction(
             amount, TransactionStatus.FAILED, user_id, task_id, reference, data
@@ -385,7 +341,7 @@ class TransferWebhookProcessor(WebhookProcessor):
         data: Dict[str, Any],
     ) -> Transaction:
         transaction = Transaction(
-            amount=-abs(float(amount)),
+            amount=-abs(amount),
             transaction_type=TransactionType.PROVIDER_PAYOUT,
             status=status,
             user_id=user_id,
@@ -394,8 +350,8 @@ class TransferWebhookProcessor(WebhookProcessor):
             metadata_info=data,
         )
         await self.transaction_repo.add(transaction)
-        logger.info(
-            f"Created transaction for transfer: {reference} with status: {status}"
+        await self.system_logger.info(
+            f"Created transaction for transfer: {reference} with status: {status}", source="payments.webhook"
         )
         return transaction
 
@@ -410,36 +366,29 @@ class TransferWebhookProcessor(WebhookProcessor):
         if not user_id:
             return
 
-        schema = CreateNotification(
-            type=type,
+        await self.notification_service.notify(
+            recepients=[user_id],
             title=title,
             body=body,
-            recipient_ids=[user_id],
+            type=type,
             data={"reference": reference},
         )
-        await self.notification_service.create_notification(schema)
-        logger.info(f"Dispatched payout notification ({type}) to user: {user_id}")
+        await self.system_logger.info(f"Dispatched payout notification ({type}) to user: {user_id}", source="payments.webhook")
 
 
 def get_payment_processor(
     transaction_repo: Repository[Transaction] = Depends(GetRepository(Transaction)),
     notification_service: NotificationService = Depends(get_notification_service),
-    task_assignment_repo: Repository[TaskAssignment] = Depends(
-        GetRepository(TaskAssignment)
-    ),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
-    attempt_repo: Repository[TaskDispatchAttempt] = Depends(
-        GetRepository(TaskDispatchAttempt)
-    ),
     system_logger: LoggerService = Depends(get_logger_service),
+    payout_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
 ) -> PaymentWebhookProcessor:
     return PaymentWebhookProcessor(
         transaction_repo=transaction_repo,
         notification_service=notification_service,
-        task_assignment_repo=task_assignment_repo,
         task_repo=task_repo,
-        attempt_repo=attempt_repo,
         system_logger=system_logger,
+        payout_repo=payout_repo,
     )
 
 
@@ -447,9 +396,11 @@ def get_transfer_processor(
     transaction_repo: Repository[Transaction] = Depends(GetRepository(Transaction)),
     notification_service: NotificationService = Depends(get_notification_service),
     system_logger: LoggerService = Depends(get_logger_service),
+    payout_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
 ) -> TransferWebhookProcessor:
     return TransferWebhookProcessor(
         transaction_repo=transaction_repo,
         notification_service=notification_service,
         system_logger=system_logger,
+        payout_repo=payout_repo,
     )

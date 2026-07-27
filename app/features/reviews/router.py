@@ -51,10 +51,6 @@ async def submit_review(
     try:
         review = await service.submit_review(reviewer_id=current_user.id, schema=payload)
 
-        # Enqueue async post-review metric recalculations
-        # pyrefly: ignore [not-callable]
-        sync_user_ratings.delay(review.reviewee_id)
-
         return BaseAPIResponse(
             data=_review_to_response(review),
         )

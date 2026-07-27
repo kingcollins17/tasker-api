@@ -2,9 +2,10 @@ import re
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, Literal, List
 from datetime import datetime
-from app.core.models.users import UserType, KYCStatus, DutyStatus
+from app.core.models.users import UserType, KYCStatus, DutyStatus, DayOfWeek
 from app.core.schemas.users import PaymentAccountResponse
 from app.core.utils.phone_helper import format_nigerian_phone
+from datetime import time
 
 
 class UserRegister(BaseModel):
@@ -271,4 +272,21 @@ class UpdateOnlineStatus(BaseModel):
 class LocationPing(BaseModel):
     latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude coordinate")
     longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude coordinate")
+
+
+class ProviderAvailabilityBlock(BaseModel):
+    day_of_week: DayOfWeek = Field(description="1=Sunday, 7=Saturday")
+    start_time: time = Field(description="Start time (e.g., 07:00:00)")
+    end_time: time = Field(description="End time (e.g., 18:00:00)")
+
+
+class ProviderAvailabilityResponse(ProviderAvailabilityBlock):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    provider_id: str
+
+
+class UpdateProviderAvailability(BaseModel):
+    availability_blocks: List[ProviderAvailabilityBlock] = Field(..., description="List of availability blocks. Replaces all existing blocks for the provider.")
+
 

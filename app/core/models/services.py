@@ -1,7 +1,7 @@
 import enum
 from uuid import uuid4
 from datetime import datetime, timezone
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from typing import List, Optional, TYPE_CHECKING
 from sqlmodel import Field, SQLModel, Relationship
 
@@ -37,8 +37,8 @@ class ServiceCategory(SQLModel, table=True):
     per_km_rate: Optional[float] = Field(default=150.0, nullable=True, description="Default per-kilometer distance fee rate")
     per_minute_rate: Optional[float] = Field(default=20.0, nullable=True, description="Default per-minute labor fee rate")
     is_active: bool = Field(default=True, description="Whether this category is active and visible to customers")
-    created_at: datetime = Field(default_factory=utc_now, description="Record creation timestamp")
-    updated_at: datetime = Field(default_factory=utc_now, description="Record update timestamp")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
     
     services: List["Service"] = Relationship(
         back_populates="category"
@@ -56,9 +56,11 @@ class Service(SQLModel, table=True):
     per_km_rate: Optional[float] = Field(default=150.0, nullable=True, description="Per-kilometer distance rate override")
     per_minute_rate: Optional[float] = Field(default=20.0, nullable=True, description="Per-minute labor rate override")
     take_rate: float = Field(default=0.15, description="Dynamic percentage platform commission take-rate")
+    min_tier_required: int = Field(default=1, le=5, ge=1, description="Minimum provider tier required to perform this service")
+    is_high_risk: bool = Field(default=False, description="Whether this service involves high-risk tasks requiring extra verification")
     is_active: bool = Field(default=True, description="Whether this service is active and bookable")
-    created_at: datetime = Field(default_factory=utc_now, description="Record creation timestamp")
-    updated_at: datetime = Field(default_factory=utc_now, description="Record update timestamp")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
     
     category_id: Optional[str] = Field(
         default=None,
@@ -89,9 +91,9 @@ class PricingRule(SQLModel, table=True):
     region_id: Optional[str] = Field(
         default=None, foreign_key="regions.id", index=True, ondelete="CASCADE", nullable=True, description="Optional foreign key targeting a specific region"
     )
-    rule_type: Optional[PricingRuleType] = Field(default=None, index=True, nullable=True, description="Type of pricing modifier rule")
+    rule_type: PricingRuleType = Field(default=PricingRuleType.BASE_RATE, index=True, nullable=True, description="Type of pricing modifier rule")
     value: Optional[float] = Field(default=0.0, nullable=True, description="Fixed numerical value or fee additive")
     multiplier: Optional[float] = Field(default=1.0, nullable=True, description="Scaling factor multiplier (e.g. 1.25 for surge)")
     is_active: Optional[bool] = Field(default=True, nullable=True, description="Whether this pricing rule is currently active")
-    created_at: datetime = Field(default_factory=utc_now, description="Record creation timestamp")
-    updated_at: datetime = Field(default_factory=utc_now, description="Record update timestamp")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")

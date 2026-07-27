@@ -1,3 +1,4 @@
+from sqlmodel.ext.asyncio.session import AsyncSession
 from typing import List, Optional
 
 from fastapi import Depends
@@ -75,3 +76,6 @@ def get_credibility_service(
     ),
 ) -> CredibilityService:
     return CredibilityService(ledger_repo=ledger_repo)
+
+def get_credibility_service_manual(session: AsyncSession):
+    return CredibilityService(Repository(CredibilityLedgerEntry, session))

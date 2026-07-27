@@ -2,6 +2,9 @@ from .users import (
     UserType,
     KYCStatus,
     DutyStatus,
+    VerificationStatus,
+    OnboardingStep,
+    MediaType,
     User,
     ProviderProfile,
     CustomerProfile,
@@ -9,6 +12,8 @@ from .users import (
     PaymentAccount,
     UserLocation,
     UserDevice,
+    DayOfWeek,
+    ProviderAvailability,
 )
 from .system_logs import (
     SystemLog,
@@ -36,7 +41,6 @@ from .notifications import (
     Notification,
     NotificationRecipient,
     NotificationDelivery,
-    NotificationPreference,
 )
 from .tasks import (
     TaskStatus,
@@ -60,12 +64,24 @@ from .transactions import (
 from .payments import (
     DebtReason,
     ProviderDebt,
+    PayoutStatus,
+    PayoutQueue,
 )
+from .vetting import (
+    QuizQuestion,
+    ProviderQuizResult,
+    ProviderPortfolioMedia,
+    ProviderGuarantor,
+)
+
 
 __all__ = [
     "UserType",
     "KYCStatus",
     "DutyStatus",
+    "VerificationStatus",
+    "OnboardingStep",
+    "MediaType",
     "AdminRole",
     "User",
     "ProviderProfile",
@@ -89,9 +105,10 @@ __all__ = [
     "Notification",
     "NotificationRecipient",
     "NotificationDelivery",
-    "NotificationPreference",
     "UserLocation",
     "UserDevice",
+    "DayOfWeek",
+    "ProviderAvailability",
     "TaskStatus",
     "TaskBidStatus",
     "DispatchAttemptStatus",
@@ -109,8 +126,14 @@ __all__ = [
     "TransactionStatus",
     "DebtReason",
     "ProviderDebt",
+    "PayoutStatus",
+    "PayoutQueue",
     "SystemLog",
     "LogLevel",
+    "QuizQuestion",
+    "ProviderQuizResult",
+    "ProviderPortfolioMedia",
+    "ProviderGuarantor",
 ]
 
 

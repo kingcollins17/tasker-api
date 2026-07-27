@@ -14,6 +14,7 @@ from app.core.models.users import User
 from app.core.repository import GetRepository, Repository
 from app.features.credibility.services import CredibilityService, get_credibility_service
 from app.features.reviews.schemas import CreateReviewRequest
+from app.features.reviews.celery.tasks import sync_user_ratings
 
 _REVIEW_WINDOW_HOURS = 48
 
@@ -110,6 +111,10 @@ class ReviewService:
         # Check double-blind: if both parties reviewed, make both visible
         await self._maybe_reveal_reviews(schema.task_id, task)
 
+        # Sync ratings as soon as a review comes in
+        # pyrefly: ignore [not-callable]
+        sync_user_ratings.delay(reviewee_id)
+
         return review
 
     async def _maybe_reveal_reviews(self, task_id: str, task: Task) -> None:
@@ -124,6 +129,7 @@ class ReviewService:
         )
 
         if both_submitted:
+            
             for r in reviews:
                 if not r.is_visible:
                     r.is_visible = True

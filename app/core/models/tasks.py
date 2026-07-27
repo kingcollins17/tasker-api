@@ -1,10 +1,11 @@
+from sqlalchemy import null
 import enum
 from datetime import datetime
 from uuid import uuid4
 from typing import List, Optional, Any
 from sqlmodel import Field, SQLModel, Relationship
 from sqlalchemy import Column
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from app.core.models.spatial import PointType
 from sqlalchemy.orm import query_expression
 
@@ -73,11 +74,11 @@ class Task(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique primary identifier for the task")
     customer_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, ondelete="SET NULL", nullable=True, description="Foreign key reference to customer user ID")
-    region_id: Optional[str] = Field(default=None, foreign_key="regions.id", index=True, nullable=True, description="Assigned geographical region ID")
+    region_id: Optional[str] = Field(default=None, foreign_key="regions.id", index=True,ondelete="SET NULL",  nullable=True, description="Assigned geographical region ID")
     title: str = Field(nullable=False, description="Short descriptive title of the task")
     description: str = Field(nullable=False, description="Detailed scope description of the task request")
-    category_id: Optional[str] = Field(default=None, foreign_key="categories.id", index=True, nullable=True, description="Foreign key reference to task category")
-    service_id: Optional[str] = Field(default=None, foreign_key="services.id", index=True, nullable=True, description="Foreign key reference to specific service")
+    category_id: Optional[str] = Field(default=None, foreign_key="categories.id", index=True,ondelete="SET NULL",  nullable=True, description="Foreign key reference to task category")
+    service_id: Optional[str] = Field(default=None, foreign_key="services.id", index=True,ondelete="SET NULL",  nullable=True, description="Foreign key reference to specific service")
     
     # Upfront Pricing Breakdown
     base_price: Optional[float] = Field(default=0.0, nullable=True, description="Calculated upfront base price for task category/service")
@@ -104,8 +105,8 @@ class Task(SQLModel, table=True):
     payment_url: Optional[str] = Field(default=None, nullable=True, description="Paystack checkout URL generated for online payments")
 
     expires_at: Optional[datetime] = Field(default=None, index=True, nullable=True, description="Expiration timestamp if unassigned after dispatch")
-    created_at: datetime = Field(default_factory=utc_now, index=True, description="Record creation timestamp")
-    updated_at: datetime = Field(default_factory=utc_now, description="Record update timestamp")
+    created_at: datetime = Field(default_factory=lagos_now, index=True, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
 
     # Relationships
     locations: List["TaskLocation"] = Relationship(
@@ -169,8 +170,8 @@ class TaskLocation(SQLModel, table=True):
         default=None, sa_column=Column(PointType, nullable=True), description="PostGIS Point spatial geography column"
     )
     distance_km: Optional[float] = Field(default=None, sa_column=query_expression(), description="Dynamically computed distance from spatial queries")  # type: ignore
-    created_at: datetime = Field(default_factory=utc_now, description="Record creation timestamp")
-    updated_at: datetime = Field(default_factory=utc_now, description="Record update timestamp")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
 
     task: Task = Relationship(back_populates="locations")
 
@@ -184,7 +185,7 @@ class TaskDispatchAttempt(SQLModel, table=True):
     sequence_order: Optional[int] = Field(default=1, nullable=True, description="Position order in the ranked candidate queue")
     match_score: Optional[float] = Field(default=0.0, nullable=True, description="Composite score ranking evaluated by matching engine")
     offered_payout: Optional[float] = Field(default=0.0, nullable=True, description="Net provider payout offered for accepting ping")
-    pinged_at: Optional[datetime] = Field(default_factory=utc_now, nullable=True, description="Timestamp when dispatch ping notification was dispatched")
+    pinged_at: Optional[datetime] = Field(default_factory=lagos_now, nullable=True, description="Timestamp when dispatch ping notification was dispatched")
     expires_at: Optional[datetime] = Field(default=None, nullable=True, description="Expiration timestamp (typically pinged_at + 30 seconds)")
     responded_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when provider responded or ping timed out")
     status: Optional[DispatchAttemptStatus] = Field(default=DispatchAttemptStatus.PENDING, index=True, nullable=True, description="Outcome status of dispatch ping attempt")
@@ -201,7 +202,7 @@ class TaskPriceAdjustment(SQLModel, table=True):
     amount: Optional[float] = Field(default=None, nullable=True, description="Additional price amount requested")
     requested_by: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True, description="Foreign key of user requesting adjustment")
     status: Optional[PriceAdjustmentStatus] = Field(default=PriceAdjustmentStatus.PENDING_APPROVAL, index=True, nullable=True, description="Customer approval status of price adjustment")
-    created_at: datetime = Field(default_factory=utc_now, description="Record creation timestamp")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
 
     task: Task = Relationship(back_populates="price_adjustments")
 
@@ -216,7 +217,7 @@ class TaskAssignment(SQLModel, table=True):
         default=None, foreign_key="task_dispatch_attempts.id", nullable=True, description="Foreign key of accepted dispatch attempt ping"
     )
     accepted_price: Optional[float] = Field(default=None, nullable=True, description="Agreed upfront provider payout price")
-    assigned_at: datetime = Field(default_factory=utc_now, description="Timestamp when provider accepted assignment")
+    assigned_at: datetime = Field(default_factory=lagos_now, description="Timestamp when provider accepted assignment")
     started_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when provider initiated work on-site")
     completed_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when task work was finished and verified")
     status: TaskAssignmentStatus = Field(default=TaskAssignmentStatus.ASSIGNED, description="Assignment status")
@@ -232,7 +233,7 @@ class TaskStatusHistory(SQLModel, table=True):
     old_status: Optional[TaskStatus] = Field(default=None, nullable=True, description="Previous task status before change")
     new_status: TaskStatus = Field(description="New task status after change")
     changed_by: Optional[str] = Field(default=None, foreign_key="users.id", nullable=True, description="User ID or system actor initiating status change")
-    timestamp: datetime = Field(default_factory=utc_now, description="Timestamp of status transition")
+    timestamp: datetime = Field(default_factory=lagos_now, description="Timestamp of status transition")
 
     task: Task = Relationship(back_populates="history")
 
@@ -241,13 +242,13 @@ class TaskAttachment(SQLModel, table=True):
     __tablename__ = "task_attachments"  # type: ignore
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique task attachment ID")
-    task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE", description="The ID of the task this attachment is associated with")
+    task_id: Optional[str] = Field(default=None,ondelete="SET NULL", nullable=True, foreign_key="tasks.id", index=True, description="The ID of the task this attachment is associated with")
     storage_key: str = Field(description="The unique object key/path inside cloud storage (e.g. 'tasks/task-uuid/image.png')")
     file_name: Optional[str] = Field(default=None, nullable=True, description="The original name of the uploaded file")
     file_size: Optional[int] = Field(default=None, nullable=True, description="The size of the file in bytes")
     mime_type: Optional[str] = Field(default=None, nullable=True, description="The standard internet media type of the file (e.g. 'image/jpeg', 'video/mp4')")
     url: Optional[str] = Field(default=None, nullable=True, description="The public-facing URL to access/download the file")
     type: Optional[str] = Field(default=None, nullable=True, description="Semantic workflow category of the file (e.g. 'before_photo', 'after_photo', 'invoice')")
-    created_at: datetime = Field(default_factory=utc_now, description="Record creation timestamp")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
 
     task: Task = Relationship(back_populates="attachments")

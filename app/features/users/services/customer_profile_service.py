@@ -6,7 +6,7 @@ from fastapi import HTTPException, status
 from app.core.logging import log_error
 from app.core.models.users import CustomerProfile, User
 from app.core.repository import QueryOptions, Repository
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.phone_helper import format_nigerian_phone
 
 
@@ -68,7 +68,7 @@ class CustomerProfileService:
             profile_updates["last_name"] = last_name
 
         if profile_updates:
-            profile_updates["updated_at"] = utc_now()
+            profile_updates["updated_at"] = lagos_now()
             await self.customer_repo.update(profile.id, profile_updates)
 
         # 3. Retrieve and return updated User instance with relationships

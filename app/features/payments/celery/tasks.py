@@ -7,15 +7,16 @@ from sqlmodel import func, select
 
 from app.core.database import async_session_maker
 from app.core.logging import logger
+from app.core.repository import QueryOptions
 from app.core.models.notifications import NotificationPriority, NotificationType
-from app.core.models.payments import DebtReason, ProviderDebt
+from app.core.models.payments import DebtReason, ProviderDebt, PayoutQueue, PayoutStatus
 from app.core.models.tasks import PaymentMode, PaymentStatus, Task
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
 from app.core.models.users import User
 from app.core.repository import Repository
 from app.core.services.payment import get_paystack_gateway
 from app.core.utils.celery import run_async
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import now
 from app.features.notifications.schemas import CreateNotification
 from app.features.notifications.services import get_notification_service_manual
 
@@ -62,6 +63,7 @@ async def _process_task_payment_async(
             task_repo = Repository(Task, session)
             user_repo = Repository(User, session)
             debt_repo = Repository(ProviderDebt, session)
+            payout_repo = Repository(PayoutQueue, session)
             notification_service = get_notification_service_manual(session)
 
             task = await task_repo.get(task_id)
@@ -93,6 +95,18 @@ async def _process_task_payment_async(
                         f"Recorded cash debt entry (+₦{platform_fee:,.2f}) for provider {provider_id} on task {task.id}"
                     )
 
+                if task.provider_payout and task.provider_payout > 0:
+                    payout = PayoutQueue(
+                        provider_id=provider_id,
+                        task_id=task.id,
+                        customer_id=task.customer_id,
+                        payout_amount=task.provider_payout,
+                        customer_payment_amount=task.customer_total_price or 0.0,
+                        status=PayoutStatus.COMPLETED,
+                        description=f"Automated payout queue (CASH) for task {task.id}",
+                    )
+                    await payout_repo.add(payout)
+
             elif mode == PaymentMode.ONLINE:
                 customer = (
                     await user_repo.get(task.customer_id) if task.customer_id else None
@@ -109,6 +123,20 @@ async def _process_task_payment_async(
                 task.payment_url = payment_resp.checkout_url
                 task.payment_status = PaymentStatus.PAYMENT_REQUESTED
 
+                if task.provider_payout and task.provider_payout > 0:
+                    payout = PayoutQueue(
+                        provider_id=provider_id,
+                        task_id=task.id,
+                        customer_id=task.customer_id,
+                        payout_amount=task.provider_payout,
+                        customer_payment_amount=task.customer_total_price or 0.0,
+                        payment_url=payment_resp.checkout_url,
+                        url_generated_at=now(),
+                        status=PayoutStatus.PENDING,
+                        description=f"Automated payout queue for task {task.id}",
+                    )
+                    await payout_repo.add(payout)
+
                 if task.customer_id:
                     purl = payment_resp.checkout_url or ""
                     amt_fmt = (
@@ -116,21 +144,18 @@ async def _process_task_payment_async(
                         if task.customer_total_price
                         else ""
                     )
-                    await notification_service.create_notification(
-                        CreateNotification(
-                            type=NotificationType.TASK_ACCEPTED,
-                            title="Payment Requested for Completed Task",
-                            body=f"Your task '{task.title}' is completed. Tap to pay {amt_fmt} online.",
-                            priority=NotificationPriority.HIGH,
-                            recipient_ids=[task.customer_id],
-                            channels=["in_app", "push", "email"],
-                            data={
-                                "task_id": task.id,
-                                "payment_url": purl,
-                                "amount": task.customer_total_price,
-                                "type": "payment_request",
-                            },
-                        )
+                    await notification_service.notify(
+                        recepients=[task.customer_id],
+                        title="Payment Requested for Completed Task",
+                        body=f"Your task '{task.title}' is completed. Tap to pay {amt_fmt} online.",
+                        type=NotificationType.TASK_ACCEPTED,
+                        channels=["in_app", "push", "email"],
+                        data={
+                            "task_id": task.id,
+                            "payment_url": purl,
+                            "amount": task.customer_total_price,
+                            "type": "payment_request",
+                        },
                     )
                 logger.info(
                     f"Initialized online payment checkout link for task {task.id}: {task.payment_url}"
@@ -138,11 +163,19 @@ async def _process_task_payment_async(
 
             await task_repo.add(task)
 
-
-            await system_logger.metric('process_task_payment', timer.stop(), source='celery.process_task_payment')
+            await system_logger.metric(
+                "process_task_payment",
+                timer.stop(),
+                source="celery.process_task_payment",
+            )
         except Exception as e:
-            await system_logger.error(f'process_task_payment Failed: {str(e)}', source='celery.process_task_payment')
+            await system_logger.error(
+                f"process_task_payment Failed: {str(e)}",
+                source="celery.process_task_payment",
+            )
             raise e
+
+
 async def _process_provider_payout_async(
     task_id: str, provider_id: str, payout_amount: float
 ) -> None:
@@ -153,12 +186,15 @@ async def _process_provider_payout_async(
         try:
             debt_repo = Repository(ProviderDebt, session)
             tx_repo = Repository(Transaction, session)
+            payout_repo = Repository(PayoutQueue, session)
 
             # 1. Calculate net debt balance using SUM(amount) from append-only ledger
             stmt = select(func.coalesce(func.sum(ProviderDebt.amount), 0.0)).where(
                 ProviderDebt.provider_id == provider_id
             )
-            total_debt = float((await debt_repo.execute(stmt)).scalar_one_or_none() or 0.0)
+            total_debt = float(
+                (await debt_repo.execute(stmt)).scalar_one_or_none() or 0.0
+            )
 
             remaining_payout = payout_amount
             debt_offset = 0.0
@@ -184,15 +220,32 @@ async def _process_provider_payout_async(
                     status=TransactionStatus.SUCCESS,
                     user_id=provider_id,
                     task_id=task_id,
-                    metadata_info={"source": "payout_offset", "debt_offset": debt_offset},
+                    metadata_info={
+                        "source": "payout_offset",
+                        "debt_offset": debt_offset,
+                    },
                 )
                 await tx_repo.add(debt_settle_tx)
 
             # 2. Transfer net remaining payout via Paystack transfer API
             gateway = get_paystack_gateway()
-            transfer_ref = f"payout_{task_id}_{int(utc_now().timestamp())}"
+            transfer_ref = f"payout_{task_id}_{int(now().timestamp())}"
 
             if remaining_payout > 0:
+                # Find existing payout queue for the task and update it
+
+                payouts = await payout_repo.get_all(
+                    QueryOptions(
+                        filters={"task_id": task_id, "provider_id": provider_id}
+                    )
+                )
+                if payouts:
+                    p = payouts[0]
+                    await payout_repo.update(
+                        p.id,
+                        {"reference": transfer_ref, "payout_amount": remaining_payout},
+                    )
+
                 await gateway.send_payment(
                     amount=remaining_payout,
                     recipient_code=provider_id,
@@ -204,11 +257,19 @@ async def _process_provider_payout_async(
                 f"debt_offset=₦{debt_offset:,.2f}, net_transferred=₦{remaining_payout:,.2f}"
             )
 
-
-            await system_logger.metric('process_provider_payout', timer.stop(), source='celery.process_provider_payout')
+            await system_logger.metric(
+                "process_provider_payout",
+                timer.stop(),
+                source="celery.process_provider_payout",
+            )
         except Exception as e:
-            await system_logger.error(f'process_provider_payout Failed: {str(e)}', source='celery.process_provider_payout')
+            await system_logger.error(
+                f"process_provider_payout Failed: {str(e)}",
+                source="celery.process_provider_payout",
+            )
             raise e
+
+
 async def _process_debt_settlement_async(
     provider_id: str, amount_paid: float, reference: str
 ) -> None:
@@ -244,7 +305,14 @@ async def _process_debt_settlement_async(
             logger.info(
                 f"Processed debt settlement for provider {provider_id}: paid=₦{amount_paid:,.2f}, ref={reference}"
             )
-            await system_logger.metric('process_debt_settlement', timer.stop(), source='celery.process_debt_settlement')
+            await system_logger.metric(
+                "process_debt_settlement",
+                timer.stop(),
+                source="celery.process_debt_settlement",
+            )
         except Exception as e:
-            await system_logger.error(f'process_debt_settlement Failed: {str(e)}', source='celery.process_debt_settlement')
+            await system_logger.error(
+                f"process_debt_settlement Failed: {str(e)}",
+                source="celery.process_debt_settlement",
+            )
             raise e

@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy import Column, Index, JSON, text
 from sqlmodel import Field, Relationship, SQLModel
 
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 
 
 # ── Enums ────────────────────────────────────────────────────────────────────
@@ -21,6 +21,7 @@ class NotificationType(str, enum.Enum):
     REVIEW_RECEIVED = "review_received"
     PROMOTION = "promotion"
     SECURITY_ALERT = "security_alert"
+    SYSTEM_ALERT = "system_alert"
 
 
 class NotificationChannel(str, enum.Enum):
@@ -63,7 +64,7 @@ class Notification(SQLModel, table=True):
     )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    type: NotificationType
+    type: Optional[NotificationType] = Field(default=None, description="Type of notification.")
     title: str = Field(max_length=255)
     body: str
     data: Optional[Dict[str, Any]] = Field(
@@ -79,7 +80,7 @@ class Notification(SQLModel, table=True):
     created_by: Optional[str] = Field(
         default=None, foreign_key="users.id", index=True
     )
-    created_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=lagos_now)
     scheduled_for: Optional[datetime] = Field(default=None)
     expires_at: Optional[datetime] = Field(default=None)
 
@@ -110,7 +111,7 @@ class NotificationRecipient(SQLModel, table=True):
     recipient_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE")
     status: RecipientStatus = Field(default=RecipientStatus.PENDING)
     read_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=lagos_now)
 
     notification: Notification = Relationship(back_populates="recipients")
     deliveries: List["NotificationDelivery"] = Relationship(
@@ -147,16 +148,4 @@ class NotificationDelivery(SQLModel, table=True):
     recipient: NotificationRecipient = Relationship(back_populates="deliveries")
 
 
-class NotificationPreference(SQLModel, table=True):
-    """Per-user, per-type, per-channel preference toggle."""
-    __tablename__ = "notification_preferences"  # type: ignore
-    __table_args__ = (
-        Index("ix_notif_pref_user_type", "user_id", "notification_type"),
-        Index("ix_notif_pref_user_type_channel", "user_id", "notification_type", "channel", unique=True),
-    )
 
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    user_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE")
-    notification_type: NotificationType
-    channel: NotificationChannel
-    enabled: bool = Field(default=True)

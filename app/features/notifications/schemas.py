@@ -47,20 +47,6 @@ class MarkReadRequest(BaseModel):
     )
 
 
-class UpdatePreference(BaseModel):
-    """Single preference toggle."""
-    notification_type: NotificationType
-    channel: NotificationChannel
-    enabled: bool
-
-
-class BulkUpdatePreferences(BaseModel):
-    """Bulk-update user notification preferences."""
-    preferences: List[UpdatePreference] = Field(
-        ..., min_length=1, description="List of preferences to upsert"
-    )
-
-
 # ── Response Schemas ─────────────────────────────────────────────────────────
 
 class NotificationDeliveryResponse(BaseModel):
@@ -126,11 +112,4 @@ class NotificationCountsResponse(BaseModel):
     unread: Optional[int] = None
 
 
-class NotificationPreferenceResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
 
-    id: Optional[str] = None
-    user_id: Optional[str] = None
-    notification_type: Optional[NotificationType] = None
-    channel: Optional[NotificationChannel] = None
-    enabled: Optional[bool] = None

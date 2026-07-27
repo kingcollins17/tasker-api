@@ -20,7 +20,7 @@ from app.core.models.tasks import (
     TaskStatus,
 )
 from app.core.repository import GetRepository, Repository
-from app.core.utils.datetime_helper import utc_now
+from app.core.utils.datetime_helper import lagos_now
 from app.features.tasks.schemas import (
     TaskAssignmentResponse,
     TaskAssignmentWithTaskResponse,
@@ -347,7 +347,7 @@ async def start_task(
                 detail="Invalid start PIN.",
             )
 
-        now = utc_now()
+        now = lagos_now()
 
         # Update task status
         task.status = TaskStatus.IN_PROGRESS
