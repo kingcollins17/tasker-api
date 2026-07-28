@@ -78,6 +78,7 @@ class ProviderProfileResponse(BaseModel):
     is_online: Optional[bool] = None
     duty_status: Optional[DutyStatus] = None
     last_heartbeat_at: Optional[datetime] = None
+    total_tasks_completed: Optional[int] = 0
     services: List[ServiceResponse] = []
 
 
@@ -115,6 +116,8 @@ class UserResponse(BaseModel):
     is_active: bool
     email_verified: bool
     phone_verified: bool
+    credibility_score: Optional[float] = 25.0
+    average_ratings: Optional[float] = 0.0
     created_at: datetime
     updated_at: datetime
     region_id: Optional[str] = None
@@ -278,15 +281,19 @@ class ProviderAvailabilityBlock(BaseModel):
     day_of_week: DayOfWeek = Field(description="1=Sunday, 7=Saturday")
     start_time: time = Field(description="Start time (e.g., 07:00:00)")
     end_time: time = Field(description="End time (e.g., 18:00:00)")
+    is_active: Optional[bool] = Field(default=True, description="Whether this availability block is active")
 
 
 class ProviderAvailabilityResponse(ProviderAvailabilityBlock):
     model_config = ConfigDict(from_attributes=True)
-    id: str
-    provider_id: str
+    id: Optional[str] = None
+    provider_id: Optional[str] = None
+    is_active: Optional[bool] = True
 
 
-class UpdateProviderAvailability(BaseModel):
-    availability_blocks: List[ProviderAvailabilityBlock] = Field(..., description="List of availability blocks. Replaces all existing blocks for the provider.")
+class UpdateProviderAvailabilityBlock(BaseModel):
+    start_time: Optional[time] = Field(default=None, description="Start time (e.g., 07:00:00)")
+    end_time: Optional[time] = Field(default=None, description="End time (e.g., 18:00:00)")
+    is_active: Optional[bool] = Field(default=None, description="Whether this availability block is active")
 
 

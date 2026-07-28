@@ -1,14 +1,15 @@
+from typing import Optional
 import zoneinfo
-from datetime import datetime
+from datetime import datetime, time
 from sqlalchemy import ColumnElement, cast, Time
 from sqlmodel import select, func
 from sqlmodel.ext.asyncio.session import AsyncSession
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from sqlalchemy.sql.expression import exists
 
 from app.core.database import get_session
 from app.core.repository import Repository, GetRepository
-from app.core.models.users import User, UserLocation, ProviderAvailability
+from app.core.models.users import User, UserLocation, ProviderAvailability, DayOfWeek
 
 
 class AvailabilityService:
@@ -32,6 +33,7 @@ class AvailabilityService:
             .join(UserLocation, UserLocation.user_id == ProviderAvailability.provider_id)
             .where(
                 ProviderAvailability.provider_id == User.id,
+                ProviderAvailability.is_active == True,
                 ProviderAvailability.day_of_week == func.extract('DOW', local_ts) + 1,
                 ProviderAvailability.start_time <= cast(local_ts, Time),
                 ProviderAvailability.end_time >= cast(local_ts, Time)
@@ -57,6 +59,7 @@ class AvailabilityService:
         
         stmt = select(ProviderAvailability).where(
             ProviderAvailability.provider_id == provider_id,
+            ProviderAvailability.is_active == True,
             ProviderAvailability.day_of_week == day_val,
             ProviderAvailability.start_time <= target_time,
             ProviderAvailability.end_time >= target_time
@@ -70,27 +73,47 @@ class AvailabilityService:
         result = await self.availability_repo.execute(stmt)
         return list(result.all())
 
-    async def update_provider_availability(self, provider_id: str, blocks: list[dict]) -> list[ProviderAvailability]:
-        """Replace all availability blocks for a provider."""
-        # Delete existing blocks
-        delete_stmt = select(ProviderAvailability).where(ProviderAvailability.provider_id == provider_id)
-        result = await self.availability_repo.execute(delete_stmt)
-        existing = result.all()
-        for e in existing:
-            await self.availability_repo.delete(e.id)
-            
-        new_blocks = []
-        for b in blocks:
-            obj = ProviderAvailability(
-                provider_id=provider_id,
-                day_of_week=b["day_of_week"],
-                start_time=b["start_time"],
-                end_time=b["end_time"]
+    async def update_availability_block(
+        self,
+        availability_id: str,
+        provider_id: str,
+        start_time: Optional[time] = None,
+        end_time: Optional[time] = None,
+        is_active: Optional[bool] = None,
+    ) -> ProviderAvailability:
+        """Update a specific availability block for a provider (start_time, end_time, is_active)."""
+        block = await self.availability_repo.get(availability_id)
+        if not block or block.provider_id != provider_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Availability block not found.",
             )
-            await self.availability_repo.add(obj)
-            new_blocks.append(obj)
-            
-        return new_blocks
+        if start_time is not None:
+            block.start_time = start_time
+        if end_time is not None:
+            block.end_time = end_time
+        if is_active is not None:
+            block.is_active = is_active
+        return await self.availability_repo.add(block)
+
+    async def create_default_availability(self, provider_id: str) -> list[ProviderAvailability]:
+        """Create default availability for all 7 days of the week (06:00:00 to 23:59:00, active) if none exist."""
+        existing = await self.get_provider_availability(provider_id)
+        if existing:
+            return existing
+
+        created = []
+        for day in DayOfWeek:
+            block = ProviderAvailability(
+                provider_id=provider_id,
+                day_of_week=day,
+                start_time=time(6, 0, 0),
+                end_time=time(23, 59, 0),
+                is_active=True,
+            )
+            await self.availability_repo.add(block)
+            created.append(block)
+        return created
 
 
 def get_availability_service(

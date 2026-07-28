@@ -1,11 +1,11 @@
 """Customer (seeker) profile sub-service for profile management."""
 
 from typing import Optional
-from fastapi import HTTPException, status
+from fastapi import Depends, HTTPException, status
 
 from app.core.logging import log_error
 from app.core.models.users import CustomerProfile, User
-from app.core.repository import QueryOptions, Repository
+from app.core.repository import GetRepository, QueryOptions, Repository
 from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.phone_helper import format_nigerian_phone
 
@@ -79,3 +79,16 @@ class CustomerProfileService:
             )
         await self.user_repo.refresh(user)
         return user
+
+
+def get_customer_profile_service(
+    user_repo: Repository[User] = Depends(GetRepository(User)),
+    customer_repo: Repository[CustomerProfile] = Depends(
+        GetRepository(CustomerProfile)
+    ),
+) -> CustomerProfileService:
+    """Dependency provider injecting repositories into CustomerProfileService."""
+    return CustomerProfileService(
+        user_repo=user_repo,
+        customer_repo=customer_repo,
+    )

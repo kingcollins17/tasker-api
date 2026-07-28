@@ -223,5 +223,6 @@ class ProviderAvailability(SQLModel, table=True):
     
     start_time: time = Field(sa_column=Column(Time, nullable=False), description="Start time (e.g., 07:00:00)")
     end_time: time = Field(sa_column=Column(Time, nullable=False), description="End time (e.g., 18:00:00)")
+    is_active: bool = Field(default=True, description="Whether this availability block is active")
     
     provider: User = Relationship()

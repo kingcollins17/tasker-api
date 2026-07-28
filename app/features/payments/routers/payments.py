@@ -346,3 +346,104 @@ async def reinitiate_customer_payout(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reinitiate payout payment.",
         )
+
+
+@router.get(
+    "/provider/payouts",
+    response_model=BaseAPIResponse[PaginatedData[PayoutQueueResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def list_provider_payouts(
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.PROVIDER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_desc: bool = Query(True),
+    status_filter: Optional[PayoutStatus] = Query(None, alias="status"),
+    service: PaymentService = Depends(get_payment_service),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """List payout queue items where the current user is the provider."""
+    try:
+        timer = Timer()
+        timer.start()
+        options = QueryOptions(
+            filters={"status": status_filter} if status_filter else {},
+            limit=per_page,
+            offset=(page - 1) * per_page,
+            order_by=sort_by,
+            descending=sort_desc,
+        )
+        data, total = await service.get_provider_payout_queues(current_user.id, options)
+        mapped_data = [PayoutQueueResponse.model_validate(p) for p in data]
+        
+        paginated_data = PaginatedData[PayoutQueueResponse](
+            items=mapped_data,
+            total=total,
+            page=page,
+            per_page=per_page,
+        )
+        
+        await system_logger.metric('list_provider_payouts', timer.stop(), source='payments.list_provider_payouts')
+        return BaseAPIResponse[PaginatedData[PayoutQueueResponse]](
+            data=paginated_data,
+            detail="Fetched provider payout queues successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn('list_provider_payouts failed', source='payments.list_provider_payouts', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
+    except Exception as e:
+        await system_logger.error(f'list_provider_payouts error: {str(e)}', source='payments.list_provider_payouts')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch payout queues.",
+        )
+
+
+@router.get(
+    "/provider/payouts/{payout_id}",
+    response_model=BaseAPIResponse[PayoutQueueResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_provider_payout(
+    payout_id: str,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.PROVIDER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    service: PaymentService = Depends(get_payment_service),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """Fetch details of a specific payout queue item for the authenticated provider."""
+    try:
+        timer = Timer()
+        timer.start()
+        payout = await service.get_provider_payout(payout_id, current_user.id)
+        
+        await system_logger.metric('get_provider_payout', timer.stop(), source='payments.get_provider_payout')
+        return BaseAPIResponse[PayoutQueueResponse](
+            data=PayoutQueueResponse.model_validate(payout),
+            detail="Fetched provider payout successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn('get_provider_payout failed', source='payments.get_provider_payout', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
+    except Exception as e:
+        await system_logger.error(f'get_provider_payout error: {str(e)}', source='payments.get_provider_payout')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch provider payout.",
+        )

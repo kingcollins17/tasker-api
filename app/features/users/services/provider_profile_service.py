@@ -1,14 +1,14 @@
 """Provider (tasker) profile sub-service for profile management, KYC, service attachment, and presence."""
 
 from typing import Optional
-from fastapi import HTTPException, status
+from fastapi import Depends, HTTPException, status
 from sqlmodel import select
 
 from app.core.logging import log_error
 from app.core.models.services import ProviderServiceLink, Service
 from app.core.models.users import DutyStatus, KYCStatus, ProviderProfile, User
-from app.core.repository import QueryOptions, Repository
-from app.core.services.provider_location import ProviderLocationService
+from app.core.repository import GetRepository, QueryOptions, Repository
+from app.core.services.provider_location import ProviderLocationService, get_provider_location_service
 from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.phone_helper import format_nigerian_phone
 
@@ -309,3 +309,20 @@ class ProviderProfileService:
             )
         await self.user_repo.refresh(user)
         return user
+
+
+def get_provider_profile_service(
+    user_repo: Repository[User] = Depends(GetRepository(User)),
+    provider_repo: Repository[ProviderProfile] = Depends(
+        GetRepository(ProviderProfile)
+    ),
+    provider_location_service: ProviderLocationService = Depends(
+        get_provider_location_service
+    ),
+) -> ProviderProfileService:
+    """Dependency provider injecting repositories and sub-services into ProviderProfileService."""
+    return ProviderProfileService(
+        user_repo=user_repo,
+        provider_repo=provider_repo,
+        provider_location_service=provider_location_service,
+    )

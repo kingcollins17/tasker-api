@@ -1,13 +1,13 @@
 """User location, device messaging token, and spatial tracking sub-service."""
 
 from typing import Optional
-from fastapi import HTTPException, status
+from fastapi import Depends, HTTPException, status
 
 from app.core.logging import log_error
 from app.core.models.regions import Region
 from app.core.models.users import ProviderProfile, User, UserDevice, UserLocation, UserType
-from app.core.repository import QueryOptions, Repository
-from app.core.services.provider_location import ProviderLocationPing, ProviderLocationService
+from app.core.repository import GetRepository, QueryOptions, Repository
+from app.core.services.provider_location import ProviderLocationPing, ProviderLocationService, get_provider_location_service
 from app.core.utils.datetime_helper import lagos_now
 
 
@@ -190,3 +190,26 @@ class UserLocationDeviceService:
             profile.id,
             {"last_heartbeat_at": lagos_now(), "updated_at": lagos_now()},
         )
+
+
+def get_user_location_device_service(
+    user_repo: Repository[User] = Depends(GetRepository(User)),
+    provider_repo: Repository[ProviderProfile] = Depends(
+        GetRepository(ProviderProfile)
+    ),
+    region_repo: Repository[Region] = Depends(GetRepository(Region)),
+    location_repo: Repository[UserLocation] = Depends(GetRepository(UserLocation)),
+    device_repo: Repository[UserDevice] = Depends(GetRepository(UserDevice)),
+    provider_location_service: ProviderLocationService = Depends(
+        get_provider_location_service
+    ),
+) -> UserLocationDeviceService:
+    """Dependency provider injecting repositories and sub-services into UserLocationDeviceService."""
+    return UserLocationDeviceService(
+        user_repo=user_repo,
+        provider_repo=provider_repo,
+        region_repo=region_repo,
+        location_repo=location_repo,
+        device_repo=device_repo,
+        provider_location_service=provider_location_service,
+    )

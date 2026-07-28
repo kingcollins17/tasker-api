@@ -1,17 +1,19 @@
 """Authentication and identity sub-service for user registration, login, and OTP verification."""
 
 from typing import Optional
-from fastapi import HTTPException, status
+from fastapi import Depends, HTTPException, status
 
 from app.core.logging import log_error
 from app.core.models.users import CustomerProfile, KYCStatus, ProviderProfile, User, UserType
-from app.core.repository import QueryOptions, Repository
+from app.core.repository import GetRepository, QueryOptions, Repository
+from app.core.services.availability_service import AvailabilityService, get_availability_service, get_availability_service_manual
 from app.core.services import (
     OTPError,
     OTPMaxAttemptsReachedError,
     OTPRateLimitError,
     OTPService,
     OTPVerificationError,
+    get_otp_service,
 )
 from app.core.utils import security
 from app.core.utils.datetime_helper import lagos_now
@@ -30,11 +32,13 @@ class UserAuthService:
         customer_repo: Repository[CustomerProfile],
         provider_repo: Repository[ProviderProfile],
         otp_service: OTPService,
+        availability_service: AvailabilityService,
     ):
         self.user_repo = user_repo
         self.customer_repo = customer_repo
         self.provider_repo = provider_repo
         self.otp_service = otp_service
+        self.availability_service = availability_service
 
     @log_error()
     async def register_user(self, schema: UserRegister) -> User:
@@ -89,6 +93,9 @@ class UserAuthService:
                 status=KYCStatus.PENDING_SUBMISSION,
             )
             await self.provider_repo.add(provider_profile)
+
+            # Insert default availability for all weekdays (Monday-Friday, 06:00:00 to 23:59:00) via availability_service
+            await self.availability_service.create_default_availability(user.id)
 
         # Refresh user instance to populate relationships
         await self.user_repo.refresh(user)
@@ -280,3 +287,24 @@ class UserAuthService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
             )
+
+
+def get_user_auth_service(
+    user_repo: Repository[User] = Depends(GetRepository(User)),
+    customer_repo: Repository[CustomerProfile] = Depends(
+        GetRepository(CustomerProfile)
+    ),
+    provider_repo: Repository[ProviderProfile] = Depends(
+        GetRepository(ProviderProfile)
+    ),
+    otp_service: OTPService = Depends(get_otp_service),
+    availability_service: AvailabilityService = Depends(get_availability_service),
+) -> UserAuthService:
+    """Dependency provider injecting repositories and sub-services into UserAuthService."""
+    return UserAuthService(
+        user_repo=user_repo,
+        customer_repo=customer_repo,
+        provider_repo=provider_repo,
+        otp_service=otp_service,
+        availability_service=availability_service,
+    )

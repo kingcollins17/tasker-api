@@ -193,6 +193,31 @@ class PaymentService:
         paginated_data = await self.payout_queue_repo.get_all(options)
         return paginated_data, total
 
+    async def get_provider_payout_queues(self, provider_id: str, options: QueryOptions):
+        """Fetch paginated payout queue items for a given provider id."""
+        options.filters = options.filters or {}
+        options.filters["provider_id"] = provider_id
+        
+        # pyrefly: ignore [bad-argument-type]
+        count_stmt = select(func.count(PayoutQueue.id)).where(PayoutQueue.provider_id == provider_id)
+        for key, value in options.filters.items():
+            if key != "provider_id" and hasattr(PayoutQueue, key):
+                count_stmt = count_stmt.where(getattr(PayoutQueue, key) == value)
+        total = (await self.payout_queue_repo.execute(count_stmt)).one()
+
+        paginated_data = await self.payout_queue_repo.get_all(options)
+        return paginated_data, total
+
+    async def get_provider_payout(self, payout_id: str, provider_id: str) -> PayoutQueue:
+        """Fetch a specific payout queue item for a provider."""
+        payout = await self.payout_queue_repo.get(payout_id)
+        if not payout or payout.provider_id != provider_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Payout queue item not found.",
+            )
+        return payout
+
     async def get_customer_payout_stats(self, customer_id: str) -> CustomerPayoutStatsResponse:
         """Fetch payout statistics for a customer."""
         stmt = (

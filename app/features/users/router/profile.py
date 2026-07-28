@@ -7,7 +7,9 @@ from app.core.error_handler import AppErrorHandler
 from sqlmodel import select
 from app.core.api_response import BaseAPIResponse
 from app.core.deps import GetCurrentUser
-from app.core.models.users import UserType
+from app.core.models.users import UserType, User
+from app.core.schemas.users import MinimalProviderResponse
+from app.core.repository import Repository, GetRepository
 from app.core.models.services import Service, ProviderServiceLink
 from app.features.users.schemas import (
     UserResponse,
@@ -21,7 +23,7 @@ from app.features.users.schemas import (
     UpdateOnlineStatus,
     LocationPing,
     ProviderAvailabilityResponse,
-    UpdateProviderAvailability,
+    UpdateProviderAvailabilityBlock,
 )
 from typing import List
 from app.features.users.services import UserService, get_user_service
@@ -419,32 +421,134 @@ async def get_provider_availability(
             detail="An unexpected error occurred.",
         )
 
-@router.put("/provider/availability", response_model=BaseAPIResponse[List[ProviderAvailabilityResponse]], status_code=status.HTTP_200_OK)
+@router.put("/provider/availability/{availability_id}", response_model=BaseAPIResponse[ProviderAvailabilityResponse], status_code=status.HTTP_200_OK)
 async def update_provider_availability(
-    schema: UpdateProviderAvailability,
+    availability_id: str,
+    schema: UpdateProviderAvailabilityBlock,
     current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
     availability_service: AvailabilityService = Depends(get_availability_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
-    """Replace the weekly availability schedule for the authenticated provider."""
+    """Update an availability block for the authenticated provider (start_time, end_time, is_active)."""
     try:
         timer = Timer()
         timer.start()
-        blocks = await availability_service.update_provider_availability(
-            current_user.id, 
-            [b.model_dump() for b in schema.availability_blocks]
+        block = await availability_service.update_availability_block(
+            availability_id=availability_id,
+            provider_id=current_user.id,
+            start_time=schema.start_time,
+            end_time=schema.end_time,
+            is_active=schema.is_active,
         )
         await system_logger.metric('update_availability', timer.stop(), source='profile.update_availability')
-        return BaseAPIResponse[List[ProviderAvailabilityResponse]](
-            data=[ProviderAvailabilityResponse.model_validate(b) for b in blocks],
-            detail="Availability updated successfully.",
+        return BaseAPIResponse[ProviderAvailabilityResponse](
+            data=ProviderAvailabilityResponse.model_validate(block),
+            detail="Availability block updated successfully.",
             statusCode=status.HTTP_200_OK,
         )
+    except HTTPException as e:
+        await system_logger.warn('update_availability failed', source='profile.update_availability', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
     except Exception as e:
         await system_logger.error(f'update_availability error: {str(e)}', source='profile.update_availability')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred.",
+            detail="An unexpected error occurred while updating availability.",
         )
+
+
+@router.post("/provider/availability/default", response_model=BaseAPIResponse[List[ProviderAvailabilityResponse]], status_code=status.HTTP_201_CREATED)
+async def create_default_provider_availability(
+    current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
+    availability_service: AvailabilityService = Depends(get_availability_service),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """Create default availability blocks for the authenticated provider if none exist."""
+    try:
+        timer = Timer()
+        timer.start()
+        blocks = await availability_service.create_default_availability(current_user.id)
+        await system_logger.metric('create_default_availability', timer.stop(), source='profile.create_default_availability')
+        return BaseAPIResponse[List[ProviderAvailabilityResponse]](
+            data=[ProviderAvailabilityResponse.model_validate(b) for b in blocks],
+            detail="Default availability blocks created successfully.",
+            statusCode=status.HTTP_201_CREATED,
+        )
+    except HTTPException as e:
+        await system_logger.warn('create_default_availability failed', source='profile.create_default_availability', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
+    except Exception as e:
+        await system_logger.error(f'create_default_availability error: {str(e)}', source='profile.create_default_availability')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while creating default availability.",
+        )
+
+
+@router.get(
+    "/provider/{user_id}",
+    response_model=BaseAPIResponse[MinimalProviderResponse],
+    status_code=status.HTTP_200_OK
+)
+async def get_provider_profile(
+    user_id: str,
+    current_user: UserResponse = Depends(GetCurrentUser()),
+    user_repo: Repository[User] = Depends(GetRepository(User)),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """Retrieve public provider profile by user ID."""
+    try:
+        timer = Timer()
+        timer.start()
+        user = await user_repo.get(user_id)
+        if not user or user.type != UserType.PROVIDER:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider profile not found."
+            )
+
+        fullname = None
+        gender = None
+        selfie_url = None
+        total_tasks_completed = None
+        if user.provider_profile:
+            first_name = user.provider_profile.first_name or ""
+            last_name = user.provider_profile.last_name or ""
+            fullname = f"{first_name} {last_name}".strip() or None
+            gender = user.provider_profile.gender
+            selfie_url = user.provider_profile.selfie_url
+            total_tasks_completed = user.provider_profile.total_tasks_completed
+
+        data = MinimalProviderResponse(
+            id=user.id,
+            email=user.email,
+            phone_number=user.phone_number,
+            fullname=fullname,
+            average_ratings=user.average_ratings,
+            credibility_score=user.credibility_score,
+            gender=gender,
+            profile_picture_url=selfie_url,
+            selfie_url=selfie_url,
+            total_tasks_completed=total_tasks_completed,
+        )
+
+        await system_logger.metric('get_provider_profile', timer.stop(), source='profile.get_provider_profile')
+        return BaseAPIResponse[MinimalProviderResponse](
+            data=data,
+            detail="Provider profile retrieved successfully.",
+            statusCode=status.HTTP_200_OK
+        )
+    except HTTPException as e:
+        await system_logger.warn('get_provider_profile failed', source='profile.get_provider_profile', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
+    except Exception as e:
+        await system_logger.error(f'get_provider_profile error: {str(e)}', source='profile.get_provider_profile')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving provider profile."
+        )
+
 

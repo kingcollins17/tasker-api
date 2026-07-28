@@ -184,3 +184,4 @@ class TaskDispatchAttemptResponse(BaseModel):
     expires_at: Optional[datetime] = None
     responded_at: Optional[datetime] = None
     status: Optional[DispatchAttemptStatus] = None
+    provider: Optional[MinimalProviderResponse] = None

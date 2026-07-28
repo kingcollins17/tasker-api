@@ -67,6 +67,7 @@ class PayoutQueueResponse(BaseModel):
     reference: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    task: Optional[TaskBaseResponse] = None
 
 class CustomerPayoutStatsResponse(BaseModel):
     total_payouts: Optional[int] = 0
@@ -77,4 +78,5 @@ class CustomerPayoutStatsResponse(BaseModel):
 
 class ProviderEarningStatsResponse(BaseModel):
     total_earnings: Optional[float] = 0.0
+    percentage_growth: Optional[float] = 0.0
 

@@ -10,7 +10,8 @@ from sqlalchemy import desc
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.deps import GetCurrentUser
 from app.features.users.schemas import UserResponse
-from app.core.models.users import UserType
+from app.core.models.users import UserType, User
+from app.core.schemas.users import MinimalProviderResponse
 from app.core.models.tasks import (
     DispatchAttemptStatus,
     PaymentMode,
@@ -253,7 +254,9 @@ async def get_pending_dispatch(
 
         # Find the pending dispatch attempt for this task
         stmt = (
-            select(TaskDispatchAttempt)
+            select(TaskDispatchAttempt, User)
+            # pyrefly: ignore [bad-argument-type]
+            .join(User, TaskDispatchAttempt.provider_id == User.id, isouter=True)
             .where(
                 TaskDispatchAttempt.task_id == task_id,
                 TaskDispatchAttempt.status == DispatchAttemptStatus.PENDING
@@ -264,15 +267,19 @@ async def get_pending_dispatch(
         )
         
         result = await attempt_repo.execute(stmt)
-        attempt = result.one_or_none()
+        row = result.first()
 
-        if not attempt:
+        if not row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No pending dispatch attempt found for this task.",
             )
+            
+        attempt, provider_user = row
 
         data = TaskDispatchAttemptResponse.model_validate(attempt)
+        if provider_user:
+            data.provider = MinimalProviderResponse.model_validate(provider_user)
 
         await system_logger.metric('get_pending_dispatch', timer.stop(), source='assignments.get_pending_dispatch')
         return BaseAPIResponse[TaskDispatchAttemptResponse](

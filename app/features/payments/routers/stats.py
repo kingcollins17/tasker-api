@@ -1,5 +1,6 @@
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
+from app.core.utils.datetime_helper import lagos_now
 
 from app.core.utils.timer import Timer
 from app.core.services.logger_service import LoggerService, get_logger_service
@@ -82,21 +83,45 @@ async def get_provider_earning_stats(
     try:
         timer = Timer()
         timer.start()
-        stmt = (
+        now = lagos_now()
+        cur_end = end_date or now
+        cur_start = start_date or (cur_end - timedelta(days=30))
+        
+        duration = cur_end - cur_start
+        prev_start = cur_start - duration
+        prev_end = cur_start
+
+        cur_stmt = (
             select(func.coalesce(func.sum(PayoutQueue.payout_amount), 0.0))
             .where(PayoutQueue.provider_id == current_user.id)
             .where(PayoutQueue.status == PayoutStatus.COMPLETED)
+            .where(PayoutQueue.created_at >= cur_start)
+            .where(PayoutQueue.created_at <= cur_end)
         )
-        
-        if start_date:
-            stmt = stmt.where(PayoutQueue.created_at >= start_date)
-        if end_date:
-            stmt = stmt.where(PayoutQueue.created_at <= end_date)
-            
-        total_earnings = (await payout_queue_repo.execute(stmt)).scalar_one_or_none() or 0.0
-        
+        current_earnings = (await payout_queue_repo.execute(cur_stmt)).one_or_none() or 0.0
+
+        prev_stmt = (
+            select(func.coalesce(func.sum(PayoutQueue.payout_amount), 0.0))
+            .where(PayoutQueue.provider_id == current_user.id)
+            .where(PayoutQueue.status == PayoutStatus.COMPLETED)
+            .where(PayoutQueue.created_at >= prev_start)
+            .where(PayoutQueue.created_at < prev_end)
+        )
+        previous_earnings = (await payout_queue_repo.execute(prev_stmt)).one_or_none() or 0.0
+
+        current_val = float(current_earnings)
+        previous_val = float(previous_earnings)
+
+        if previous_val > 0:
+            percentage_growth = ((current_val - previous_val) / previous_val) * 100
+        elif current_val > 0:
+            percentage_growth = 100.0
+        else:
+            percentage_growth = 0.0
+
         stats = ProviderEarningStatsResponse(
-            total_earnings=round(float(total_earnings), 2),
+            total_earnings=round(current_val, 2),
+            percentage_growth=round(percentage_growth, 2),
         )
 
         await system_logger.metric('get_provider_earning_stats', timer.stop(), source='payments.stats.get_provider_earning_stats')

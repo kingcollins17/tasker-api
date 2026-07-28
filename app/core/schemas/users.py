@@ -12,6 +12,8 @@ class MinimalProviderResponse(BaseModel):
     credibility_score: Optional[float] = None
     gender: Optional[str] = None
     profile_picture_url: Optional[str] = None
+    selfie_url: Optional[str] = None
+    total_tasks_completed: Optional[int] = None
 
 
 class MinimalCustomerResponse(BaseModel):

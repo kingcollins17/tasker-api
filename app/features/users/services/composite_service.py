@@ -8,11 +8,12 @@ from app.core.models.users import CustomerProfile, ProviderProfile, User, UserDe
 from app.core.repository import GetRepository, Repository
 from app.core.services import OTPService, get_otp_service
 from app.core.services.provider_location import ProviderLocationService, get_provider_location_service
+from app.core.services.availability_service import AvailabilityService, get_availability_service, get_availability_service_manual
 from app.features.users.schemas import UserLogin, UserRegister
-from app.features.users.services.auth_service import UserAuthService
-from app.features.users.services.customer_profile_service import CustomerProfileService
-from app.features.users.services.location_device_service import UserLocationDeviceService
-from app.features.users.services.provider_profile_service import ProviderProfileService
+from app.features.users.services.auth_service import UserAuthService, get_user_auth_service
+from app.features.users.services.customer_profile_service import CustomerProfileService, get_customer_profile_service
+from app.features.users.services.location_device_service import UserLocationDeviceService, get_user_location_device_service
+from app.features.users.services.provider_profile_service import ProviderProfileService, get_provider_profile_service
 
 
 class UserService:
@@ -30,11 +31,12 @@ class UserService:
         region_repo: Repository[Region],
         location_repo: Repository[UserLocation],
         device_repo: Repository[UserDevice],
-        provider_location_service: Optional[ProviderLocationService] = None,
-        auth_service: Optional[UserAuthService] = None,
-        customer_service: Optional[CustomerProfileService] = None,
-        provider_service: Optional[ProviderProfileService] = None,
-        location_service: Optional[UserLocationDeviceService] = None,
+        availability_service: AvailabilityService,
+        provider_location_service: ProviderLocationService,
+        auth_service: UserAuthService,
+        customer_service: CustomerProfileService,
+        provider_service: ProviderProfileService,
+        location_service: UserLocationDeviceService,
     ):
         # Repositories & underlying services exposed for backward compatibility
         self.user_repo = user_repo
@@ -45,31 +47,13 @@ class UserService:
         self.location_repo = location_repo
         self.device_repo = device_repo
         self.provider_location_service = provider_location_service
+        self.availability_service = availability_service
 
-        # Instantiate sub-services
-        self.auth = auth_service or UserAuthService(
-            user_repo=user_repo,
-            customer_repo=customer_repo,
-            provider_repo=provider_repo,
-            otp_service=otp_service,
-        )
-        self.customer = customer_service or CustomerProfileService(
-            user_repo=user_repo,
-            customer_repo=customer_repo,
-        )
-        self.provider = provider_service or ProviderProfileService(
-            user_repo=user_repo,
-            provider_repo=provider_repo,
-            provider_location_service=provider_location_service,
-        )
-        self.location_device = location_service or UserLocationDeviceService(
-            user_repo=user_repo,
-            provider_repo=provider_repo,
-            region_repo=region_repo,
-            location_repo=location_repo,
-            device_repo=device_repo,
-            provider_location_service=provider_location_service,
-        )
+        # Sub-services
+        self.auth = auth_service
+        self.customer = customer_service
+        self.provider = provider_service
+        self.location_device = location_service
 
     # ── Authentication & Identity Workflows ───────────────────────────────
 
@@ -243,9 +227,14 @@ def get_user_service(
     region_repo: Repository[Region] = Depends(GetRepository(Region)),
     location_repo: Repository[UserLocation] = Depends(GetRepository(UserLocation)),
     device_repo: Repository[UserDevice] = Depends(GetRepository(UserDevice)),
+    availability_service: AvailabilityService = Depends(get_availability_service),
     provider_location_service: ProviderLocationService = Depends(
         get_provider_location_service
     ),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    customer_service: CustomerProfileService = Depends(get_customer_profile_service),
+    provider_service: ProviderProfileService = Depends(get_provider_profile_service),
+    location_service: UserLocationDeviceService = Depends(get_user_location_device_service),
 ) -> UserService:
     """Dependency provider injecting repositories and sub-services into composite UserService."""
     return UserService(
@@ -256,5 +245,10 @@ def get_user_service(
         region_repo=region_repo,
         location_repo=location_repo,
         device_repo=device_repo,
+        availability_service=availability_service,
         provider_location_service=provider_location_service,
+        auth_service=auth_service,
+        customer_service=customer_service,
+        provider_service=provider_service,
+        location_service=location_service,
     )

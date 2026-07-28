@@ -104,3 +104,5 @@ class PayoutQueue(SQLModel, table=True):
     updated_at: datetime = Field(
         default_factory=lagos_now, sa_column_kwargs={"onupdate": lagos_now}, description="Record update timestamp"
     )
+
+    task: Optional["Task"] = Relationship(sa_relationship_kwargs={"lazy": "joined"})
