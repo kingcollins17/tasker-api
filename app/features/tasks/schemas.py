@@ -77,9 +77,14 @@ class TaskMinimalResponse(BaseModel):
 
     id: Optional[str] = None
     title: Optional[str] = None
+    description: Optional[str] = None
     category_id: Optional[str] = None
     service_id: Optional[str] = None
     status: Optional[TaskStatus] = None
+    scheduled_start_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    provider_payout: Optional[float] = None
+    customer_total_price: Optional[float] = None
 
 
 class TaskAssignmentResponse(BaseModel):
@@ -98,6 +103,7 @@ class TaskAssignmentResponse(BaseModel):
 
 class TaskAssignmentWithTaskResponse(TaskAssignmentResponse):
     task: Optional[TaskMinimalResponse] = None
+    provider: Optional[MinimalProviderResponse] = None
 
 
 class TaskAttachmentResponse(BaseModel):

@@ -294,8 +294,115 @@ def test_api_list_tasks(client, task_service):
     assert json_data["data"]["items"][0]["title"] == "Clean windows"
 
 
+@pytest.mark.asyncio
+async def test_get_my_assignments_attaches_minimal_task():
+    from app.features.tasks.router.assignments import get_my_assignments
+    from app.core.models.tasks import TaskAssignment, Task, TaskStatus, TaskAssignmentStatus
+
+    mock_assignment_repo = AsyncMock()
+    
+    mock_count_res = MagicMock()
+    mock_count_res.one.return_value = 1
+    
+    task_inst = Task(
+        id="task-100",
+        title="Plumbing Job",
+        description="Fix pipe leak",
+        status=TaskStatus.ASSIGNED,
+    )
+    assignment_inst = TaskAssignment(
+        id="assign-1",
+        task_id="task-100",
+        provider_id="provider-1",
+        status=TaskAssignmentStatus.ASSIGNED,
+    )
+    
+    mock_data_res = MagicMock()
+    mock_data_res.unique.return_value.all.return_value = [(assignment_inst, task_inst)]
+    
+    mock_assignment_repo.execute.side_effect = [mock_count_res, mock_data_res]
+    mock_logger = AsyncMock()
+    
+    resp = await get_my_assignments(
+        page=1,
+        per_page=20,
+        status_filter=None,
+        task_id=None,
+        sort_by="assigned_at",
+        sort_desc=True,
+        current_user=MOCK_PROVIDER,
+        assignment_repo=mock_assignment_repo,
+        system_logger=mock_logger,
+    )
+    
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.data.total == 1
+    item = resp.data.items[0]
+    assert item.id == "assign-1"
+    assert item.task is not None
+    assert item.task.id == "task-100"
+    assert item.task.title == "Plumbing Job"
+    assert item.task.status == TaskStatus.ASSIGNED
+
+
+@pytest.mark.asyncio
+async def test_get_task_assignment_attaches_minimal_provider():
+    from app.features.tasks.router.assignments import get_task_assignment
+    from app.core.models.tasks import TaskAssignment, Task, TaskStatus, TaskAssignmentStatus
+    from app.core.models.users import User
+
+    mock_task_repo = AsyncMock()
+    mock_assignment_repo = AsyncMock()
+    mock_user_repo = AsyncMock()
+
+    task_inst = Task(
+        id="task-100",
+        customer_id="customer-1",
+        title="Plumbing Job",
+        status=TaskStatus.ASSIGNED,
+    )
+    assignment_inst = TaskAssignment(
+        id="assign-1",
+        task_id="task-100",
+        provider_id="provider-1",
+        status=TaskAssignmentStatus.ASSIGNED,
+    )
+    provider_inst = User(
+        id="provider-1",
+        email="provider@example.com",
+        phone_number="1234567890",
+        average_ratings=4.8,
+        credibility_score=95.0,
+    )
+
+    mock_task_repo.get.return_value = task_inst
+
+    mock_exec_res = MagicMock()
+    mock_exec_res.first.return_value = assignment_inst
+    mock_assignment_repo.execute.return_value = mock_exec_res
+
+    mock_user_repo.get.return_value = provider_inst
+    mock_logger = AsyncMock()
+
+    resp = await get_task_assignment(
+        task_id="task-100",
+        current_user=MOCK_CUSTOMER,
+        assignment_repo=mock_assignment_repo,
+        task_repo=mock_task_repo,
+        user_repo=mock_user_repo,
+        system_logger=mock_logger,
+    )
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.data.id == "assign-1"
+    assert resp.data.provider is not None
+    assert resp.data.provider.id == "provider-1"
+    assert resp.data.provider.email == "provider@example.com"
+
+
 def test_complete_task_assignment_reruns_metrics(monkeypatch):
     mock_complete_async = AsyncMock(return_value=("srv-1", "cat-1"))
+
     mock_sync_provider = MagicMock()
     mock_sync_service = MagicMock()
     monkeypatch.setattr(

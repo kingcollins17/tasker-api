@@ -136,13 +136,18 @@ async def get_my_assignments(
         assignments_result = await assignment_repo.execute(query)
         assignments = assignments_result.unique().all()
 
-        items = []
-        for assignment_model, task_model in assignments:
-            assignment_data = TaskAssignmentWithTaskResponse.model_validate(
+        items = [
+            TaskAssignmentWithTaskResponse.model_validate(
                 assignment_model
+            ).model_copy(
+                update={
+                    "task": TaskMinimalResponse.model_validate(task_model)
+                    if task_model
+                    else None
+                }
             )
-            assignment_data.task = TaskMinimalResponse.model_validate(task_model)
-            items.append(assignment_data)
+            for assignment_model, task_model in assignments
+        ]
 
         data = PaginatedData[TaskAssignmentWithTaskResponse](
             items=items,
@@ -180,6 +185,7 @@ async def get_task_assignment(
         GetRepository(TaskAssignment)
     ),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
+    user_repo: Repository[User] = Depends(GetRepository(User)),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Retrieve the assignment for a specific task if available."""
@@ -215,6 +221,10 @@ async def get_task_assignment(
 
         assignment_data = TaskAssignmentWithTaskResponse.model_validate(assignment)
         assignment_data.task = TaskMinimalResponse.model_validate(task)
+        if assignment.provider_id:
+            provider_user = await user_repo.get(assignment.provider_id)
+            if provider_user:
+                assignment_data.provider = MinimalProviderResponse.from_user(provider_user)
 
         await system_logger.metric('get_task_assignment', timer.stop(), source='assignments.get_task_assignment')
         return BaseAPIResponse[TaskAssignmentWithTaskResponse](
