@@ -106,13 +106,13 @@ class PaymentService:
         stmt_sum = select(func.coalesce(func.sum(ProviderDebt.amount), 0.0)).where(
             ProviderDebt.provider_id == provider_id
         )
-        total_owed = float((await self.debt_repo.execute(stmt_sum)).scalar_one_or_none() or 0.0)
+        total_owed = float((await self.debt_repo.execute(stmt_sum)).one_or_none() or 0.0)
 
         # pyrefly: ignore [bad-argument-type]
         stmt_count = select(func.count(ProviderDebt.id)).where(
             ProviderDebt.provider_id == provider_id
         )
-        entry_count = int((await self.debt_repo.execute(stmt_count)).scalar_one_or_none() or 0)
+        entry_count = int((await self.debt_repo.execute(stmt_count)).one_or_none() or 0)
 
         # Debt balance cannot be negative for summary display (clamp to 0.0 minimum)
         debt_balance = max(0.0, total_owed)

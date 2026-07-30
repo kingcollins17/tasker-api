@@ -22,6 +22,8 @@ from app.core.models.services import ProviderServiceLink
 from app.core.models.payments import DebtReason, ProviderDebt
 from app.core.models.tasks import (
     DispatchAttemptStatus,
+    DispatchSession,
+    DispatchSessionStatus,
     PaymentMode,
     PaymentStatus,
     Task,
@@ -33,14 +35,15 @@ from app.core.models.tasks import (
 )
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
 from app.core.services.payment import get_paystack_gateway
-from app.core.models.users import DutyStatus, KYCStatus, ProviderProfile, User
+from app.core.models.users import DutyStatus, KYCStatus, ProviderProfile, User, UserLocation
 from app.core.repository import Repository
-from app.core.services import RedisProviderLocationService, get_cache_service
+from app.core.services import PostGISProviderLocationService, get_cache_service
+from app.core.services.matching_engine import MatchingEngine
 from app.core.services.provider_location import NearbyProviderResult
 from app.core.utils.celery import run_async
 from app.core.utils.datetime_helper import lagos_now
 from app.features.notifications.schemas import CreateNotification
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlmodel import col, select
 
 from app.features.notifications.services import get_notification_service_manual
@@ -78,8 +81,10 @@ def _calculate_dynamic_ping_duration(candidate_count: int) -> int:
 
 async def _make_dispatch_deps(session):
     """Build the repository + service objects needed by all dispatch tasks."""
-    cache_service = get_cache_service()
-    geo_service = RedisProviderLocationService(cache_service=cache_service)
+    geo_service = PostGISProviderLocationService(
+        location_repo=Repository(UserLocation, session),
+        provider_profile_repo=Repository(ProviderProfile, session),
+    )
     notification_service = get_notification_service_manual(session)
     availability_service = get_availability_service_manual(session)
     return (
@@ -96,308 +101,7 @@ async def _make_dispatch_deps(session):
     )
 
 
-# ---------------------------------------------------------------------------
-# Internal async implementations
-# ---------------------------------------------------------------------------
-class _Candidate(BaseModel):
-    provider_id: str
-    distance_km: float
-    score: float
 
-
-async def _find_and_score_candidates(task_id: str, session) -> List[_Candidate]:
-    """Discovers nearby providers, filters by eligibility, returns scored list."""
-    (
-        task_repo,
-        task_location_repo,
-        attempt_repo,
-        assignment_repo,
-        provider_profile_repo,
-        user_repo,
-        service_link_repo,
-        geo_service,
-        _,
-        availability_service,
-    ) = await _make_dispatch_deps(session)
-
-    task = await task_repo.get(task_id)
-    if not task or not task.service_id:
-        return []
-
-    stmt_loc = select(TaskLocation).where(TaskLocation.task_id == task_id).limit(1)
-    res_loc = await task_location_repo.execute(stmt_loc)
-    task_loc: Optional[TaskLocation] = res_loc.scalar_one_or_none()
-    if not task_loc or task_loc.latitude is None or task_loc.longitude is None:
-        return []
-
-    nearby_results: List[NearbyProviderResult] = (
-        await geo_service.search_nearby_providers(
-            latitude=task_loc.latitude,
-            longitude=task_loc.longitude,
-            radius_km=10.0,
-            limit=2000,
-        )
-    )
-    if not nearby_results:
-        return []
-
-    nearby_map = {
-        r.provider_id: r.distance_km
-        for r in nearby_results
-        if r.provider_id and r.distance_km is not None
-    }
-    provider_ids = list(nearby_map.keys())
-
-    stmt_eligibility = (
-        select(User, ProviderProfile)
-        .join(ProviderProfile, ProviderProfile.user_id == User.id)  # type: ignore
-        # type: ignore
-        .join(
-            ProviderServiceLink,
-            # pyrefly: ignore [bad-argument-type]
-            ProviderServiceLink.provider_id == ProviderProfile.user_id,
-        )
-        .where(
-            User.id.in_(provider_ids),  # type: ignore
-            User.is_active == True,  # noqa: E712
-            ProviderProfile.status == KYCStatus.VERIFIED,
-            ProviderServiceLink.service_id == task.service_id,
-        )
-    )
-
-    target_time = task.scheduled_start_at if task.scheduled_start_at else lagos_now()
-    stmt_eligibility = stmt_eligibility.where(
-        ProviderProfile.is_online == True,
-        ProviderProfile.duty_status == DutyStatus.ONLINE_AVAILABLE,
-        availability_service.get_availability_sql_condition(target_time)
-    )
-
-    # Eligible candidates from database
-    res_eligibility = await provider_profile_repo.execute(stmt_eligibility)
-    rows = res_eligibility.all()
-
-    scored: list = []
-    for user, profile in rows:
-        dist_km = nearby_map.get(user.id, 10.0)
-        acceptance_rate = (
-            profile.acceptance_rate_30d
-            if profile.acceptance_rate_30d is not None
-            else 100.0
-        )
-        avg_rating = user.average_ratings if user.average_ratings is not None else 0.0
-        credibility = (
-            user.credibility_score if user.credibility_score is not None else 0.0
-        )
-
-        score = (
-            (0.30 * acceptance_rate)
-            + (0.25 * avg_rating * 20.0)
-            + (0.25 * credibility)
-            - (0.20 * dist_km)
-        )
-        scored.append(
-            _Candidate(
-                provider_id=user.id,
-                distance_km=dist_km,
-                score=round(score, 2),
-            )
-        )
-
-    scored.sort(key=lambda c: c.score, reverse=True)
-    return scored
-
-
-async def _create_dispatch_attempt(
-    task_id: str,
-    provider_id: str,
-    sequence_order: int,
-    offered_payout: float,
-    match_score: float,
-    timeout_seconds: int,
-    session,
-) -> Optional[TaskDispatchAttempt]:
-    """Persists a PENDING dispatch attempt and marks the provider ON_DISPATCH."""
-    (
-        task_repo,
-        _,
-        attempt_repo,
-        _,
-        provider_profile_repo,
-        _,
-        _,
-        _,
-        _,
-        _,
-    ) = await _make_dispatch_deps(session)
-
-    now = lagos_now()
-    attempt = TaskDispatchAttempt(
-        task_id=task_id,
-        provider_id=provider_id,
-        sequence_order=sequence_order,
-        match_score=match_score,
-        offered_payout=offered_payout,
-        pinged_at=now,
-        expires_at=now + timedelta(seconds=timeout_seconds),
-        status=DispatchAttemptStatus.PENDING,
-    )
-    attempt = await attempt_repo.add(attempt)
-
-    stmt_prof = select(ProviderProfile).where(ProviderProfile.user_id == provider_id)
-    profile: Optional[ProviderProfile] = (
-        await provider_profile_repo.execute(stmt_prof)
-    ).scalar_one_or_none()
-    if profile:
-        profile.duty_status = DutyStatus.ON_DISPATCH
-        await provider_profile_repo.add(profile)
-
-    task = await task_repo.get(task_id)
-    if task and task.status != TaskStatus.SEARCHING:
-        task.status = TaskStatus.SEARCHING
-        task.dispatch_started_at = task.dispatch_started_at or now
-        task.current_attempt_sequence = sequence_order
-        await task_repo.add(task)
-
-    return attempt
-
-
-async def _dispatch_next_candidate_async(task_id: str) -> None:
-    """Picks the top unattempted candidate, issues a ping, and schedules the timeout task."""
-    async with async_session_maker() as session:
-        system_logger = get_logger_service_manual(session)
-        timer = Timer()
-        timer.start()
-        try:
-            (
-                task_repo,
-                _,
-                attempt_repo,
-                _,
-                _,
-                _,
-                _,
-                _,
-                notification_service,
-                _,
-            ) = await _make_dispatch_deps(session)
-
-            task = await task_repo.get(task_id)
-            if not task:
-                logger.warning(f"dispatch_next_candidate: task {task_id} not found")
-                await system_logger.warn(f"dispatch_next_candidate: task {task_id} not found", source='celery.dispatch_next_candidate')
-                return
-
-            stmt_attempts = select(TaskDispatchAttempt).where(
-                TaskDispatchAttempt.task_id == task_id
-            )
-            existing_attempts = list((await attempt_repo.execute(stmt_attempts)).all())
-
-            attempted_ids = {a.provider_id for a in existing_attempts if a.provider_id}
-            has_pending = any(
-                a.status == DispatchAttemptStatus.PENDING for a in existing_attempts
-            )
-            if has_pending:
-                logger.info(
-                    f"dispatch_next_candidate: task {task_id} already has a pending ping — skipping"
-                )
-                await system_logger.info(
-                    f"dispatch_next_candidate: task {task_id} already has a pending ping — skipping",
-                    source='celery.dispatch_next_candidate'
-                )
-                return
-
-            candidates = await _find_and_score_candidates(task_id, session)
-            unattempted = [c for c in candidates if c.provider_id not in attempted_ids]
-
-            if not unattempted:
-                task.status = TaskStatus.CANCELLED
-                await task_repo.add(task)
-                logger.info(
-                    f"dispatch_next_candidate: no candidates left for task {task_id} — status set to CANCELLED"
-                )
-                await system_logger.info(
-                    f"dispatch_next_candidate: no candidates left for task {task_id} — status set to CANCELLED",
-                    source='celery.dispatch_next_candidate'
-                )
-                if task.customer_id:
-                    await notification_service.notify(
-                        recepients=[task.customer_id],
-                        title="No Providers Available",
-                        body=f"We couldn't find an available provider for your task '{task.title}'. The task has been cancelled.",
-                        type=NotificationType.TASK_CANCELLED,
-                        channels=["push", "in_app"],
-                        data={
-                            "task_id": task.id,
-                            "type": "task_cancelled",
-                            "reason": "no_candidates_available",
-                        },
-                    )
-                return
-
-            queue_size = len(candidates)
-            timeout_seconds = _calculate_dynamic_ping_duration(queue_size)
-            sequence_order = len(existing_attempts) + 1
-            top = unattempted[0]
-            offered_payout = task.provider_payout or 0.0
-
-            attempt = await _create_dispatch_attempt(
-                task_id=task_id,
-                provider_id=top.provider_id,
-                sequence_order=sequence_order,
-                offered_payout=offered_payout,
-                match_score=top.score,
-                timeout_seconds=timeout_seconds,
-                session=session,
-            )
-            if not attempt:
-                return
-
-            payout_fmt = (
-                f"₦{offered_payout:,.2f}" if offered_payout > 0 else "offered price"
-            )
-            time_mins = round(timeout_seconds / 60, 1)
-
-            await notification_service.notify(
-                recepients=[top.provider_id],
-                title="New Task Offer",
-                body=(
-                    f"You have a new task offer '{task.title}' for "
-                    f"{payout_fmt}. Tap to respond within {time_mins} mins!"
-                ),
-                type=NotificationType.TASK_ACCEPTED,
-                channels=["push", "in_app"],
-                data={
-                    "task_id": task.id,
-                    "dispatch_attempt_id": attempt.id,
-                    "offered_payout": offered_payout,
-                    "expires_at": (
-                        attempt.expires_at.isoformat() if attempt.expires_at else None
-                    ),
-                    "type": "job_ping",
-                },
-            )
-
-            # Schedule timeout — chained Celery task
-            # pyrefly: ignore [not-callable]
-            handle_dispatch_ping_timeout.apply_async(
-                args=[task.id, top.provider_id],
-                countdown=timeout_seconds,
-            )
-            logger.info(
-                f"dispatch_next_candidate: pinged provider {top.provider_id} "
-                f"for task {task_id} (timeout={timeout_seconds}s)"
-            )
-            await system_logger.info(
-                f"dispatch_next_candidate: pinged provider {top.provider_id} "
-                f"for task {task_id} (timeout={timeout_seconds}s)",
-                source='celery.dispatch_next_candidate'
-            )
-
-
-            await system_logger.metric('dispatch_next_candidate', timer.stop(), source='celery.dispatch_next_candidate')
-        except Exception as e:
-            await system_logger.error(f'dispatch_next_candidate Failed: {str(e)}', source='celery.dispatch_next_candidate')
-            raise e
 async def _handle_provider_response_async(
     task_id: str,
     provider_id: str,
@@ -429,7 +133,7 @@ async def _handle_provider_response_async(
             )
             attempt: Optional[TaskDispatchAttempt] = (
                 await attempt_repo.execute(stmt_attempt)
-            ).scalar_one_or_none()
+            ).one_or_none()
 
             if not attempt:
                 logger.warning(
@@ -453,7 +157,7 @@ async def _handle_provider_response_async(
             )
             profile: Optional[ProviderProfile] = (
                 await provider_profile_repo.execute(stmt_prof)
-            ).scalar_one_or_none()
+            ).one_or_none()
 
             if DispatchAttemptStatus(response_status) == DispatchAttemptStatus.ACCEPTED:
                 if profile:
@@ -498,16 +202,35 @@ async def _handle_provider_response_async(
                             },
                         )
 
-                # Cancel any other pending attempts
-                stmt_cancel = select(TaskDispatchAttempt).where(
-                    TaskDispatchAttempt.task_id == task_id,
-                    TaskDispatchAttempt.id != attempt.id,
-                    TaskDispatchAttempt.status == DispatchAttemptStatus.PENDING,
+                # Mark active dispatch session as ASSIGNED via bulk UPDATE
+                session_repo = Repository(DispatchSession, session)
+                stmt_session = (
+                    update(DispatchSession)
+                    .where(
+                        DispatchSession.task_id == task_id,  # type: ignore
+                        DispatchSession.status == DispatchSessionStatus.SEARCHING,  # type: ignore
+                    )
+                    .values(
+                        status=DispatchSessionStatus.ASSIGNED,
+                        updated_at=now,
+                    )
                 )
-                pending_attempts = list((await attempt_repo.execute(stmt_cancel)).all())
-                for pending in pending_attempts:
-                    pending.status = DispatchAttemptStatus.CANCELED
-                    await attempt_repo.add(pending)
+                await session_repo.execute(stmt_session)
+
+                # Cancel any other pending attempts via bulk UPDATE
+                stmt_cancel = (
+                    update(TaskDispatchAttempt)
+                    .where(
+                        TaskDispatchAttempt.task_id == task_id,  # type: ignore
+                        TaskDispatchAttempt.id != attempt.id,  # type: ignore
+                        TaskDispatchAttempt.status == DispatchAttemptStatus.PENDING,  # type: ignore
+                    )
+                    .values(
+                        status=DispatchAttemptStatus.CANCELED,
+                        responded_at=now,
+                    )
+                )
+                await attempt_repo.execute(stmt_cancel)
 
                 logger.info(
                     f"handle_provider_response: task {task_id} ACCEPTED by provider {provider_id}"
@@ -550,157 +273,98 @@ async def _handle_provider_response_async(
                     reason=decline_reason,
                     task_id=task_id,
                 )
-                # Cascade — enqueue rather than inline await
-                # pyrefly: ignore [not-callable]
-                dispatch_next_candidate.delay(task_id)
+                # Advance dispatch session via MatchingEngine
+                session_repo = Repository(DispatchSession, session)
+                stmt_active = select(DispatchSession).where(
+                    DispatchSession.task_id == task_id,
+                    DispatchSession.status == DispatchSessionStatus.SEARCHING,
+                )
+                res_active = await session_repo.execute(stmt_active)
+                active_session: Optional[DispatchSession] = res_active.one_or_none()
+                if active_session:
+                    engine = MatchingEngine(session_id=active_session.id, db_session=session)
+                    await engine.run()
 
 
             await system_logger.metric('handle_provider_response', timer.stop(), source='celery.handle_provider_response')
         except Exception as e:
             await system_logger.error(f'handle_provider_response Failed: {str(e)}', source='celery.handle_provider_response')
             raise e
-async def _complete_task_assignment_async(
-    task_id: str, provider_id: str, payment_mode: str = "cash"
-) -> Any:
-    """Marks assignment + task COMPLETED, resets provider duty status, and sets selected payment_mode."""
+
+
+            
+async def _start_dispatch_session_async(
+    task_id: str, batch_size: int = 1
+) -> Optional[DispatchSession]:
+    """Creates a stateful DispatchSession in DB for a task and triggers the MatchingEngine Celery task."""
     async with async_session_maker() as session:
-        system_logger = get_logger_service_manual(session)
-        timer = Timer()
-        timer.start()
-        try:
-            (
-                task_repo,
-                _,
-                _,
-                assignment_repo,
-                provider_profile_repo,
-                _,
-                _,
-                _,
-                _,
-                _,
-            ) = await _make_dispatch_deps(session)
+        task_repo = Repository(Task, session)
+        session_repo = Repository(DispatchSession, session)
 
-            stmt_assign = select(TaskAssignment).where(TaskAssignment.task_id == task_id)
-            assignment: Optional[TaskAssignment] = (
-                await assignment_repo.execute(stmt_assign)
-            ).scalar_one_or_none()
-            if assignment:
-                assignment.status = TaskAssignmentStatus.COMPLETED
-                assignment.completed_at = lagos_now()
-                await assignment_repo.add(assignment)
+        task = await task_repo.get(task_id)
+        if not task:
+            logger.warning(f"_start_dispatch_session_async: Task {task_id} not found")
+            return None
 
-            service_id = None
-            category_id = None
-            task = await task_repo.get(task_id)
-            if task:
-                task.status = TaskStatus.COMPLETED
-                selected_mode = (
-                    PaymentMode(payment_mode)
-                    if payment_mode in ("cash", "online")
-                    else PaymentMode.CASH
-                )
-                task.payment_mode = selected_mode
-                await task_repo.add(task)
-                service_id = task.service_id
-                category_id = task.category_id
+        if task.status != TaskStatus.SEARCHING:
+            task.status = TaskStatus.SEARCHING
+            task.dispatch_started_at = task.dispatch_started_at or lagos_now()
+            await task_repo.add(task)
 
-            stmt_prof = select(ProviderProfile).where(
-                ProviderProfile.user_id == provider_id
-            )
-            profile: Optional[ProviderProfile] = (
-                await provider_profile_repo.execute(stmt_prof)
-            ).scalar_one_or_none()
-            if profile:
-                profile.total_tasks_completed = (profile.total_tasks_completed or 0) + 1
-                profile.duty_status = DutyStatus.ONLINE_AVAILABLE
-                await provider_profile_repo.add(profile)
+        stmt_existing = select(DispatchSession).where(
+            DispatchSession.task_id == task_id,
+            DispatchSession.status == DispatchSessionStatus.SEARCHING,
+        )
+        res_existing = await session_repo.execute(stmt_existing)
+        # Do not call scalar, result is already a scalar from repo.execute method
+        dispatch_session: Optional[DispatchSession] = res_existing.one_or_none()
 
-            logger.info(
-                f"complete_task_assignment: task {task_id} completed by provider {provider_id} (payment_mode={payment_mode})"
-            )
-            await system_logger.info(
-                f"complete_task_assignment: task {task_id} completed by provider {provider_id} (payment_mode={payment_mode})",
-                source='celery.complete_task_assignment'
-            )
-            # Reward provider with credibility for completing a task
-            cred_service = get_credibility_service_manual(session)
-            await cred_service.add_credibility_entry(
-                user_id=provider_id,
-                reason=CredibilityReason.TASK_COMPLETED,
+        if not dispatch_session:
+            now = lagos_now()
+            dispatch_session = DispatchSession(
                 task_id=task_id,
+                status=DispatchSessionStatus.SEARCHING,
+                batch_size=batch_size,
+                current_batch=1,
+                created_at=now,
+                updated_at=now,
             )
-            return service_id, category_id
+            dispatch_session = await session_repo.add(dispatch_session)
+
+        # pyrefly: ignore [not-callable]
+        execute_matching_engine_task.delay(dispatch_session.id)
+        return dispatch_session
 
 
-            await system_logger.metric('complete_task_assignment', timer.stop(), source='celery.complete_task_assignment')
-        except Exception as e:
-            await system_logger.error(f'complete_task_assignment Failed: {str(e)}', source='celery.complete_task_assignment')
-            raise e
+async def _execute_matching_engine_async(session_id: str) -> bool:
+    """Instantiates an ephemeral MatchingEngine for session_id and executes one dispatch step."""
+    async with async_session_maker() as session:
+        engine = MatchingEngine(session_id=session_id, db_session=session)
+        return await engine.run()
+
+
 # ---------------------------------------------------------------------------
 # Public Celery tasks
 # ---------------------------------------------------------------------------
 
 
-@shared_task(name="tasks.start_dispatch_workflow")
-def start_dispatch_workflow(task_id: str):
-    """Kicks off candidate discovery and the first dispatch ping for a task."""
-    logger.info(f"start_dispatch_workflow: starting for task {task_id}")
-    return run_async(_dispatch_next_candidate_async(task_id))
+@shared_task(name="tasks.start_dispatch_session_task")
+def start_dispatch_session_task(task_id: str, batch_size: int = 1):
+    """Celery task entrypoint to initialize a DispatchSession and trigger matching."""
+    logger.info(f"start_dispatch_session_task: starting for task {task_id}")
+    return run_async(_start_dispatch_session_async(task_id, batch_size))
 
 
-@shared_task(name="tasks.dispatch_next_candidate")
-def dispatch_next_candidate(task_id: str):
-    """Selects the next best candidate and issues a timed dispatch ping."""
-    logger.info(f"dispatch_next_candidate: task {task_id}")
-    return run_async(_dispatch_next_candidate_async(task_id))
+@shared_task(name="tasks.execute_matching_engine_task")
+def execute_matching_engine_task(session_id: str):
+    """Celery task entrypoint to run one step of ephemeral MatchingEngine."""
+    logger.info(f"execute_matching_engine_task: running for session {session_id}")
+    return run_async(_execute_matching_engine_async(session_id))
 
 
-@shared_task(name="tasks.handle_dispatch_ping_timeout")
-def handle_dispatch_ping_timeout(task_id: str, provider_id: str):
-    """Fires when a provider's ping window expires without a response."""
-    logger.info(f"handle_dispatch_ping_timeout: task={task_id} provider={provider_id}")
-    return run_async(
-        _handle_provider_response_async(
-            task_id, provider_id, DispatchAttemptStatus.TIMEOUT.value
-        )
-    )
 
 
-@shared_task(name="tasks.process_provider_dispatch_response")
-def process_provider_dispatch_response(
-    task_id: str, provider_id: str, response_status: str
-):
-    """Processes a provider's explicit accept or decline of a dispatch ping."""
-    logger.info(
-        f"process_provider_dispatch_response: task={task_id} "
-        f"provider={provider_id} status={response_status}"
-    )
-    return run_async(
-        _handle_provider_response_async(task_id, provider_id, response_status)
-    )
 
 
-@shared_task(name="tasks.complete_task_assignment")
-def complete_task_assignment(
-    task_id: str, provider_id: str, payment_mode: str = "cash"
-):
-    """Finalises a task — marks COMPLETED, triggers process_task_payment task, resets duty status, and syncs metrics."""
-    logger.info(
-        f"complete_task_assignment: task={task_id} provider={provider_id} payment_mode={payment_mode}"
-    )
-    task_info = run_async(
-        _complete_task_assignment_async(task_id, provider_id, payment_mode)
-    )
-    if isinstance(task_info, tuple) and len(task_info) == 2:
-        service_id, category_id = task_info
-    else:
-        service_id, category_id = None, None
 
-    # pyrefly: ignore [not-callable]
-    process_task_payment.delay(task_id, provider_id, payment_mode)
-    # pyrefly: ignore [not-callable]
-    sync_provider_metrics.delay(provider_id)
-    # pyrefly: ignore [not-callable]
-    sync_service_metrics.delay(service_id=service_id, category_id=category_id)
-    return True
+

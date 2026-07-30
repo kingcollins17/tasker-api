@@ -26,7 +26,6 @@ from .provider_location import (
     PostGISProviderLocationService,
     ProviderLocationPing,
     ProviderLocationService,
-    RedisProviderLocationService,
     get_provider_location_service,
 )
 from .sms import SMSService
@@ -37,6 +36,8 @@ from app.features.services.pricing_engine import (
     PricingCalculationRequest,
     PricingEngine,
 )
+from .matching_engine import MatchingEngine
+
 
 # Instantiate singleton instances for application-wide use
 email_service = EmailService()
@@ -75,8 +76,8 @@ __all__ = [
     "PricingEngine",
     "PricingCalculationRequest",
     "PricingBreakdown",
+    "MatchingEngine",
     "ProviderLocationService",
-    "RedisProviderLocationService",
     "PostGISProviderLocationService",
     "LocationPoint",
     "ProviderLocationPing",

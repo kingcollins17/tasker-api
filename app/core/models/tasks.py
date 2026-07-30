@@ -55,6 +55,14 @@ class DispatchAttemptStatus(str, enum.Enum):
     TIMEOUT = "timeout"
     CANCELED = "canceled"
 
+class DispatchSessionStatus(str, enum.Enum):
+    """Workflow state of a task dispatch session."""
+    SEARCHING = "SEARCHING"
+    ASSIGNED = "ASSIGNED"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+
+
 class PriceAdjustmentStatus(str, enum.Enum):
     """Approval status for on-site task scope or fee adjustments."""
     PENDING_APPROVAL = "pending_approval"
@@ -116,10 +124,6 @@ class Task(SQLModel, table=True):
             "lazy": "joined",
         },
     )
-    dispatch_attempts: List["TaskDispatchAttempt"] = Relationship(
-        back_populates="task",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
-    )
     price_adjustments: List["TaskPriceAdjustment"] = Relationship(
         back_populates="task",
         sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
@@ -153,6 +157,24 @@ class Task(SQLModel, table=True):
                     return loc.distance_km
         return None
 
+class DispatchSession(SQLModel, table=True):
+    """Tracks a stateful multi-step matching engine dispatch session for a task."""
+    __tablename__ = "dispatch_sessions"  # type: ignore
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique dispatch session ID")
+    task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE", description="Foreign key reference to task being dispatched")
+    status: DispatchSessionStatus = Field(default=DispatchSessionStatus.SEARCHING, index=True, description="Current workflow state of the dispatch session")
+    batch_size: int = Field(default=5, description="Number of candidate pings to process per step")
+    current_batch: int = Field(default=1, description="Current batch step iteration number")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
+
+    task: Task = Relationship()
+    dispatch_attempts: List["TaskDispatchAttempt"] = Relationship(
+        back_populates="dispatch_session",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
+    )
+
 class TaskLocation(SQLModel, table=True):
     """Geographical address and PostGIS coordinate point associated with a task."""
     __tablename__ = "task_locations"  # type: ignore
@@ -180,6 +202,14 @@ class TaskDispatchAttempt(SQLModel, table=True):
     __tablename__ = "task_dispatch_attempts"  # type: ignore
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique dispatch attempt ID")
+    dispatch_session_id: Optional[str] = Field(
+        default=None,
+        foreign_key="dispatch_sessions.id",
+        index=True,
+        ondelete="CASCADE",
+        nullable=True,
+        description="Foreign key reference to parent dispatch session",
+    )
     task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE", description="Foreign key reference to task being dispatched")
     provider_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE", description="Foreign key reference to provider candidate receiving ping")
     sequence_order: Optional[int] = Field(default=1, nullable=True, description="Position order in the ranked candidate queue")
@@ -190,7 +220,9 @@ class TaskDispatchAttempt(SQLModel, table=True):
     responded_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when provider responded or ping timed out")
     status: Optional[DispatchAttemptStatus] = Field(default=DispatchAttemptStatus.PENDING, index=True, nullable=True, description="Outcome status of dispatch ping attempt")
 
-    task: Task = Relationship(back_populates="dispatch_attempts")
+    task: Task = Relationship()
+    dispatch_session: Optional[DispatchSession] = Relationship(back_populates="dispatch_attempts")
+
 
 class TaskPriceAdjustment(SQLModel, table=True):
     """Tracks on-site price adjustments or additional line items requested during task execution."""

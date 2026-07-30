@@ -90,6 +90,8 @@ class LoggerService:
             })
         return summary
 
+SystemLogger=LoggerService
+
 def get_logger_service(
     repository: Repository[SystemLog] = Depends(GetRepository(SystemLog))
 ) -> LoggerService:

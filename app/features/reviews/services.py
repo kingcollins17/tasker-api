@@ -82,7 +82,7 @@ class ReviewService:
             TaskReview.task_id == schema.task_id,
             TaskReview.reviewer_id == reviewer_id,
         )
-        existing = (await self.review_repo.execute(stmt_existing)).scalar_one_or_none()
+        existing = (await self.review_repo.execute(stmt_existing)).one_or_none()
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

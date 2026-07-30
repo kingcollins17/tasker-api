@@ -29,9 +29,10 @@ from app.features.tasks.schemas import (
     TaskMinimalResponse,
     TaskDispatchAttemptResponse,
 )
-from app.features.tasks.celery.dispatch import (
-    complete_task_assignment,
-    process_provider_dispatch_response,
+from app.features.tasks.celery.completion import complete_task_assignment
+from app.features.tasks.dispatch_service import (
+    DispatchEventService,
+    get_dispatch_event_service,
 )
 from app.core.error_handler import AppErrorHandler
 
@@ -324,13 +325,13 @@ async def respond_to_dispatch_ping(
             required_email_verified=True,
         )
     ),
-    system_logger: LoggerService = Depends(get_logger_service)
+    dispatch_service: DispatchEventService = Depends(get_dispatch_event_service),
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Provider accepts or declines a dispatch ping for a task.
 
     Allowed values for `status`: `accepted`, `declined`.
     A TIMEOUT or CANCELED status is not a valid provider-initiated response.
-    The response state transitions are processed asynchronously by a Celery worker.
     """
     try:
         timer = Timer()
@@ -342,11 +343,10 @@ async def respond_to_dispatch_ping(
                 detail=f"Invalid response status. Allowed values: {[s.value for s in allowed]}",
             )
 
-        # pyrefly: ignore [not-callable]
-        process_provider_dispatch_response.delay(
+        await dispatch_service.handle_ping_response(
             task_id=task_id,
             provider_id=current_user.id,
-            response_status=body.status.value,
+            response_status=body.status,
         )
 
         action = (
@@ -355,8 +355,8 @@ async def respond_to_dispatch_ping(
         await system_logger.metric('respond_to_dispatch_ping', timer.stop(), source='assignments.respond_to_dispatch_ping')
         return BaseAPIResponse[None](
             data=None,
-            detail=f"Task dispatch {action} — processing in background.",
-            status_code=status.HTTP_202_ACCEPTED,
+            detail=f"Task dispatch {action} successfully.",
+            status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         await system_logger.warn('respond_to_dispatch_ping failed', source='assignments.respond_to_dispatch_ping', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})

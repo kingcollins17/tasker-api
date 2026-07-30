@@ -193,7 +193,7 @@ async def _process_provider_payout_async(
                 ProviderDebt.provider_id == provider_id
             )
             total_debt = float(
-                (await debt_repo.execute(stmt)).scalar_one_or_none() or 0.0
+                (await debt_repo.execute(stmt)).one_or_none() or 0.0
             )
 
             remaining_payout = payout_amount

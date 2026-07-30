@@ -89,7 +89,7 @@ async def _sync_provider_metrics_async(provider_id: str):
             # 3. Update ProviderProfile
             stmt_prof = select(ProviderProfile).where(ProviderProfile.user_id == provider_id)
             res_prof = await profile_repo.execute(stmt_prof)
-            profile: Optional[ProviderProfile] = res_prof.scalar_one_or_none()
+            profile: Optional[ProviderProfile] = res_prof.one_or_none()
             if profile:
                 profile.acceptance_rate_30d = round(acceptance_rate, 2)
                 profile.completion_rate_30d = round(completion_rate, 2)
@@ -134,7 +134,7 @@ async def _sync_single_service_duration(
     avg_duration = sum(durations) / len(durations)
     stmt_srv = select(Service).where(Service.id == service_id)
     res_srv = await service_repo.execute(stmt_srv)
-    service: Optional[Service] = res_srv.scalar_one_or_none()
+    service: Optional[Service] = res_srv.one_or_none()
     if service:
         service.default_duration_min = round(avg_duration)
         await service_repo.add(service)
@@ -177,7 +177,7 @@ async def _sync_single_category_duration(
     avg_duration = sum(durations) / len(durations)
     stmt_cat = select(ServiceCategory).where(ServiceCategory.id == category_id)
     res_cat = await category_repo.execute(stmt_cat)
-    category: Optional[ServiceCategory] = res_cat.scalar_one_or_none()
+    category: Optional[ServiceCategory] = res_cat.one_or_none()
     if category:
         category.default_duration_min = round(avg_duration)
         await category_repo.add(category)
@@ -206,7 +206,7 @@ async def _sync_service_metrics_async(
                 if not category_id:
                     stmt_srv = select(Service).where(Service.id == service_id)
                     res_srv = await service_repo.execute(stmt_srv)
-                    srv: Optional[Service] = res_srv.scalar_one_or_none()
+                    srv: Optional[Service] = res_srv.one_or_none()
                     if srv and srv.category_id:
                         category_id = srv.category_id
 

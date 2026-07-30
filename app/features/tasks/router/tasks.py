@@ -46,7 +46,7 @@ from app.core.models.tasks import TaskStatus
 from app.core.queries.task_queries import TaskQueries
 from app.core.repository import Repository, GetRepository
 
-from app.features.tasks.celery.dispatch import start_dispatch_workflow
+from app.features.tasks.celery.dispatch import start_dispatch_session_task
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -115,7 +115,7 @@ async def confirm_draft(
         task = await task_service.confirm_draft(task_id, current_user.id)
 
         # pyrefly: ignore [not-callable]
-        start_dispatch_workflow.delay(task.id)
+        start_dispatch_session_task.delay(task.id)
 
         await system_logger.metric('confirm_draft', timer.stop(), source='tasks.confirm_draft')
         return BaseAPIResponse[TaskResponse](

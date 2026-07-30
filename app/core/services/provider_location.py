@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlmodel import select
 
+from app.core.database import get_session
+from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.models.users import ProviderProfile, UserLocation
 from app.core.repository import Repository
 from app.core.services.cache import CacheService, get_cache_service
@@ -87,115 +89,7 @@ class ProviderLocationService(abc.ABC):
         return round(R * c, 2)
 
 
-class RedisProviderLocationService(ProviderLocationService):
-    """In-memory Redis Geospatial implementation (`GEOADD`, `GEOSEARCH`) for high-frequency location heartbeats."""
 
-    GEO_KEY = "provider_locations:geo"
-    META_KEY_PREFIX = "provider_location:"
-
-    def __init__(self, cache_service: CacheService):
-        self.cache = cache_service
-
-    async def update_provider_location(self, ping: ProviderLocationPing, ttl_seconds: int = 300) -> bool:
-        if not ping.provider_id or ping.latitude is None or ping.longitude is None:
-            return False
-
-        # Add or update in Redis Geospatial sorted set
-        await self.cache.client.geoadd(
-            self.GEO_KEY,
-            (ping.longitude, ping.latitude, ping.provider_id),
-        )
-
-        if not ping.timestamp:
-            ping.timestamp = lagos_now().isoformat()
-
-        meta_key = f"{self.META_KEY_PREFIX}{ping.provider_id}"
-        await self.cache.set_json(meta_key, ping.model_dump(), expire=ttl_seconds)
-        return True
-
-    async def remove_provider_location(self, provider_id: str) -> bool:
-        meta_key = f"{self.META_KEY_PREFIX}{provider_id}"
-        await self.cache.client.zrem(self.GEO_KEY, provider_id)
-        await self.cache.delete(meta_key)
-        return True
-
-    async def get_provider_location(self, provider_id: str) -> Optional[ProviderLocationPing]:
-        meta_key = f"{self.META_KEY_PREFIX}{provider_id}"
-        data = await self.cache.get_json(meta_key)
-        if data:
-            return ProviderLocationPing(**data)
-
-        pos = await self.cache.client.geopos(self.GEO_KEY, provider_id)
-        if pos and len(pos) > 0 and pos[0] is not None:
-            lon, lat = pos[0]
-            return ProviderLocationPing(
-                provider_id=provider_id,
-                longitude=float(lon),
-                latitude=float(lat),
-                is_online=True,
-                timestamp=lagos_now().isoformat(),
-            )
-        return None
-
-    async def search_nearby_providers(
-        self,
-        latitude: float,
-        longitude: float,
-        radius_km: float = 10.0,
-        limit: Optional[int] = 100,
-    ) -> List[NearbyProviderResult]:
-        try:
-            raw_results = await self.cache.client.geosearch(
-                self.GEO_KEY,
-                longitude=longitude,
-                latitude=latitude,
-                radius=radius_km,
-                unit="km",
-                withdist=True,
-                withcoord=True,
-                count=limit,
-                sort="ASC",
-            )
-        except Exception:
-            raw_results = await self.cache.client.georadius(
-                self.GEO_KEY,
-                longitude,
-                latitude,
-                radius_km,
-                unit="km",
-                withdist=True,
-                withcoord=True,
-                count=limit,
-                sort="ASC",
-            )
-
-        nearby_providers: List[NearbyProviderResult] = []
-        if not raw_results:
-            return nearby_providers
-
-        for item in raw_results:
-            if len(item) >= 3:
-                member_id = str(item[0])
-                distance_km = round(float(item[1]), 2)
-                coords = item[2]
-                prov_lon, prov_lat = float(coords[0]), float(coords[1])
-
-                meta = await self.get_provider_location(member_id)
-                last_hb = meta.timestamp if meta else None
-                is_online = meta.is_online if meta and meta.is_online is not None else True
-
-                nearby_providers.append(
-                    NearbyProviderResult(
-                        provider_id=member_id,
-                        distance_km=distance_km,
-                        latitude=prov_lat,
-                        longitude=prov_lon,
-                        last_heartbeat_at=last_hb,
-                        is_online=is_online,
-                    )
-                )
-
-        return nearby_providers
 
 
 class PostGISProviderLocationService(ProviderLocationService):
@@ -216,7 +110,7 @@ class PostGISProviderLocationService(ProviderLocationService):
         # Query existing user location via repository
         stmt = select(UserLocation).where(UserLocation.user_id == ping.provider_id)
         result = await self.location_repo.execute(stmt)
-        loc: Optional[UserLocation] = result.scalar_one_or_none()
+        loc: Optional[UserLocation] = result.one_or_none()
 
         now = lagos_now()
         if loc:
@@ -239,7 +133,7 @@ class PostGISProviderLocationService(ProviderLocationService):
     async def remove_provider_location(self, provider_id: str) -> bool:
         stmt = select(UserLocation).where(UserLocation.user_id == provider_id)
         result = await self.location_repo.execute(stmt)
-        loc: Optional[UserLocation] = result.scalar_one_or_none()
+        loc: Optional[UserLocation] = result.one_or_none()
         if loc:
             loc.latitude = None
             loc.longitude = None
@@ -251,7 +145,7 @@ class PostGISProviderLocationService(ProviderLocationService):
     async def get_provider_location(self, provider_id: str) -> Optional[ProviderLocationPing]:
         stmt = select(UserLocation).where(UserLocation.user_id == provider_id)
         result = await self.location_repo.execute(stmt)
-        loc: Optional[UserLocation] = result.scalar_one_or_none()
+        loc: Optional[UserLocation] = result.one_or_none()
         if loc and loc.latitude is not None and loc.longitude is not None:
             return ProviderLocationPing(
                 provider_id=provider_id,
@@ -277,7 +171,7 @@ class PostGISProviderLocationService(ProviderLocationService):
         )
 
         result = await self.location_repo.execute(stmt)
-        rows = result.all()
+        rows = result.unique().all()
 
         candidates: List[NearbyProviderResult] = []
         for loc, profile in rows:
@@ -303,7 +197,10 @@ class PostGISProviderLocationService(ProviderLocationService):
 
 
 def get_provider_location_service(
-    cache_service: CacheService = Depends(get_cache_service),
+    session: AsyncSession = Depends(get_session),
 ) -> ProviderLocationService:
-    """Dependency provider returning the primary RedisProviderLocationService implementation."""
-    return RedisProviderLocationService(cache_service=cache_service)
+    """Dependency provider returning the primary PostGISProviderLocationService implementation."""
+    return PostGISProviderLocationService(
+        location_repo=Repository(UserLocation, session),
+        provider_profile_repo=Repository(ProviderProfile, session),
+    )

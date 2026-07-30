@@ -37,7 +37,7 @@ async def _sync_user_credibility_score_async(user_id: str) -> None:
                 CredibilityLedgerEntry.user_id == user_id,
             )
             result = await ledger_repo.execute(stmt)
-            total_delta: Optional[float] = result.scalar_one_or_none()
+            total_delta: Optional[float] = result.one_or_none()
 
             raw_score = _CREDIBILITY_SEED + (total_delta or 0.0)
             clamped = max(_CREDIBILITY_MIN, min(_CREDIBILITY_MAX, raw_score))
