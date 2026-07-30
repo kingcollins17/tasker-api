@@ -48,10 +48,7 @@ class NearbyProviderResult(BaseModel):
 class ProviderLocationService(abc.ABC):
     """Abstract base class defining the spatial location tracking and candidate search interface."""
 
-    @abc.abstractmethod
-    async def update_provider_location(self, ping: ProviderLocationPing, ttl_seconds: int = 300) -> bool:
-        """Ingests a real-time provider location ping and updates spatial state."""
-        pass
+
 
     @abc.abstractmethod
     async def remove_provider_location(self, provider_id: str) -> bool:
@@ -103,32 +100,7 @@ class PostGISProviderLocationService(ProviderLocationService):
         self.location_repo = location_repo
         self.provider_profile_repo = provider_profile_repo
 
-    async def update_provider_location(self, ping: ProviderLocationPing, ttl_seconds: int = 300) -> bool:
-        if not ping.provider_id or ping.latitude is None or ping.longitude is None:
-            return False
 
-        # Query existing user location via repository
-        stmt = select(UserLocation).where(UserLocation.user_id == ping.provider_id)
-        result = await self.location_repo.execute(stmt)
-        loc: Optional[UserLocation] = result.one_or_none()
-
-        now = lagos_now()
-        if loc:
-            loc.latitude = ping.latitude
-            loc.longitude = ping.longitude
-            loc.updated_at = now
-            await self.location_repo.add(loc)
-        else:
-            new_loc = UserLocation(
-                user_id=ping.provider_id,
-                latitude=ping.latitude,
-                longitude=ping.longitude,
-                created_at=now,
-                updated_at=now,
-            )
-            await self.location_repo.add(new_loc)
-
-        return True
 
     async def remove_provider_location(self, provider_id: str) -> bool:
         stmt = select(UserLocation).where(UserLocation.user_id == provider_id)

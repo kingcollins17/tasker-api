@@ -295,7 +295,7 @@ async def _handle_provider_response_async(
             
 async def _start_dispatch_session_async(
     task_id: str, batch_size: int = 1
-) -> Optional[DispatchSession]:
+) -> Optional[str]:
     """Creates a stateful DispatchSession in DB for a task and triggers the MatchingEngine Celery task."""
     async with async_session_maker() as session:
         task_repo = Repository(Task, session)
@@ -333,7 +333,7 @@ async def _start_dispatch_session_async(
 
         # pyrefly: ignore [not-callable]
         execute_matching_engine_task.delay(dispatch_session.id)
-        return dispatch_session
+        return dispatch_session.id
 
 
 async def _execute_matching_engine_async(session_id: str) -> bool:

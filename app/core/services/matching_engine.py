@@ -301,7 +301,7 @@ class MatchingEngine:
         await self.task_repo.add(task)
 
         msg = f"MatchingEngine: No candidates left for task {task.id}. Session {dispatch_session.id} EXPIRED."
-        logger.info(msg)
+        print(msg)
         await self.system_logger.info(
             msg,
             source=_LOG_SOURCE,
@@ -363,7 +363,7 @@ class MatchingEngine:
         dispatch_session = await self.session_repo.get(self.session_id)
         if not dispatch_session or dispatch_session.status != DispatchSessionStatus.SEARCHING:
             msg = f"MatchingEngine: Session {self.session_id} not searching (status={getattr(dispatch_session, 'status', None)}). Exiting."
-            logger.info(msg)
+            print(msg)
             await self.system_logger.info(msg, source=_LOG_SOURCE)
             return False
 
@@ -384,7 +384,7 @@ class MatchingEngine:
         res_opt = await self.session_repo.execute(stmt_opt)
         if getattr(res_opt, "rowcount", 0) == 0:
             msg = f"MatchingEngine: Optimistic locking conflict for session {self.session_id} (batch={batch_num}). Exiting."
-            logger.warning(msg)
+            print(msg)
             await self.system_logger.warn(msg, source=_LOG_SOURCE)
             return False
 
@@ -399,7 +399,7 @@ class MatchingEngine:
         task = await self.task_repo.get(dispatch_session.task_id)
         if not task or task.status != TaskStatus.SEARCHING:
             msg = f"MatchingEngine: Task {dispatch_session.task_id} not in SEARCHING status. Halting engine."
-            logger.info(msg)
+            print(msg)
             await self.system_logger.info(msg, source=_LOG_SOURCE)
             return False
 
@@ -467,11 +467,11 @@ class MatchingEngine:
         # pyrefly: ignore [not-callable]
         execute_matching_engine_task.apply_async(
             args=[dispatch_session.id],
-            countdown=ping_duration,
+            countdown=ping_duration + 60, # Add 60 seconds for delay
         )
 
         msg = f"MatchingEngine: Dispatched batch of {len(batch)} candidate(s) for session {dispatch_session.id} (task={task.id}). Next iteration scheduled in {ping_duration}s."
-        logger.info(msg)
+        print(msg)
         await self.system_logger.info(
             msg,
             source=_LOG_SOURCE,

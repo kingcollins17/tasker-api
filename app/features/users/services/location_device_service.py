@@ -175,15 +175,7 @@ class UserLocationDeviceService:
             longitude=longitude,
         )
 
-        # 2. Update real-time Redis geospatial index
-        if self.provider_location_service:
-            ping = ProviderLocationPing(
-                provider_id=user_id,
-                latitude=latitude,
-                longitude=longitude,
-                is_online=profile.is_online if profile.is_online is not None else True,
-            )
-            await self.provider_location_service.update_provider_location(ping)
+
 
         # 3. Update heartbeat timestamp on profile
         await self.provider_repo.update(

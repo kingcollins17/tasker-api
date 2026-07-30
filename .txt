@@ -37,26 +37,22 @@ psql command = PGPASSWORD=fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa psql -h dpg-d8kp6e3eo
 
 // create task example 
 {
-  "title": "IT Support & Setup",
-  "description": "My laptop has been shutting down unexpectedly and I need someone to diagnose and fix the issue. If any parts need replacement, let me know before proceeding.",
-  "category_id": "c101a111-2222-3333-4444-555555555553",
-  "service_id": "s202b222-1111-2222-3333-444444444412",
-  "budget_min": 10000,
-  "budget_max": 10000,
-  "pricing_model": "fixed",
-  "expires_at": "2026-07-19T14:13:25.068492Z",
+  "title": "Express Parcel Courier",
+  "description": "I need urgent courier services",
+  "category_id": "c101a111-2222-3333-4444-555555555503",
+  "service_id": "s202b222-1111-2222-3333-444444444101",
+  "expires_at": "2026-08-02T18:27:38.950257",
   "scheduled_start_at": null,
   "locations": [
     {
       "location_type": "service",
-      "latitude": 6.8598795,
-      "longitude": 7.4134683,
-      "address": "VC67+46M University Medical Centre, University of Nigeria James Africanus Norton Rd, Ihe Nsukka, Nsukka 410105, Enugu, Nigeria",
+      "latitude": 6.8593622,
+      "longitude": 7.4131734,
+      "address": "VC57+M7M, James Africanus Norton Rd, Ihe Nsukka, Nsukka 410105, Enugu, Nigeria, Ihe Nsukka, Nsukka, Enugu, Nigeria",
       "city": "Nsukka",
       "state": "Enugu",
       "country": "Nigeria"
     }
   ]
 }
-
 wscat -c "ws://127.0.0.1:8000/api/v1/notifications/ws?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImEzNjA5NDcyLTk1Y2UtNDZhYy05NjM3LWNkMGQ5ZTk0ZGNhNyIsImVtYWlsIjoiaGFzc2FuMTIzQHlvcG1haWwuY29tIiwiaXNfYWN0aXZlIjp0cnVlLCJleHAiOjE3ODcwNjY2Mzh9.XBmyzmeOQJVEIdYARPqZRvOrEj7EAuSHR_3sBMkMmqI"

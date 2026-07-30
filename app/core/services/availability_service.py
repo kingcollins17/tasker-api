@@ -1,7 +1,7 @@
 from typing import Optional
 import zoneinfo
 from datetime import datetime, time
-from sqlalchemy import ColumnElement, cast, Time
+from sqlalchemy import ColumnElement, cast, Time, String
 from sqlmodel import select, func
 from sqlmodel.ext.asyncio.session import AsyncSession
 from fastapi import Depends, HTTPException, status
@@ -34,7 +34,7 @@ class AvailabilityService:
             .where(
                 ProviderAvailability.provider_id == User.id,
                 ProviderAvailability.is_active == True,
-                ProviderAvailability.day_of_week == func.extract('DOW', local_ts) + 1,
+                cast(ProviderAvailability.day_of_week, String) == func.upper(func.to_char(local_ts, 'FMDay')),
                 ProviderAvailability.start_time <= cast(local_ts, Time),
                 ProviderAvailability.end_time >= cast(local_ts, Time)
             )
