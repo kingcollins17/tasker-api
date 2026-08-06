@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, Literal, List
 from datetime import datetime
 from app.core.models.users import UserType, KYCStatus, DutyStatus, DayOfWeek
-from app.core.schemas.users import PaymentAccountResponse
+from app.core.schemas.users import PaymentAccountResponse, UserLocationResponse
 from app.core.utils.phone_helper import format_nigerian_phone
 from datetime import time
 
@@ -58,10 +58,46 @@ class ServiceResponse(BaseModel):
     is_active: Optional[bool] = None
 
 
+class PublicProviderProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str]=None
+    user_id: Optional[str]=None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    gender: Optional[str] = None
+    selfie_url: Optional[str] = None
+    is_online: Optional[bool] = None
+    duty_status: Optional[DutyStatus] = None
+    last_heartbeat_at: Optional[datetime] = None
+    total_tasks_completed: Optional[int] = 0
+
+
+class PublicUserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    type: Optional[UserType] = None
+    is_active: Optional[bool] = None
+    email_verified: Optional[bool] = None
+    phone_verified: Optional[bool] = None
+    credibility_score: Optional[float] = None
+    average_ratings: Optional[float] = None
+    created_at: Optional[datetime] = None
+    region_id: Optional[str] = None
+    location: Optional[UserLocationResponse] = None
+    services: List[ServiceResponse] = []
+    availability: List["ProviderAvailabilityResponse"] = []
+    profile: Optional[PublicProviderProfileResponse] = None
+
+
+
 class ProviderProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
+    id: Optional[str]=None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     id_type: Optional[str] = None
@@ -80,18 +116,6 @@ class ProviderProfileResponse(BaseModel):
     last_heartbeat_at: Optional[datetime] = None
     total_tasks_completed: Optional[int] = 0
     services: List[ServiceResponse] = []
-
-
-class UserLocationResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: Optional[str] = None
-    user_id: Optional[str] = None
-    region_id: Optional[str] = None
-    address_line: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
 
 class UserDeviceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -295,5 +319,6 @@ class UpdateProviderAvailabilityBlock(BaseModel):
     start_time: Optional[time] = Field(default=None, description="Start time (e.g., 07:00:00)")
     end_time: Optional[time] = Field(default=None, description="End time (e.g., 18:00:00)")
     is_active: Optional[bool] = Field(default=None, description="Whether this availability block is active")
+
 
 

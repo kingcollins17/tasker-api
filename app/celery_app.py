@@ -24,6 +24,13 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
+    broker_pool_limit=2,
+    redis_max_connections=2,
+    worker_cancel_long_running_tasks_on_connection_loss=True,
+    broker_transport_options={
+        "health_check_interval": 15,
+    },
+    redis_backend_health_check_interval=15,
 
     # ── Dedicated queues ──────────────────────────────────────────────────
     task_queues=(

@@ -46,8 +46,8 @@ psql command = PGPASSWORD=fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa psql -h dpg-d8kp6e3eo
   "locations": [
     {
       "location_type": "service",
-      "latitude": 6.8593622,
-      "longitude": 7.4131734,
+      "latitude": 6.8631846,
+      "longitude": 7.4106546,
       "address": "VC57+M7M, James Africanus Norton Rd, Ihe Nsukka, Nsukka 410105, Enugu, Nigeria, Ihe Nsukka, Nsukka, Enugu, Nigeria",
       "city": "Nsukka",
       "state": "Enugu",

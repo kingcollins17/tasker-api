@@ -28,7 +28,8 @@ class CacheService:
             redis_url,
             decode_responses=True,
             socket_keepalive=True,
-            health_check_interval=30
+            health_check_interval=30,
+            max_connections=2
         )
         self._initialized = True
 

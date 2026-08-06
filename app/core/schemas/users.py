@@ -1,6 +1,20 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any
+from datetime import datetime
 from app.core.models.users import PaymentProvider
+
+
+class UserLocationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    user_id: Optional[str] = None
+    region_id: Optional[str] = None
+    address_line: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class MinimalProviderResponse(BaseModel):
@@ -14,7 +28,7 @@ class MinimalProviderResponse(BaseModel):
     profile_picture_url: Optional[str] = None
     selfie_url: Optional[str] = None
     total_tasks_completed: Optional[int] = None
-
+    location: Optional[UserLocationResponse] = None
     @classmethod
     def from_user(cls, user: Any) -> Optional["MinimalProviderResponse"]:
         if not user:
