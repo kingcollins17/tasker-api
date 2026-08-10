@@ -92,11 +92,14 @@ class LoggerService:
 
 SystemLogger=LoggerService
 
-def get_logger_service(
-    repository: Repository[SystemLog] = Depends(GetRepository(SystemLog))
-) -> LoggerService:
-    """FastAPI dependency for LoggerService."""
-    return LoggerService(repository)
+from typing import AsyncGenerator
+
+async def get_logger_service() -> AsyncGenerator[LoggerService, None]:
+    """FastAPI dependency for LoggerService with an independent database session."""
+    from app.core.database import async_session_maker
+    async with async_session_maker() as session:
+        repository = Repository(SystemLog, session)
+        yield LoggerService(repository)
 
 def get_logger_service_manual(session: AsyncSession) -> LoggerService:
     """Manually creates a LoggerService instance for contexts without FastAPI Depends (e.g., Celery)."""

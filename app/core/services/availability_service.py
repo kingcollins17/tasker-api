@@ -1,7 +1,7 @@
 from typing import Optional
 import zoneinfo
 from datetime import datetime, time
-from sqlalchemy import ColumnElement, cast, Time, String
+from sqlalchemy import ColumnElement, cast, Time, String, Integer
 from sqlmodel import select, func
 from sqlmodel.ext.asyncio.session import AsyncSession
 from fastapi import Depends, HTTPException, status
@@ -34,7 +34,9 @@ class AvailabilityService:
             .where(
                 ProviderAvailability.provider_id == User.id,
                 ProviderAvailability.is_active == True,
-                cast(ProviderAvailability.day_of_week, String) == func.upper(func.to_char(local_ts, 'FMDay')),
+                # PostgreSQL custom ENUM types cannot be cast directly to INTEGER.
+                # We must cast ENUM -> TEXT -> INTEGER to compare with EXTRACT(DOW) result.
+                cast(cast(ProviderAvailability.day_of_week, String), Integer) == cast(func.extract('DOW', local_ts), Integer) + 1,
                 ProviderAvailability.start_time <= cast(local_ts, Time),
                 ProviderAvailability.end_time >= cast(local_ts, Time)
             )

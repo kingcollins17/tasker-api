@@ -79,6 +79,7 @@ class MatchingEngine:
     ) -> List[Tuple[User, ProviderProfile, float]]:
         """Discovers nearby providers using spatial index and filters by DB eligibility."""
         if not task.service_id:
+            print(f"DEBUG [_fetch_and_filter]: No service_id on task {task.id}, returning empty")
             return []
 
         stmt_loc = select(TaskLocation).where(TaskLocation.task_id == task.id).limit(1)
@@ -87,17 +88,25 @@ class MatchingEngine:
         # Do not call scalar or none, result is already a scalar
         task_loc: Optional[TaskLocation] = res_loc.one_or_none()
         if not task_loc or task_loc.latitude is None or task_loc.longitude is None:
+            print(f"DEBUG [_fetch_and_filter]: No task location found for task {task.id}")
             return []
+
+        print(f"DEBUG [_fetch_and_filter]: Task location: lat={task_loc.latitude}, lon={task_loc.longitude}")
 
         nearby_results: List[NearbyProviderResult] = (
             await self.geo_service.search_nearby_providers(
                 latitude=task_loc.latitude,
                 longitude=task_loc.longitude,
                 radius_km=10.0,
-                limit=2000,
+                limit=2000
             )
         )
+        print(f"DEBUG [_fetch_and_filter]: Spatial search returned {len(nearby_results)} nearby providers")
+        for r in nearby_results:
+            print(f"  -> provider_id={r.provider_id}, distance_km={r.distance_km}, is_online={r.is_online}")
+
         if not nearby_results:
+            print(f"DEBUG [_fetch_and_filter]: No nearby providers found within 10km radius")
             return []
 
         nearby_map = {
@@ -106,6 +115,7 @@ class MatchingEngine:
             if r.provider_id and r.distance_km is not None
         }
         provider_ids = list(nearby_map.keys())
+        print(f"DEBUG [_fetch_and_filter]: {len(provider_ids)} provider IDs from spatial search: {provider_ids}")
 
         stmt_eligibility = (
             select(User, ProviderProfile)
@@ -126,11 +136,23 @@ class MatchingEngine:
         stmt_eligibility = stmt_eligibility.where(
             ProviderProfile.is_online == True,  # noqa: E712
             ProviderProfile.duty_status == DutyStatus.ONLINE_AVAILABLE,
-            self.availability_service.get_availability_sql_condition(target_time),
+            # self.availability_service.get_availability_sql_condition(target_time),
         )
 
         res_eligibility = await self.provider_profile_repo.execute(stmt_eligibility)
         rows = res_eligibility.unique().all()
+        print(f"DEBUG [_fetch_and_filter]: Eligibility query returned {len(rows)} rows")
+
+        # Debug: check each provider individually to see which filter is eliminating them
+        if not rows and provider_ids:
+            for pid in provider_ids:
+                u = await self.user_repo.get(pid)
+                if not u:
+                    print(f"  -> {pid}: User NOT FOUND in DB")
+                    continue
+                p = u.provider_profile
+                print(f"  -> {pid}: is_active={u.is_active}, kyc_status={p.status if p else 'NO_PROFILE'}, "
+                      f"is_online={p.is_online if p else 'N/A'}, duty_status={p.duty_status if p else 'N/A'}")
 
         eligible: List[Tuple[User, ProviderProfile, float]] = []
         for user, profile in rows:
@@ -300,14 +322,6 @@ class MatchingEngine:
         task.status = TaskStatus.CANCELLED
         await self.task_repo.add(task)
 
-        msg = f"MatchingEngine: No candidates left for task {task.id}. Session {dispatch_session.id} EXPIRED."
-        print(msg)
-        await self.system_logger.info(
-            msg,
-            source=_LOG_SOURCE,
-            metadata={"task_id": task.id, "session_id": dispatch_session.id},
-        )
-
         if task.customer_id:
             await self._send_cancellation_notification(
                 customer_id=task.customer_id,
@@ -353,6 +367,7 @@ class MatchingEngine:
         Returns:
             bool: True if a batch of candidates was successfully pinged; False if stopped or pool exhausted.
         """
+        print(f"\nDEBUG [MatchingEngine.run]: ===== STARTING RUN FOR SESSION_ID={self.session_id} =====")
         await self.system_logger.info(
             f"MatchingEngine.run starting for session {self.session_id}",
             source=_LOG_SOURCE,
@@ -362,6 +377,7 @@ class MatchingEngine:
         # 1. Fetch dispatch session
         dispatch_session = await self.session_repo.get(self.session_id)
         if not dispatch_session or dispatch_session.status != DispatchSessionStatus.SEARCHING:
+            print(f"DEBUG [MatchingEngine.run]: Dispatch session validation failed. exists={bool(dispatch_session)}, status={getattr(dispatch_session, 'status', None)}")
             msg = f"MatchingEngine: Session {self.session_id} not searching (status={getattr(dispatch_session, 'status', None)}). Exiting."
             print(msg)
             await self.system_logger.info(msg, source=_LOG_SOURCE)
@@ -389,6 +405,7 @@ class MatchingEngine:
             return False
 
         await self.session_repo.refresh(dispatch_session)
+        print(f"DEBUG [MatchingEngine.run]: Concurrency check passed. Current batch is now {dispatch_session.current_batch}")
         await self.system_logger.info(
             f"MatchingEngine: Session {self.session_id} batch counter advanced to {dispatch_session.current_batch}",
             source=_LOG_SOURCE,
@@ -404,16 +421,23 @@ class MatchingEngine:
             return False
 
         # 4. Fetch, score, and select batch of candidates
+        print(f"DEBUG [MatchingEngine.run]: Calling _fetch_and_filter_candidates for task_id={task.id}")
         candidates = await self._fetch_and_filter_candidates(task)
+        print(f"DEBUG [MatchingEngine.run]: _fetch_and_filter_candidates returned {len(candidates)} eligible candidates")
         await self.system_logger.info(
             f"MatchingEngine: Discovered {len(candidates)} candidate(s) passing spatial & eligibility filters for task {task.id}",
             source=_LOG_SOURCE,
             metadata={"task_id": task.id, "eligible_candidates_count": len(candidates)},
         )
 
+        print(f"DEBUG [MatchingEngine.run]: Calling _score_and_sort_candidates")
         scored_candidates = self._score_and_sort_candidates(candidates)
+        print(f"DEBUG [MatchingEngine.run]: _score_and_sort_candidates returned {len(scored_candidates)} scored candidates")
+        
         batch_size = max(1, dispatch_session.batch_size or 1)
+        print(f"DEBUG [MatchingEngine.run]: Calling _get_next_batch with batch_size={batch_size}")
         batch = await self._get_next_batch(scored_candidates, task.id, batch_size)
+        print(f"DEBUG [MatchingEngine.run]: _get_next_batch returned {len(batch)} candidates for batch: {[c.provider_id for c in batch]}")
 
         candidate_summary = [
             {"provider_id": c.provider_id, "score": c.score, "distance_km": c.distance_km}
@@ -431,7 +455,17 @@ class MatchingEngine:
 
         # 5. Handle empty batch (candidate pool exhausted)
         if not batch:
-            return await self._handle_pool_exhaustion(task, dispatch_session)
+            print(f"DEBUG [MatchingEngine.run]: Calling _handle_pool_exhaustion because batch is empty")
+            exhausted = await self._handle_pool_exhaustion(task, dispatch_session)
+            print(f"DEBUG [MatchingEngine.run]: _handle_pool_exhaustion returned {exhausted}")
+            msg = f"MatchingEngine: No candidates left for task {task.id}. Session {dispatch_session.id} EXPIRED."
+            print(f"DEBUG [MatchingEngine.run]: {msg}")
+            await self.system_logger.info(
+                msg,
+                source=_LOG_SOURCE,
+                metadata={"task_id": task.id, "session_id": dispatch_session.id},
+            )
+            return exhausted
 
         # 6. Issue dispatch attempt pings for candidates in batch
         ping_duration = self.ping_duration
@@ -442,6 +476,7 @@ class MatchingEngine:
         seq_start = len(list(res_count.all())) + 1
 
         for idx, candidate in enumerate(batch):
+            print(f"DEBUG [MatchingEngine.run]: Calling _dispatch_to_candidate for candidate {idx+1}/{len(batch)} (provider_id={candidate.provider_id})")
             attempt = await self._dispatch_to_candidate(
                 candidate=candidate,
                 task=task,
@@ -449,6 +484,7 @@ class MatchingEngine:
                 sequence_order=seq_start + idx,
                 ping_duration=ping_duration,
             )
+            print(f"DEBUG [MatchingEngine.run]: _dispatch_to_candidate returned attempt_id={attempt.id}")
             await self.system_logger.info(
                 f"MatchingEngine: Dispatched ping attempt {attempt.id} to provider {candidate.provider_id} (score={candidate.score:.2f})",
                 source=_LOG_SOURCE,
@@ -470,8 +506,9 @@ class MatchingEngine:
             countdown=ping_duration + 60, # Add 60 seconds for delay
         )
 
-        msg = f"MatchingEngine: Dispatched batch of {len(batch)} candidate(s) for session {dispatch_session.id} (task={task.id}). Next iteration scheduled in {ping_duration}s."
-        print(msg)
+        msg = f"MatchingEngine: Dispatched batch of {len(batch)} candidate(s) for session {dispatch_session.id} (task={task.id}). Next iteration scheduled in {ping_duration + 60}s."
+        print(f"DEBUG [MatchingEngine.run]: {msg}")
+        print(f"DEBUG [MatchingEngine.run]: ===== END RUN FOR SESSION_ID={self.session_id} =====\n")
         await self.system_logger.info(
             msg,
             source=_LOG_SOURCE,

@@ -10,6 +10,7 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,  # Can be set to True for debugging SQL queries
     future=True,
+    pool_pre_ping=True,  # Checks if the connection is alive before using it
 )
 
 # Create an async session maker configured to produce AsyncSession instances
