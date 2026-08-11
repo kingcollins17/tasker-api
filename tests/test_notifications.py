@@ -14,7 +14,7 @@ from app.core.models.notifications import (
 )
 from app.features.notifications.services import NotificationService
 from app.features.notifications.schemas import CreateNotification
-from app.features.notifications.tasks import _process_batch, _fan_out_notification
+from app.features.notifications.tasks import NotificationPipeline
 from app.core.repository import Repository
 
 
@@ -136,7 +136,11 @@ async def test_process_batch_filtering_channels(
     mock_notification_repo.get = AsyncMock(return_value=notification)
 
     mock_recipient_repo = MagicMock()
-    mock_recipient_repo.get = AsyncMock(return_value=recipient)
+    # The refactored code uses bulk execute (WHERE id IN (...)) instead of
+    # individual .get() calls, so mock .execute to return a result with .all()
+    mock_recipient_result = MagicMock()
+    mock_recipient_result.all = MagicMock(return_value=[recipient])
+    mock_recipient_repo.execute = AsyncMock(return_value=mock_recipient_result)
     mock_recipient_repo.bulk_update = AsyncMock()
 
     mock_delivery_repo = MagicMock()
@@ -166,7 +170,7 @@ async def test_process_batch_filtering_channels(
 
     with patch("app.features.notifications.tasks.Repository", side_effect=get_repo_side_effect):
         # Act
-        await _process_batch("notif-123", ["recip-1"])
+        await NotificationPipeline.process_batch("notif-123", ["recip-1"])
 
         # Assert
         # Check bulk_add gets called with deliveries. Only email and push should be present, SMS should be filtered out

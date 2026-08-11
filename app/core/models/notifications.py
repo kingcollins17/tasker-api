@@ -22,6 +22,7 @@ class NotificationType(str, enum.Enum):
     PROMOTION = "promotion"
     SECURITY_ALERT = "security_alert"
     SYSTEM_ALERT = "system_alert"
+    JOB_PING = 'job_ping'
 
 
 class NotificationChannel(str, enum.Enum):

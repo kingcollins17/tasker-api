@@ -214,30 +214,30 @@ class MatchingEngine:
 
         return unattempted[:batch_size]
 
-    async def _send_provider_ping_notification(
+    async def _send_batch_ping_notification(
         self,
-        provider_id: str,
+        provider_ids: List[str],
         task: Task,
-        attempt: TaskDispatchAttempt,
+        dispatch_session_id: str,
         offered_payout: float,
+        expires_at: Optional[str] = None,
     ) -> None:
-        """Sends a high-priority job offer notification to a candidate provider."""
+        """Sends a single notification to all candidate providers in the batch at once."""
         payout_fmt = f"₦{offered_payout:,.2f}" if offered_payout > 0 else "offered price"
         await self.notification_service.notify(
-            recepients=[provider_id],
+            recepients=provider_ids,
             title="New Task Offer",
             body=(
                 f"You have a new task offer '{task.title}' for {payout_fmt}. "
                 f"Tap to respond within 30 seconds!"
             ),
-            type=NotificationType.TASK_ACCEPTED,
+            type=NotificationType.JOB_PING,
             channels=["push", "in_app"],
             data={
                 "task_id": task.id,
-                "dispatch_session_id": attempt.dispatch_session_id,
-                "dispatch_attempt_id": attempt.id,
+                "dispatch_session_id": dispatch_session_id,
                 "offered_payout": offered_payout,
-                "expires_at": attempt.expires_at.isoformat() if attempt.expires_at else None,
+                "expires_at": expires_at,
                 "type": "job_ping",
             },
         )
@@ -298,14 +298,6 @@ class MatchingEngine:
         if profile:
             profile.duty_status = DutyStatus.ON_DISPATCH
             await self.provider_profile_repo.add(profile)
-
-        # Send ping notification
-        await self._send_provider_ping_notification(
-            provider_id=candidate.provider_id,
-            task=task,
-            attempt=attempt,
-            offered_payout=offered_payout,
-        )
 
         return attempt
 
@@ -475,6 +467,7 @@ class MatchingEngine:
         res_count = await self.attempt_repo.execute(stmt_attempts_count)
         seq_start = len(list(res_count.all())) + 1
 
+        attempts: List[TaskDispatchAttempt] = []
         for idx, candidate in enumerate(batch):
             print(f"DEBUG [MatchingEngine.run]: Calling _dispatch_to_candidate for candidate {idx+1}/{len(batch)} (provider_id={candidate.provider_id})")
             attempt = await self._dispatch_to_candidate(
@@ -484,6 +477,7 @@ class MatchingEngine:
                 sequence_order=seq_start + idx,
                 ping_duration=ping_duration,
             )
+            attempts.append(attempt)
             print(f"DEBUG [MatchingEngine.run]: _dispatch_to_candidate returned attempt_id={attempt.id}")
             await self.system_logger.info(
                 f"MatchingEngine: Dispatched ping attempt {attempt.id} to provider {candidate.provider_id} (score={candidate.score:.2f})",
@@ -496,6 +490,19 @@ class MatchingEngine:
                     "expires_at": attempt.expires_at.isoformat() if attempt.expires_at else None,
                 },
             )
+
+        # Send a single notification to all candidates in the batch at once
+        # instead of one notification per candidate.
+        provider_ids = [c.provider_id for c in batch]
+        offered_payout = task.provider_payout or 0.0
+        last_expires_at = attempts[-1].expires_at.isoformat() if attempts and attempts[-1].expires_at else None
+        await self._send_batch_ping_notification(
+            provider_ids=provider_ids,
+            task=task,
+            dispatch_session_id=dispatch_session.id,
+            offered_payout=offered_payout,
+            expires_at=last_expires_at,
+        )
 
         # 7. Schedule next matching engine iteration via Celery task delay
         from app.features.tasks.celery.dispatch import execute_matching_engine_task
