@@ -1,5 +1,4 @@
 import multiprocessing
-import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,29 +22,19 @@ from app.features.reviews.router import router as reviews_router
 from app.features.system.router import router as system_router
 from app.features.vetting.router.vetting import router as vetting_router
 
-# Global variables to hold the celery processes references
+# Global variable to hold the celery worker process reference
 celery_process = None
-celery_beat_process = None
 
 
 def run_celery_worker():
     from app.celery_app import celery_app
 
-    args = ["worker", "--loglevel=info"]
-    if sys.platform == "win32":
-        args.append("--pool=solo")
-    celery_app.worker_main(args)
-
-
-def run_celery_beat():
-    from app.celery_app import celery_app
-
-    celery_app.start(["beat", "--loglevel=info"])
+    celery_app.worker_main(["worker", "--loglevel=info", "--pool=solo"])
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global celery_process, celery_beat_process
+    global celery_process
     # Startup logic
     print(f"Starting up {settings.PROJECT_NAME}...")
     await init_db()
@@ -53,8 +42,25 @@ async def lifespan(app: FastAPI):
     # Start the Redis Pub/Sub listener for real-time in-app notifications
     await start_notification_listener()
 
+    # Start Celery worker as a background process
+    celery_process = multiprocessing.Process(target=run_celery_worker, daemon=True)
+    celery_process.start()
+    print("Celery worker process started.")
+
     yield
     # Shutdown logic
+
+    # Terminate Celery worker process
+    if celery_process and celery_process.is_alive():
+        print(f"Terminating Celery worker process (pid={celery_process.pid})...")
+        celery_process.terminate()
+        celery_process.join(timeout=10)
+        if celery_process.is_alive():
+            print("Celery worker did not exit in time, killing...")
+            celery_process.kill()
+            celery_process.join()
+    celery_process = None
+    print("Celery worker process stopped.")
 
     await stop_notification_listener()
     await get_cache_service().close()
