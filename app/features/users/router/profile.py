@@ -413,6 +413,9 @@ async def get_provider_availability(
             detail="Availability fetched successfully.",
             statusCode=status.HTTP_200_OK,
         )
+    except HTTPException as e:
+        await system_logger.warn('get_availability failed', source='profile.get_availability', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
     except Exception as e:
         await system_logger.error(f'get_availability error: {str(e)}', source='profile.get_availability')
         AppErrorHandler.handleError(e)
@@ -429,13 +432,14 @@ async def update_provider_availability(
     availability_service: AvailabilityService = Depends(get_availability_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
-    """Update an availability block for the authenticated provider (start_time, end_time, is_active)."""
+    """Update an availability block for the authenticated provider (day_of_week, start_time, end_time, is_active)."""
     try:
         timer = Timer()
         timer.start()
         block = await availability_service.update_availability_block(
             availability_id=availability_id,
             provider_id=current_user.id,
+            day_of_week=schema.day_of_week,
             start_time=schema.start_time,
             end_time=schema.end_time,
             is_active=schema.is_active,

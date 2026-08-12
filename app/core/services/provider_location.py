@@ -1,20 +1,20 @@
 import abc
-import math
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 
 from fastapi import Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import cast, func
+from geoalchemy2 import Geography
 from sqlmodel import select
 
 from app.core.database import get_session
 from sqlmodel.ext.asyncio.session import AsyncSession
+from app.core.models.services import ProviderServiceLink
 from app.core.models.users import ProviderProfile, UserLocation
 from app.core.repository import Repository
 from app.core.services.cache import CacheService, get_cache_service
 from app.core.utils.datetime_helper import lagos_now
-from app.core.utils.geo import calculate_haversine_distance
 
 
 class LocationPoint(BaseModel):
@@ -67,23 +67,10 @@ class ProviderLocationService(abc.ABC):
         longitude: float,
         radius_km: float = 10.0,
         limit: Optional[int] = 50,
+        service_id: Optional[str] = None,
     ) -> List[NearbyProviderResult]:
         """Queries spatial index to find candidate providers within radius_km sorted by distance."""
         pass
-
-    def calculate_haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Computes great-circle distance in kilometers between coordinate pairs using Haversine formula."""
-        R = 6371.0  # Earth radius in kilometers
-
-        dlat = math.radians(lat2 - lat1)
-        dlon = math.radians(lon2 - lon1)
-
-        a = (
-            math.sin(dlat / 2) ** 2
-            + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
-        )
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        return round(R * c, 2)
 
 
 
@@ -133,38 +120,63 @@ class PostGISProviderLocationService(ProviderLocationService):
         longitude: float,
         radius_km: float = 10.0,
         limit: Optional[int] = 100,
+        service_id: Optional[str] = None,
     ) -> List[NearbyProviderResult]:
-        stmt = (
-            select(UserLocation, ProviderProfile)
-            # pyrefly: ignore [bad-argument-type]
-            .join(ProviderProfile, UserLocation.user_id == ProviderProfile.user_id)
-            .where(UserLocation.latitude != None, UserLocation.longitude != None) # noqa: E711
-            .where(ProviderProfile.is_online == True) # noqa: E712
+        target_point = func.ST_SetSRID(func.ST_MakePoint(longitude, latitude), 4326)
+        distance_m_expr = func.ST_Distance(
+            cast(UserLocation.last_known_location, Geography),
+            cast(target_point, Geography),
         )
 
+        stmt = (
+            select(
+                UserLocation,
+                ProviderProfile,
+                (distance_m_expr / 1000.0).label("distance_km"),
+            )
+            .join(ProviderProfile, UserLocation.user_id == ProviderProfile.user_id)
+        )
+
+        if service_id:
+            stmt = stmt.join(
+                ProviderServiceLink,
+                ProviderServiceLink.provider_id == ProviderProfile.user_id,  # type: ignore
+            ).where(
+                ProviderServiceLink.service_id == service_id,
+            )
+
+        stmt = (
+            stmt.where(UserLocation.last_known_location != None)  # noqa: E711
+            .where(ProviderProfile.is_online == True)  # noqa: E712
+            .where(
+                func.ST_DWithin(
+                    cast(UserLocation.last_known_location, Geography),
+                    cast(target_point, Geography),
+                    radius_km * 1000.0,
+                )
+            )
+            .order_by(distance_m_expr)
+        )
+
+        if limit:
+            stmt = stmt.limit(limit)
+
         result = await self.location_repo.execute(stmt)
-        rows = result.unique().all()
+        rows = result.all()
 
         candidates: List[NearbyProviderResult] = []
-        for loc, profile in rows:
-            if loc.latitude is not None and loc.longitude is not None:
-                dist = calculate_haversine_distance(latitude, longitude, loc.latitude, loc.longitude)
-                if dist <= radius_km:
-                    candidates.append(
-                        NearbyProviderResult(
-                            provider_id=loc.user_id,
-                            distance_km=dist,
-                            latitude=loc.latitude,
-                            longitude=loc.longitude,
-                            last_heartbeat_at=loc.updated_at.isoformat() if loc.updated_at else None,
-                            is_online=profile.is_online if profile.is_online is not None else True,
-                        )
-                    )
+        for loc, profile, dist_km in rows:
+            candidates.append(
+                NearbyProviderResult(
+                    provider_id=loc.user_id,
+                    distance_km=round(float(dist_km), 2) if dist_km is not None else 0.0,
+                    latitude=loc.latitude,
+                    longitude=loc.longitude,
+                    last_heartbeat_at=loc.updated_at.isoformat() if loc.updated_at else None,
+                    is_online=profile.is_online if profile.is_online is not None else True,
+                )
+            )
 
-        # Sort by distance ascending
-        candidates.sort(key=lambda c: c.distance_km or 0.0)
-        if limit:
-            candidates = candidates[:limit]
         return candidates
 
 

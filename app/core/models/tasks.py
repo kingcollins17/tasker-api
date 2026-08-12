@@ -107,6 +107,7 @@ class Task(SQLModel, table=True):
     scheduled_start_at: Optional[datetime] = Field(default=None, nullable=True, description="Target scheduled start time if not immediate")
     start_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN to initiate task on-site")
     completion_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN to complete task on-site")
+    cancellation_reason: Optional[str] = Field(default=None, nullable=True, description="Reason for task cancellation")
     # Payment Settlement State
     payment_mode: Optional[PaymentMode] = Field(default=None, index=True, nullable=True, description="Settlement mode selected on completion (cash or online)")
     payment_status: Optional[PaymentStatus] = Field(default=PaymentStatus.PENDING, index=True, nullable=True, description="Payment settlement status")

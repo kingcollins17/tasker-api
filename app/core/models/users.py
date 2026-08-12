@@ -187,7 +187,7 @@ class UserLocation(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique location entry ID")
     user_id: str = Field(foreign_key="users.id", unique=True, index=True, ondelete="CASCADE", description="Foreign key reference to user")
     region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True, description="Assigned geographical region ID")
-    timezone: str = Field(default="UTC", description="IANA Timezone string (e.g., Africa/Lagos)")
+    timezone: str = Field(default="Africa/Lagos", description="IANA Timezone string (e.g., Africa/Lagos)")
     last_known_location: Optional[Any] = Field(default=None, sa_column=Column(PointType, nullable=True), description="PostGIS Point spatial geography column")
     latitude: Optional[float] = Field(default=None, description="WGS84 Latitude coordinate")
     longitude: Optional[float] = Field(default=None, description="WGS84 Longitude coordinate")
@@ -219,7 +219,8 @@ class ProviderAvailability(SQLModel, table=True):
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique availability block ID")
     provider_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE", description="Foreign key reference to provider user account")
-    day_of_week: DayOfWeek = Field(description="1=Sunday, 7=Saturday")
+    day_of_week: int = Field(description="1=Sunday, 7=Saturday")
+    day_name: str = Field(description="Name of day of week (e.g., Sunday, Monday)")
     
     start_time: time = Field(sa_column=Column(Time, nullable=False), description="Start time (e.g., 07:00:00)")
     end_time: time = Field(sa_column=Column(Time, nullable=False), description="End time (e.g., 18:00:00)")

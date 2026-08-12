@@ -4,7 +4,7 @@ from sqlalchemy import cast, func, or_
 from geoalchemy2 import Geography
 from sqlmodel import select
 
-from app.core.repository import Repository, GetRepository
+from app.core.repository import Repository, GetRepository, QueryOptions
 from sqlalchemy.orm import noload
 from app.core.models.users import ProviderProfile, User, UserLocation, DutyStatus, KYCStatus, ProviderAvailability
 from app.core.schemas.users import MinimalProviderResponse, UserLocationResponse
@@ -17,48 +17,25 @@ router = APIRouter(prefix="/providers", tags=["Providers"])
 @router.get("/{provider_id}", response_model=BaseAPIResponse[PublicUserResponse], status_code=status.HTTP_200_OK)
 async def get_public_provider_profile(
     provider_id: str,
-    provider_repo: Repository[ProviderProfile] = Depends(GetRepository(ProviderProfile)),
+    user_repo: Repository[User] = Depends(GetRepository(User)),
     availability_repo: Repository[ProviderAvailability] = Depends(GetRepository(ProviderAvailability))
 ):
     try:
-        statement = select(
-            User,
-            ProviderProfile,
-            UserLocation.latitude,
-            UserLocation.longitude,
-            UserLocation.address_line
-        ).join(
-            ProviderProfile, ProviderProfile.user_id == User.id
-        ).outerjoin(
-            UserLocation, User.id == UserLocation.user_id
-        ).where(
-            ProviderProfile.user_id == provider_id
-        ).options(
-            noload(User.provider_profile),
-            noload(User.customer_profile),
-            noload(User.payment_account),
-            noload(User.location),
-            noload(User.devices)
-        )
-
-        results = await provider_repo.execute(statement)
-        row = results.first()
-
-        if not row:
+        user = await user_repo.get(provider_id)
+        if not user or not user.provider_profile:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider profile not found")
 
-        user, profile, lat, lng, addr = row
+        profile = user.provider_profile
 
-        loc_data = None
-        if lat is not None or lng is not None or addr is not None:
+        if user.location:
+            loc_data = UserLocationResponse.model_validate(user.location)
+        else:
             loc_data = UserLocationResponse(
-                latitude=lat,
-                longitude=lng,
-                address_line=addr
+                user_id=user.id,
+                region_id=user.region_id
             )
         
-        availability_statement = select(ProviderAvailability).where(ProviderAvailability.provider_id == provider_id)
-        availabilities = (await availability_repo.execute(availability_statement)).all()
+        availabilities = await availability_repo.get_all(QueryOptions(filters={"provider_id": provider_id}))
         availability_data = [ProviderAvailabilityResponse.model_validate(a) for a in availabilities]
 
         provider_profile_data = PublicProviderProfileResponse.model_validate(profile)

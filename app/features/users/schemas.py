@@ -302,20 +302,26 @@ class LocationPing(BaseModel):
 
 
 class ProviderAvailabilityBlock(BaseModel):
-    day_of_week: DayOfWeek = Field(description="1=Sunday, 7=Saturday")
+    day_of_week: int = Field(ge=1, le=7, description="1=Sunday, 7=Saturday")
+    day_name: Optional[str] = Field(default=None, description="Name of day of week e.g. Sunday")
     start_time: time = Field(description="Start time (e.g., 07:00:00)")
     end_time: time = Field(description="End time (e.g., 18:00:00)")
     is_active: Optional[bool] = Field(default=True, description="Whether this availability block is active")
 
 
-class ProviderAvailabilityResponse(ProviderAvailabilityBlock):
+class ProviderAvailabilityResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: Optional[str] = None
     provider_id: Optional[str] = None
-    is_active: Optional[bool] = True
+    day_of_week: Optional[int] = Field(default=None, description="1=Sunday, 7=Saturday")
+    day_name: Optional[str] = Field(default=None, description="Name of day of week e.g. Sunday")
+    start_time: Optional[time] = Field(default=None, description="Start time (e.g., 07:00:00)")
+    end_time: Optional[time] = Field(default=None, description="End time (e.g., 18:00:00)")
+    is_active: Optional[bool] = Field(default=True, description="Whether this availability block is active")
 
 
 class UpdateProviderAvailabilityBlock(BaseModel):
+    day_of_week: Optional[int] = Field(default=None, ge=1, le=7, description="1=Sunday, 7=Saturday")
     start_time: Optional[time] = Field(default=None, description="Start time (e.g., 07:00:00)")
     end_time: Optional[time] = Field(default=None, description="End time (e.g., 18:00:00)")
     is_active: Optional[bool] = Field(default=None, description="Whether this availability block is active")

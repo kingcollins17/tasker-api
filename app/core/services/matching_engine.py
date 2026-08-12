@@ -32,7 +32,7 @@ _LOG_SOURCE = "core.MatchingEngine"
 
 @dataclass
 class _ScoredCandidate:
-    provider_id: str
+    user_id: str
     distance_km: float
     score: float
 
@@ -98,7 +98,8 @@ class MatchingEngine:
                 latitude=task_loc.latitude,
                 longitude=task_loc.longitude,
                 radius_km=10.0,
-                limit=2000
+                limit=2000,
+                service_id=task.service_id,
             )
         )
         print(f"DEBUG [_fetch_and_filter]: Spatial search returned {len(nearby_results)} nearby providers")
@@ -185,7 +186,7 @@ class MatchingEngine:
             )
             scored.append(
                 _ScoredCandidate(
-                    provider_id=user.id,
+                    user_id=user.id,
                     distance_km=dist_km,
                     score=round(score, 2),
                 )
@@ -210,13 +211,13 @@ class MatchingEngine:
         attempted_ids: Set[str] = {
             a.provider_id for a in existing_attempts if a.provider_id
         }
-        unattempted = [c for c in scored_candidates if c.provider_id not in attempted_ids]
+        unattempted = [c for c in scored_candidates if c.user_id not in attempted_ids]
 
         return unattempted[:batch_size]
 
     async def _send_batch_ping_notification(
         self,
-        provider_ids: List[str],
+        user_ids: List[str],
         task: Task,
         dispatch_session_id: str,
         offered_payout: float,
@@ -224,21 +225,27 @@ class MatchingEngine:
     ) -> None:
         """Sends a single notification to all candidate providers in the batch at once."""
         payout_fmt = f"₦{offered_payout:,.2f}" if offered_payout > 0 else "offered price"
+        if self.ping_duration >= 60 and self.ping_duration % 60 == 0:
+            mins = self.ping_duration // 60
+            time_str = f"{mins} minute" if mins == 1 else f"{mins} minutes"
+        else:
+            time_str = f"{self.ping_duration} seconds"
+
         await self.notification_service.notify(
-            recepients=provider_ids,
+            recepients=user_ids,
             title="New Task Offer",
             body=(
                 f"You have a new task offer '{task.title}' for {payout_fmt}. "
-                f"Tap to respond within 30 seconds!"
+                f"Tap to respond within {time_str}!"
             ),
             type=NotificationType.JOB_PING,
-            channels=["push", "in_app"],
+            channels=["PUSH", "IN_APP"],
             data={
                 "task_id": task.id,
                 "dispatch_session_id": dispatch_session_id,
                 "offered_payout": offered_payout,
                 "expires_at": expires_at,
-                "type": "job_ping",
+                "type": "JOB_PING",
             },
         )
 
@@ -254,11 +261,11 @@ class MatchingEngine:
             title="No Providers Available",
             body=f"We couldn't find an available provider for your task '{task.title}'. The task has been cancelled.",
             type=NotificationType.TASK_CANCELLED,
-            channels=["push", "in_app"],
+            channels=["PUSH", "IN_APP"],
             data={
                 "task_id": task.id,
                 "session_id": session_id,
-                "type": "task_cancelled",
+                "type": "TASK_CANCELLED",
                 "reason": "no_candidates_available",
             },
         )
@@ -279,7 +286,7 @@ class MatchingEngine:
         attempt = TaskDispatchAttempt(
             dispatch_session_id=dispatch_session_id,
             task_id=task.id,
-            provider_id=candidate.provider_id,
+            provider_id=candidate.user_id,
             sequence_order=sequence_order,
             match_score=candidate.score,
             offered_payout=offered_payout,
@@ -290,14 +297,12 @@ class MatchingEngine:
         await self.attempt_repo.add(attempt)
 
         # Set provider duty status to ON_DISPATCH
-        stmt_prof = select(ProviderProfile).where(
-            ProviderProfile.user_id == candidate.provider_id
+        stmt_update = (
+            update(ProviderProfile)
+            .where(ProviderProfile.user_id == candidate.user_id)
+            .values(duty_status=DutyStatus.ON_DISPATCH)
         )
-        res_prof = await self.provider_profile_repo.execute(stmt_prof)
-        profile: Optional[ProviderProfile] = res_prof.one_or_none()
-        if profile:
-            profile.duty_status = DutyStatus.ON_DISPATCH
-            await self.provider_profile_repo.add(profile)
+        await self.provider_profile_repo.execute(stmt_update)
 
         return attempt
 
@@ -306,13 +311,45 @@ class MatchingEngine:
         task: Task,
         dispatch_session: DispatchSession,
     ) -> bool:
-        """Handles exhausted candidate pool by expiring dispatch session and cancelling task."""
+        """Handles exhausted candidate pool by expiring dispatch session, resetting provider duty statuses, and cancelling task."""
         dispatch_session.status = DispatchSessionStatus.EXPIRED
         dispatch_session.updated_at = lagos_now()
         await self.session_repo.add(dispatch_session)
 
         task.status = TaskStatus.CANCELLED
+        task.cancellation_reason = "No available provider accepted the task offer."
         await self.task_repo.add(task)
+
+        # 1. Update any PENDING attempts for this task to TIMEOUT directly via SQL UPDATE query
+        stmt_update_attempts = (
+            update(TaskDispatchAttempt)
+            .where(
+                TaskDispatchAttempt.task_id == task.id,  # type: ignore
+                TaskDispatchAttempt.status == DispatchAttemptStatus.PENDING,  # type: ignore
+            )
+            .values(
+                status=DispatchAttemptStatus.TIMEOUT,
+                responded_at=lagos_now(),
+            )
+        )
+        await self.attempt_repo.execute(stmt_update_attempts)
+
+        # 2. Reset duty status of all pinged providers back to ONLINE_AVAILABLE via bulk update by user_id
+        stmt_attempts = select(TaskDispatchAttempt.provider_id).where(
+            TaskDispatchAttempt.task_id == task.id
+        )
+        res_attempts = await self.attempt_repo.execute(stmt_attempts)
+        user_ids = list(res_attempts.all())
+        if user_ids:
+            stmt_update_profiles = (
+                update(ProviderProfile)
+                .where(
+                    ProviderProfile.user_id.in_(user_ids),  # type: ignore
+                    ProviderProfile.duty_status == DutyStatus.ON_DISPATCH,  # type: ignore
+                )
+                .values(duty_status=DutyStatus.ONLINE_AVAILABLE)
+            )
+            await self.provider_profile_repo.execute(stmt_update_profiles)
 
         if task.customer_id:
             await self._send_cancellation_notification(
@@ -429,10 +466,10 @@ class MatchingEngine:
         batch_size = max(1, dispatch_session.batch_size or 1)
         print(f"DEBUG [MatchingEngine.run]: Calling _get_next_batch with batch_size={batch_size}")
         batch = await self._get_next_batch(scored_candidates, task.id, batch_size)
-        print(f"DEBUG [MatchingEngine.run]: _get_next_batch returned {len(batch)} candidates for batch: {[c.provider_id for c in batch]}")
+        print(f"DEBUG [MatchingEngine.run]: _get_next_batch returned {len(batch)} candidates for batch: {[c.user_id for c in batch]}")
 
         candidate_summary = [
-            {"provider_id": c.provider_id, "score": c.score, "distance_km": c.distance_km}
+            {"user_id": c.user_id, "score": c.score, "distance_km": c.distance_km}
             for c in batch
         ]
         await self.system_logger.info(
@@ -469,7 +506,7 @@ class MatchingEngine:
 
         attempts: List[TaskDispatchAttempt] = []
         for idx, candidate in enumerate(batch):
-            print(f"DEBUG [MatchingEngine.run]: Calling _dispatch_to_candidate for candidate {idx+1}/{len(batch)} (provider_id={candidate.provider_id})")
+            print(f"DEBUG [MatchingEngine.run]: Calling _dispatch_to_candidate for candidate {idx+1}/{len(batch)} (user_id={candidate.user_id})")
             attempt = await self._dispatch_to_candidate(
                 candidate=candidate,
                 task=task,
@@ -480,12 +517,12 @@ class MatchingEngine:
             attempts.append(attempt)
             print(f"DEBUG [MatchingEngine.run]: _dispatch_to_candidate returned attempt_id={attempt.id}")
             await self.system_logger.info(
-                f"MatchingEngine: Dispatched ping attempt {attempt.id} to provider {candidate.provider_id} (score={candidate.score:.2f})",
+                f"MatchingEngine: Dispatched ping attempt {attempt.id} to provider {candidate.user_id} (score={candidate.score:.2f})",
                 source=_LOG_SOURCE,
                 metadata={
                     "attempt_id": attempt.id,
                     "task_id": task.id,
-                    "provider_id": candidate.provider_id,
+                    "user_id": candidate.user_id,
                     "score": candidate.score,
                     "expires_at": attempt.expires_at.isoformat() if attempt.expires_at else None,
                 },
@@ -493,11 +530,11 @@ class MatchingEngine:
 
         # Send a single notification to all candidates in the batch at once
         # instead of one notification per candidate.
-        provider_ids = [c.provider_id for c in batch]
+        user_ids = [c.user_id for c in batch]
         offered_payout = task.provider_payout or 0.0
         last_expires_at = attempts[-1].expires_at.isoformat() if attempts and attempts[-1].expires_at else None
         await self._send_batch_ping_notification(
-            provider_ids=provider_ids,
+            user_ids=user_ids,
             task=task,
             dispatch_session_id=dispatch_session.id,
             offered_payout=offered_payout,

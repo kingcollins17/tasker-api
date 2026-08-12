@@ -193,7 +193,7 @@ async def _handle_provider_response_async(
                             title="Task Accepted!",
                             body=f"{provider_name} has accepted your task '{task.title}'.",
                             type=NotificationType.TASK_ACCEPTED,
-                            channels=["push", "in_app"],
+                            channels=["PUSH", "IN_APP"],
                             data={
                                 "task_id": task.id,
                                 "assignment_id": assignment.id,

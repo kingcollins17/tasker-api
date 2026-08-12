@@ -93,7 +93,7 @@ CreateNotification(
     title="Payment Requested for Task",
     body=f"Your task '{task.title}' is completed. Tap to pay ₦{task.customer_total_price:,.2f}.",
     recipient_ids=[task.customer_id],
-    channels=["in_app", "push", "email"],
+    channels=["IN_APP", "PUSH", "EMAIL"],
     data={
         "task_id": task.id,
         "payment_url": checkout_url,

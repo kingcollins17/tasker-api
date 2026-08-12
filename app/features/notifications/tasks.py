@@ -203,7 +203,7 @@ class NotificationPipeline:
                         cache = get_cache_service()
                         notification_payload = {
                             "notification_id": notification.id,
-                            "type": notification.type.value if notification.type else "system_alert",
+                            "type": notification.type.value if notification.type else "SYSTEM_ALERT",
                             "title": notification.title,
                             "body": notification.body,
                             "data": notification.data,

@@ -149,7 +149,7 @@ async def _process_task_payment_async(
                         title="Payment Requested for Completed Task",
                         body=f"Your task '{task.title}' is completed. Tap to pay {amt_fmt} online.",
                         type=NotificationType.TASK_ACCEPTED,
-                        channels=["in_app", "push", "email"],
+                        channels=["IN_APP", "PUSH", "EMAIL"],
                         data={
                             "task_id": task.id,
                             "payment_url": purl,

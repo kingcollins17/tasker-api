@@ -208,13 +208,13 @@ class DispatchEventService:
                 title="Provider Matched!",
                 body=f"Great news! A provider has accepted your task '{task.title}'.",
                 type=NotificationType.TASK_ACCEPTED,
-                channels=["push", "in_app"],
+                channels=["PUSH", "IN_APP"],
                 data={
                     "task_id": task.id,
                     "task_title": task.title,
                     "provider_id": provider_id,
                     "status": TaskStatus.ASSIGNED.value,
-                    "type": "provider_matched",
+                    "type": NotificationType.TASK_ACCEPTED.value,
                 },
             )
             await self.system_logger.info(

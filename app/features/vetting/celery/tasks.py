@@ -94,7 +94,7 @@ async def _sync_provider_tier_async(user_id: str):
                         title="Tier Promotion! 🎉",
                         body=f"Congratulations! You've been promoted to {rules['tier_name']} status.",
                         type=NotificationType.SYSTEM_ALERT,
-                        channels=["in_app", "push"],
+                        channels=["IN_APP", "PUSH"],
                         data={
                             "type": "tier_promotion",
                             "new_tier": next_tier,

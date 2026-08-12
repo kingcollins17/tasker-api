@@ -12,6 +12,17 @@ from app.core.repository import Repository, GetRepository
 from app.core.models.users import User, UserLocation, ProviderAvailability, DayOfWeek
 
 
+DAY_NAMES = {
+    1: "Sunday",
+    2: "Monday",
+    3: "Tuesday",
+    4: "Wednesday",
+    5: "Thursday",
+    6: "Friday",
+    7: "Saturday"
+}
+
+
 class AvailabilityService:
     def __init__(self, availability_repo: Repository[ProviderAvailability], user_location_repo: Repository[UserLocation]):
         self.availability_repo = availability_repo
@@ -23,7 +34,7 @@ class AvailabilityService:
         whose configured availability blocks cover the local equivalent of target_utc.
         """
         # PostgreSQL timezone function usage: timezone(zone, timestamp)
-        # EXTRACT(DOW) returns 0=Sunday, 6=Saturday. We add 1 to match DayOfWeek Enum (1=Sunday, 7=Saturday).
+        # EXTRACT(DOW) returns 0=Sunday, 6=Saturday. We add 1 to match (1=Sunday, 7=Saturday).
         local_ts = func.timezone(UserLocation.timezone, target_utc)
         
         return exists(
@@ -34,9 +45,7 @@ class AvailabilityService:
             .where(
                 ProviderAvailability.provider_id == User.id,
                 ProviderAvailability.is_active == True,
-                # PostgreSQL custom ENUM types cannot be cast directly to INTEGER.
-                # We must cast ENUM -> TEXT -> INTEGER to compare with EXTRACT(DOW) result.
-                cast(cast(ProviderAvailability.day_of_week, String), Integer) == cast(func.extract('DOW', local_ts), Integer) + 1,
+                ProviderAvailability.day_of_week == cast(func.extract('DOW', local_ts), Integer) + 1,
                 ProviderAvailability.start_time <= cast(local_ts, Time),
                 ProviderAvailability.end_time >= cast(local_ts, Time)
             )
@@ -55,7 +64,7 @@ class AvailabilityService:
         tz = zoneinfo.ZoneInfo(tz_str)
         local_dt = target_utc.astimezone(tz)
         
-        # Map python weekday (0=Mon, 6=Sun) to DayOfWeek (1=Sun, 2=Mon... 7=Sat)
+        # Map python weekday (0=Mon, 6=Sun) to (1=Sun, 2=Mon... 7=Sat)
         day_val = (local_dt.weekday() + 1) % 7 + 1
         target_time = local_dt.time()
         
@@ -79,17 +88,26 @@ class AvailabilityService:
         self,
         availability_id: str,
         provider_id: str,
+        day_of_week: Optional[int] = None,
         start_time: Optional[time] = None,
         end_time: Optional[time] = None,
         is_active: Optional[bool] = None,
     ) -> ProviderAvailability:
-        """Update a specific availability block for a provider (start_time, end_time, is_active)."""
+        """Update a specific availability block for a provider (day_of_week, start_time, end_time, is_active)."""
         block = await self.availability_repo.get(availability_id)
         if not block or block.provider_id != provider_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Availability block not found.",
             )
+        if day_of_week is not None:
+            if day_of_week < 1 or day_of_week > 7:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="day_of_week must be between 1 (Sunday) and 7 (Saturday).",
+                )
+            block.day_of_week = day_of_week
+            block.day_name = DAY_NAMES.get(day_of_week, "")
         if start_time is not None:
             block.start_time = start_time
         if end_time is not None:
@@ -105,10 +123,11 @@ class AvailabilityService:
             return existing
 
         created = []
-        for day in DayOfWeek:
+        for day in range(1, 8):
             block = ProviderAvailability(
                 provider_id=provider_id,
                 day_of_week=day,
+                day_name=DAY_NAMES[day],
                 start_time=time(6, 0, 0),
                 end_time=time(23, 59, 0),
                 is_active=True,
