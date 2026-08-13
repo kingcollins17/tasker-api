@@ -17,7 +17,7 @@ class LoggerService:
         source: Optional[str] = None,
         duration_ms: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> SystemLog:
+    ) -> Optional[SystemLog]:
         log_entry = SystemLog(
             level=level,
             message=message,
@@ -25,7 +25,21 @@ class LoggerService:
             duration_ms=duration_ms,
             metadata_=metadata,
         )
-        return await self.repository.add(log_entry)
+        try:
+            return await self.repository.add(log_entry)
+        except Exception as log_exc:
+            # Logger should never crash the application — fallback to stderr
+            import sys
+            print(
+                f"[LoggerService] Failed to persist log ({level.value}): {message} | "
+                f"source={source} | error={log_exc}",
+                file=sys.stderr,
+            )
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
+            return None
 
     async def info(self, message: str, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> SystemLog:
         return await self._log(LogLevel.INFO, message, source, metadata=metadata)

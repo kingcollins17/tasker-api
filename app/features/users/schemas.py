@@ -288,6 +288,11 @@ class AttachProviderService(BaseModel):
     service_id: str = Field(..., description="The ID of the service to add")
 
 
+class BulkProviderServices(BaseModel):
+    service_ids: List[str] = Field(..., description="List of service IDs to attach or remove")
+
+
+
 class UpdateRegion(BaseModel):
     region_id: Optional[str] = Field(None, description="The ID of the region to associate with the user")
 

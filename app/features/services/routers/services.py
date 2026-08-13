@@ -34,8 +34,8 @@ async def get_top_categories(
     """Retrieve the top categories with the highest number of tasks."""
     try:
         statement = (
-            select(Task.category_id, func.count(Task.id).label("task_count"))
-            .where(Task.category_id.is_not(None))
+            select(Task.category_id, func.count(col(Task.id)).label("task_count"))
+            .where(col(Task.category_id).is_not(None))
             .group_by(Task.category_id)
             .order_by(desc("task_count"))
             .limit(limit)
@@ -53,7 +53,7 @@ async def get_top_categories(
                 status_code=status.HTTP_200_OK,
             )
             
-        category_statement = select(ServiceCategory).where(ServiceCategory.id.in_(category_ids))
+        category_statement = select(ServiceCategory).where(col(ServiceCategory.id).in_(category_ids))
         categories_result = await category_repo.execute(category_statement)
         categories = categories_result.all()
         
@@ -88,8 +88,8 @@ async def get_top_services(
     """Retrieve the top services with the highest number of tasks."""
     try:
         statement = (
-            select(Task.service_id, func.count(Task.id).label("task_count"))
-            .where(Task.service_id.is_not(None))
+            select(Task.service_id, func.count(col(Task.id)).label("task_count"))
+            .where(col(Task.service_id).is_not(None))
             .group_by(Task.service_id)
             .order_by(desc("task_count"))
             .limit(limit)
@@ -109,7 +109,7 @@ async def get_top_services(
             
         service_statement = (
             select(Service)
-            .where(Service.id.in_(service_ids))
+            .where(col(Service.id).in_(service_ids))
             .options(selectinload(Service.category))  # type: ignore
         )
         services_result = await service_repo.execute(service_statement)

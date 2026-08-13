@@ -36,10 +36,16 @@ async def register(
             status_code=status.HTTP_201_CREATED
         )
     except HTTPException as e:
-        await system_logger.warn(f"User registration failed: {schema.email}", source="auth.register", metadata={"detail": str(e.detail)})
+        try:
+            await system_logger.warn(f"User registration failed: {schema.email}", source="auth.register", metadata={"detail": str(e.detail)})
+        except Exception:
+            pass
         raise e
     except Exception as e:
-        await system_logger.error(f"Unexpected error during registration: {str(e)}", source="auth.register", metadata={"email": schema.email})
+        try:
+            await system_logger.error(f"Unexpected error during registration: {str(e)}", source="auth.register", metadata={"email": schema.email})
+        except Exception:
+            pass
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         AppErrorHandler.handleError(e)
         raise HTTPException(
@@ -69,10 +75,16 @@ async def login(
             user=UserResponse.model_validate(login_data["user"])
         )
     except HTTPException as e:
-        await system_logger.warn(f"Failed login attempt: {form_data.username}", source="auth.login", metadata={"detail": str(e.detail)})
+        try:
+            await system_logger.warn(f"Failed login attempt: {form_data.username}", source="auth.login", metadata={"detail": str(e.detail)})
+        except Exception:
+            pass
         raise e
     except Exception as e:
-        await system_logger.error(f"Unexpected error during login: {str(e)}", source="auth.login", metadata={"username": form_data.username})
+        try:
+            await system_logger.error(f"Unexpected error during login: {str(e)}", source="auth.login", metadata={"username": form_data.username})
+        except Exception:
+            pass
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

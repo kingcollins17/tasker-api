@@ -31,7 +31,7 @@ async def request_email_otp(
         await system_logger.metric('request_email_otp', timer.stop(), source='otp.request_email_otp')
         return BaseAPIResponse[None](
             detail="Verification code sent to your email.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('request_email_otp failed', source='otp.request_email_otp', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -61,7 +61,7 @@ async def verify_email(
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(user),
             detail="Email verified successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('verify_email failed', source='otp.verify_email', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -90,7 +90,7 @@ async def request_phone_otp(
         await system_logger.metric('request_phone_otp', timer.stop(), source='otp.request_phone_otp')
         return BaseAPIResponse[None](
             detail="Verification code sent to your phone number.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('request_phone_otp failed', source='otp.request_phone_otp', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -120,7 +120,7 @@ async def verify_phone(
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(user),
             detail="Phone number verified successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('verify_phone failed', source='otp.verify_phone', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -150,7 +150,7 @@ async def verify_otp(
         return BaseAPIResponse[bool](
             data=True,
             detail="OTP verified successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('verify_otp failed', source='otp.verify_otp', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})

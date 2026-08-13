@@ -45,7 +45,7 @@ async def submit_kyc_selfie(
         return BaseAPIResponse[ProviderProfileResponse](
             data=ProviderProfileResponse.model_validate(profile),
             detail="KYC selfie submitted successfully.",
-            statusCode=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         await system_logger.warn('submit_kyc_selfie failed', source='kyc.submit_kyc_selfie', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -98,7 +98,7 @@ async def submit_kyc_document(
         return BaseAPIResponse[ProviderProfileResponse](
             data=ProviderProfileResponse.model_validate(profile),
             detail="KYC document submitted successfully.",
-            statusCode=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         await system_logger.warn('submit_kyc_document failed', source='kyc.submit_kyc_document', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -136,7 +136,7 @@ async def get_kyc_status(
         return BaseAPIResponse[ProviderProfileResponse](
             data=current_user.provider_profile,
             detail="KYC details retrieved successfully.",
-            statusCode=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         await system_logger.warn('get_kyc_status failed', source='kyc.get_kyc_status', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})

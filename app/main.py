@@ -20,7 +20,7 @@ from app.features.tasks.router import router as tasks_router
 from app.features.payments.routers import router as payments_router
 from app.features.reviews.router import router as reviews_router
 from app.features.system.router import router as system_router
-from app.features.vetting.router.vetting import router as vetting_router
+from app.features.vetting.router import router as vetting_router
 
 # Global variable to hold the celery worker process reference
 celery_process = None
@@ -107,7 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(payments_router, prefix=f"{API_V1_PREFIX}")
     app.include_router(reviews_router, prefix=f"{API_V1_PREFIX}", tags=["Reviews & Credibility"])
     app.include_router(system_router, prefix=f"{API_V1_PREFIX}/system", tags=["System"])
-    app.include_router(vetting_router, prefix=f"{API_V1_PREFIX}/vetting", tags=["Vetting"])
+    app.include_router(vetting_router, prefix=f"{API_V1_PREFIX}/vetting")
 
     @app.get("/")
     async def read_root():

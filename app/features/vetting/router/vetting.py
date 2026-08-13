@@ -19,7 +19,7 @@ from app.features.vetting.schemas import (
 )
 from app.features.vetting.services import VettingService, get_vetting_service
 
-router = APIRouter()
+router = APIRouter(tags=["Vetting"])
 
 @router.get(
     "/quiz/{category_id}",
@@ -58,7 +58,7 @@ async def get_quiz_questions(
         return BaseAPIResponse[List[QuizQuestionResponse]](
             data=response_data,
             detail="Quiz questions retrieved successfully.",
-            statusCode=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
     except Exception as e:
         AppErrorHandler.handleError(e)
@@ -97,7 +97,7 @@ async def submit_quiz_answers(
                 passed=(result.status.value == "passed")
             ),
             detail="Quiz submitted and graded successfully.",
-            statusCode=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         raise e
@@ -135,7 +135,7 @@ async def upload_portfolio(
                 status=media.status.value
             ),
             detail="Portfolio media uploaded successfully.",
-            statusCode=status.HTTP_201_CREATED,
+            status_code=status.HTTP_201_CREATED,
         )
     except Exception as e:
         AppErrorHandler.handleError(e)
@@ -170,7 +170,7 @@ async def add_guarantor(
                 message="Guarantor added successfully. Awaiting attestation."
             ),
             detail="Guarantor added successfully.",
-            statusCode=status.HTTP_201_CREATED,
+            status_code=status.HTTP_201_CREATED,
         )
     except Exception as e:
         AppErrorHandler.handleError(e)

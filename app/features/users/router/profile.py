@@ -4,7 +4,7 @@ import inspect
 from fastapi import HTTPException
 from fastapi import APIRouter, Depends, status, Response
 from app.core.error_handler import AppErrorHandler
-from sqlmodel import select
+from sqlmodel import select, delete, col
 from app.core.api_response import BaseAPIResponse
 from app.core.deps import GetCurrentUser
 from app.core.models.users import UserType, User
@@ -18,6 +18,7 @@ from app.features.users.schemas import (
     UpdateLocation,
     UpdateCloudMessagingToken,
     AttachProviderService,
+    BulkProviderServices,
     ServiceResponse,
     UpdateRegion,
     UpdateOnlineStatus,
@@ -72,7 +73,7 @@ async def get_me(
         return BaseAPIResponse[UserResponse](
             data=current_user,
             detail="User profile retrieved successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('get_me failed', source='profile.get_me', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -110,7 +111,7 @@ async def update_profile(
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(updated_user),
             detail="Provider profile updated successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('update_profile failed', source='profile.update_profile', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -147,7 +148,7 @@ async def update_seeker_profile(
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(updated_user),
             detail="Seeker profile updated successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('update_seeker_profile failed', source='profile.update_seeker_profile', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -184,7 +185,7 @@ async def update_location(
         await system_logger.metric('update_location', timer.stop(), source='profile.update_location')
         return BaseAPIResponse[None](
             detail="Location updated successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('update_location failed', source='profile.update_location', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -214,7 +215,7 @@ async def update_cloud_messaging_token(
         await system_logger.metric('update_cloud_messaging_token', timer.stop(), source='profile.update_cloud_messaging_token')
         return BaseAPIResponse[None](
             detail="Cloud messaging token updated successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('update_cloud_messaging_token failed', source='profile.update_cloud_messaging_token', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -248,13 +249,140 @@ async def attach_provider_service(
         await system_logger.metric('attach_provider_service', timer.stop(), source='profile.attach_provider_service')
         return BaseAPIResponse[None](
             detail="Service successfully added.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('attach_provider_service failed', source='profile.attach_provider_service', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
         raise e
     except Exception as e:
         await system_logger.error(f'attach_provider_service error: {str(e)}', source='profile.attach_provider_service')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
+        )
+
+
+@router.post("/provider/services/bulk", response_model=BaseAPIResponse[None], status_code=status.HTTP_200_OK)
+async def bulk_attach_provider_services(
+    schema: BulkProviderServices,
+    response: Response,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(required_type=UserType.PROVIDER)),
+    service_repo: Repository[Service] = Depends(GetRepository(Service)),
+    link_repo: Repository[ProviderServiceLink] = Depends(GetRepository(ProviderServiceLink)),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """Bulk add services to the authenticated provider's account. Max 3 services allowed in total."""
+    try:
+        timer = Timer()
+        timer.start()
+
+        if not schema.service_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No service IDs provided."
+            )
+
+        requested_ids = list(set(schema.service_ids))
+
+        # Check if all requested services exist and are active
+        service_stmt = select(Service).where(col(Service.id).in_(requested_ids))
+        service_result = await service_repo.execute(service_stmt)
+        found_services = list(service_result.all())
+        found_ids = {s.id for s in found_services}
+
+        missing_ids = set(requested_ids) - found_ids
+        if missing_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Service(s) not found: {', '.join(sorted(missing_ids))}"
+            )
+
+        inactive_services = [s for s in found_services if not s.is_active]
+        if inactive_services:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot add inactive service(s): {', '.join(sorted([s.id for s in inactive_services]))}"
+            )
+
+        # Fetch existing links for provider
+        link_stmt = select(ProviderServiceLink).where(
+            ProviderServiceLink.provider_id == current_user.id
+        )
+        link_result = await link_repo.execute(link_stmt)
+        existing_links = list(link_result.all())
+        existing_service_ids = {link.service_id for link in existing_links}
+
+        new_service_ids = [sid for sid in requested_ids if sid not in existing_service_ids]
+
+        if len(existing_service_ids) + len(new_service_ids) > 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A provider can have a maximum of 3 services."
+            )
+
+        if new_service_ids:
+            new_links = [
+                ProviderServiceLink(provider_id=current_user.id, service_id=sid)
+                for sid in new_service_ids
+            ]
+            await link_repo.bulk_add(new_links)
+
+        await system_logger.metric('bulk_attach_provider_services', timer.stop(), source='profile.bulk_attach_provider_services')
+        return BaseAPIResponse[None](
+            detail="Services successfully added.",
+            status_code=status.HTTP_200_OK
+        )
+    except HTTPException as e:
+        await system_logger.warn('bulk_attach_provider_services failed', source='profile.bulk_attach_provider_services', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
+    except Exception as e:
+        await system_logger.error(f'bulk_attach_provider_services error: {str(e)}', source='profile.bulk_attach_provider_services')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
+        )
+
+
+@router.delete("/provider/services/bulk", response_model=BaseAPIResponse[None], status_code=status.HTTP_200_OK)
+async def bulk_remove_provider_services(
+    schema: BulkProviderServices,
+    response: Response,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(required_type=UserType.PROVIDER)),
+    link_repo: Repository[ProviderServiceLink] = Depends(GetRepository(ProviderServiceLink)),
+    system_logger: LoggerService = Depends(get_logger_service)
+):
+    """Bulk remove services from the authenticated provider's account."""
+    try:
+        timer = Timer()
+        timer.start()
+
+        if not schema.service_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No service IDs provided."
+            )
+
+        delete_stmt = delete(ProviderServiceLink).where(
+            col(ProviderServiceLink.provider_id) == current_user.id,
+            col(ProviderServiceLink.service_id).in_(schema.service_ids)
+        )
+        await link_repo.execute(delete_stmt)
+        await link_repo.commit()
+
+        await system_logger.metric('bulk_remove_provider_services', timer.stop(), source='profile.bulk_remove_provider_services')
+        return BaseAPIResponse[None](
+            detail="Services successfully removed.",
+            status_code=status.HTTP_200_OK
+        )
+    except HTTPException as e:
+        await system_logger.warn('bulk_remove_provider_services failed', source='profile.bulk_remove_provider_services', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise e
+    except Exception as e:
+        await system_logger.error(f'bulk_remove_provider_services error: {str(e)}', source='profile.bulk_remove_provider_services')
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -282,7 +410,7 @@ async def remove_provider_service(
         await system_logger.metric('remove_provider_service', timer.stop(), source='profile.remove_provider_service')
         return BaseAPIResponse[None](
             detail="Service successfully removed.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('remove_provider_service failed', source='profile.remove_provider_service', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -316,7 +444,7 @@ async def update_region(
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(updated_user),
             detail="Region updated successfully.",
-            statusCode=status.HTTP_200_OK
+            status_code=status.HTTP_200_OK
         )
     except HTTPException as e:
         await system_logger.warn('update_region failed', source='profile.update_region', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -349,7 +477,7 @@ async def update_online_status(
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(updated_user),
             detail=f"Provider online status set to {schema.is_online}.",
-            statusCode=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         await system_logger.warn('update_online_status failed', source='profile.update_online_status', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -382,7 +510,7 @@ async def ping_location(
         await system_logger.metric('ping_location', timer.stop(), source='profile.ping_location')
         return BaseAPIResponse[None](
             detail="Provider location ping received.",
-            statusCode=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         await system_logger.warn('ping_location failed', source='profile.ping_location', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -411,7 +539,7 @@ async def get_provider_availability(
         return BaseAPIResponse[List[ProviderAvailabilityResponse]](
             data=[ProviderAvailabilityResponse.model_validate(b) for b in blocks],
             detail="Availability fetched successfully.",
-            statusCode=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         await system_logger.warn('get_availability failed', source='profile.get_availability', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -448,7 +576,7 @@ async def update_provider_availability(
         return BaseAPIResponse[ProviderAvailabilityResponse](
             data=ProviderAvailabilityResponse.model_validate(block),
             detail="Availability block updated successfully.",
-            statusCode=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         await system_logger.warn('update_availability failed', source='profile.update_availability', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
@@ -477,7 +605,7 @@ async def create_default_provider_availability(
         return BaseAPIResponse[List[ProviderAvailabilityResponse]](
             data=[ProviderAvailabilityResponse.model_validate(b) for b in blocks],
             detail="Default availability blocks created successfully.",
-            statusCode=status.HTTP_201_CREATED,
+            status_code=status.HTTP_201_CREATED,
         )
     except HTTPException as e:
         await system_logger.warn('create_default_availability failed', source='profile.create_default_availability', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})

@@ -122,6 +122,11 @@ class Repository(Generic[T]):
         """Execute a custom SQLModel/SQLAlchemy statement directly through the repository session."""
         return await self.session.exec(statement)
 
+    async def commit(self) -> None:
+        """Commit current transaction on the session."""
+        await self.session.commit()
+
+
 
 class GetRepository(Generic[T]):
     """FastAPI class dependency for obtaining a Repository instance for a specific model."""
