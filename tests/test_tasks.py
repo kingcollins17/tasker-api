@@ -1,11 +1,12 @@
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 from fastapi import status
 
 from app.main import app
 from app.core.models.tasks import (
+    DispatchAttemptStatus,
     Task,
     TaskLocation,
     TaskDispatchAttempt,
@@ -343,6 +344,80 @@ async def test_get_my_assignments_attaches_minimal_task():
     assert item.task.id == "task-100"
     assert item.task.title == "Plumbing Job"
     assert item.task.status == TaskStatus.ASSIGNED
+
+
+@pytest.mark.asyncio
+async def test_get_current_assignment_returns_latest_active_assignment_for_provider():
+    from app.features.tasks.router.assignments import get_current_assignment
+    from app.core.models.tasks import TaskAssignment, Task, TaskStatus, TaskAssignmentStatus
+
+    mock_assignment_repo = AsyncMock()
+    mock_user_repo = AsyncMock()
+    mock_logger = AsyncMock()
+
+    task_inst = Task(
+        id="task-100",
+        title="Plumbing Job",
+        description="Fix pipe leak",
+        status=TaskStatus.ASSIGNED,
+    )
+    assignment_inst = TaskAssignment(
+        id="assign-1",
+        task_id="task-100",
+        provider_id="provider-1",
+        status=TaskAssignmentStatus.ASSIGNED,
+    )
+
+    mock_exec_res = MagicMock()
+    mock_exec_res.first.return_value = (assignment_inst, task_inst)
+    mock_assignment_repo.execute.return_value = mock_exec_res
+
+    resp = await get_current_assignment(
+        current_user=MOCK_PROVIDER,
+        assignment_repo=mock_assignment_repo,
+        user_repo=mock_user_repo,
+        system_logger=mock_logger,
+    )
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.data.id == "assign-1"
+    assert resp.data.task is not None
+    assert resp.data.task.id == "task-100"
+    assert resp.data.task.title == "Plumbing Job"
+
+
+@pytest.mark.asyncio
+async def test_get_current_dispatch_returns_latest_unexpired_pending_for_provider():
+    from app.features.tasks.router.assignments import get_current_dispatch
+    from app.core.models.tasks import TaskDispatchAttempt, DispatchAttemptStatus
+
+    mock_attempt_repo = AsyncMock()
+    mock_logger = AsyncMock()
+
+    now = datetime.now(timezone.utc)
+    attempt_inst = TaskDispatchAttempt(
+        id="dispatch-1",
+        task_id="task-100",
+        provider_id="provider-1",
+        status=DispatchAttemptStatus.PENDING,
+        pinged_at=now - timedelta(minutes=1),
+        expires_at=now + timedelta(minutes=5),
+    )
+
+    mock_exec_res = MagicMock()
+    mock_exec_res.first.return_value = (attempt_inst, None)
+    mock_attempt_repo.execute.return_value = mock_exec_res
+
+    resp = await get_current_dispatch(
+        current_user=MOCK_PROVIDER,
+        attempt_repo=mock_attempt_repo,
+        system_logger=mock_logger,
+    )
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.data.id == "dispatch-1"
+    assert resp.data.task_id == "task-100"
+    assert resp.data.status == DispatchAttemptStatus.PENDING
 
 
 @pytest.mark.asyncio

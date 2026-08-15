@@ -4,8 +4,8 @@ from app.core.models.users import KYCStatus
 from fastapi import APIRouter, Depends, status, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
-from sqlmodel import select, func
-from sqlalchemy import desc
+from sqlmodel import select, func, col
+from sqlalchemy import desc, or_
 
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.deps import GetCurrentUser
@@ -71,7 +71,7 @@ async def get_my_assignments(
     task_id: Optional[str] = Query(None),
     sort_by: str = Query("assigned_at"),
     sort_desc: bool = Query(True),
-    current_user: UserResponse = Depends(GetCurrentUser()),
+    current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
     assignment_repo: Repository[TaskAssignment] = Depends(
         GetRepository(TaskAssignment)
     ),
@@ -85,16 +85,11 @@ async def get_my_assignments(
             # pyrefly: ignore [bad-argument-type]
             Task,
             # pyrefly: ignore [bad-argument-type]
-            TaskAssignment.task_id == Task.id,
+            col(TaskAssignment.task_id) == Task.id,
         )
 
-        if current_user.type == UserType.PROVIDER:
-            query = query.where(TaskAssignment.provider_id == current_user.id)
-        elif current_user.type == UserType.CUSTOMER:
-            query = query.where(Task.customer_id == current_user.id)
-        else:
-            # Return empty if user is not matching expected roles
-            query = query.where(TaskAssignment.id == "0")
+        query = query.where(TaskAssignment.provider_id == current_user.id)
+        
 
         if status_filter:
             query = query.where(TaskAssignment.status == status_filter)
@@ -103,25 +98,25 @@ async def get_my_assignments(
 
         # Counting records
         # pyrefly: ignore [bad-argument-type]
-        count_query = select(func.count(TaskAssignment.id)).join(
+        count_query = select(func.count(col(TaskAssignment.id))).join(
             # pyrefly: ignore [bad-argument-type]
             Task,
             # pyrefly: ignore [bad-argument-type]
-            TaskAssignment.task_id == Task.id,
+            col(TaskAssignment.task_id) == Task.id,
         )
         if current_user.type == UserType.PROVIDER:
             count_query = count_query.where(
-                TaskAssignment.provider_id == current_user.id
+                col(TaskAssignment.provider_id) == current_user.id
             )
         elif current_user.type == UserType.CUSTOMER:
-            count_query = count_query.where(Task.customer_id == current_user.id)
+            count_query = count_query.where(col(Task.customer_id) == current_user.id)
         else:
-            count_query = count_query.where(TaskAssignment.id == "0")
+            count_query = count_query.where(col(TaskAssignment.id) == "0")
 
         if status_filter:
-            count_query = count_query.where(TaskAssignment.status == status_filter)
+            count_query = count_query.where(col(TaskAssignment.status) == status_filter)
         if task_id:
-            count_query = count_query.where(TaskAssignment.task_id == task_id)
+            count_query = count_query.where(col(TaskAssignment.task_id) == task_id)
 
         total = (await assignment_repo.execute(count_query)).one()
 
@@ -171,6 +166,82 @@ async def get_my_assignments(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while retrieving assignments.",
+        )
+
+
+@router.get(
+    "/assignments/current",
+    response_model=BaseAPIResponse[TaskAssignmentWithTaskResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_current_assignment(
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.PROVIDER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    assignment_repo: Repository[TaskAssignment] = Depends(
+        GetRepository(TaskAssignment)
+    ),
+    user_repo: Repository[User] = Depends(GetRepository(User)),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Retrieve the provider's most recent active assignment."""
+    try:
+        timer = Timer()
+        timer.start()
+
+        stmt = (
+            select(TaskAssignment, Task)
+            .join(
+                Task,
+                col(TaskAssignment.task_id) == Task.id,
+            )
+            .where(
+                col(TaskAssignment.provider_id) == current_user.id,
+                col(TaskAssignment.status).in_(
+                    [
+                        TaskAssignmentStatus.ASSIGNED,
+                        TaskAssignmentStatus.IN_PROGRESS,
+                    ]
+                ),
+            )
+            .order_by(desc(col(TaskAssignment.assigned_at)))
+            .limit(1)
+        )
+
+        row = (await assignment_repo.execute(stmt)).first()
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No active assignment found for this provider.",
+            )
+
+        assignment_model, task_model = row
+        assignment_data = TaskAssignmentWithTaskResponse.model_validate(assignment_model)
+        assignment_data.task = TaskMinimalResponse.model_validate(task_model)
+
+        provider_user = await user_repo.get(assignment_model.provider_id)
+        if provider_user:
+            assignment_data.provider = MinimalProviderResponse.from_user(provider_user)
+
+        await system_logger.metric('get_current_assignment', timer.stop(), source='assignments.get_current_assignment')
+        return BaseAPIResponse[TaskAssignmentWithTaskResponse](
+            data=assignment_data,
+            detail="Current assignment retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn('get_current_assignment failed', source='assignments.get_current_assignment', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise
+    except Exception as e:
+        await system_logger.error(f'get_current_assignment error: {str(e)}', source='assignments.get_current_assignment')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving the current assignment.",
         )
 
 
@@ -246,6 +317,77 @@ async def get_task_assignment(
 
 
 @router.get(
+    "/dispatches/current",
+    response_model=BaseAPIResponse[TaskDispatchAttemptResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_current_dispatch(
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.PROVIDER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    attempt_repo: Repository[TaskDispatchAttempt] = Depends(
+        GetRepository(TaskDispatchAttempt)
+    ),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Retrieve the provider's latest unexpired pending dispatch attempt."""
+    try:
+        timer = Timer()
+        timer.start()
+
+        now = lagos_now()
+        stmt = (
+            select(TaskDispatchAttempt, User)
+            .join(User, col(TaskDispatchAttempt.provider_id) == col(User.id), isouter=True)
+            .where(
+                col(TaskDispatchAttempt.provider_id) == current_user.id,
+                col(TaskDispatchAttempt.status) == DispatchAttemptStatus.PENDING,
+                or_(
+                    col(TaskDispatchAttempt.expires_at).is_(None),
+                    col(TaskDispatchAttempt.expires_at) > now,
+                ),
+            )
+            .order_by(desc(col(TaskDispatchAttempt.pinged_at)))
+            .limit(1)
+        )
+
+        result = await attempt_repo.execute(stmt)
+        row = result.first()
+
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No active pending dispatch found for this provider.",
+            )
+
+        attempt, provider_user = row
+        data = TaskDispatchAttemptResponse.model_validate(attempt)
+        if provider_user:
+            data.provider = MinimalProviderResponse.model_validate(provider_user)
+
+        await system_logger.metric('get_current_dispatch', timer.stop(), source='assignments.get_current_dispatch')
+        return BaseAPIResponse[TaskDispatchAttemptResponse](
+            data=data,
+            detail="Current dispatch retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn('get_current_dispatch failed', source='assignments.get_current_dispatch', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        raise
+    except Exception as e:
+        await system_logger.error(f'get_current_dispatch error: {str(e)}', source='assignments.get_current_dispatch')
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving the current dispatch.",
+        )
+
+
+@router.get(
     "/tasks/{task_id}/dispatch/pending",
     response_model=BaseAPIResponse[TaskDispatchAttemptResponse],
     status_code=status.HTTP_200_OK,
@@ -267,13 +409,13 @@ async def get_pending_dispatch(
         stmt = (
             select(TaskDispatchAttempt, User)
             # pyrefly: ignore [bad-argument-type]
-            .join(User, TaskDispatchAttempt.provider_id == User.id, isouter=True)
+            .join(User, col(TaskDispatchAttempt.provider_id) == col(User.id), isouter=True)
             .where(
-                TaskDispatchAttempt.task_id == task_id,
-                TaskDispatchAttempt.status == DispatchAttemptStatus.PENDING
+                col(TaskDispatchAttempt.task_id) == task_id,
+                col(TaskDispatchAttempt.status) == DispatchAttemptStatus.PENDING
             )
             # pyrefly: ignore [bad-argument-type]
-            .order_by(desc(TaskDispatchAttempt.pinged_at))
+            .order_by(desc(col(TaskDispatchAttempt.pinged_at)))
             .limit(1)
         )
         
@@ -511,10 +653,10 @@ async def complete_task(
             )
 
         # Enqueue heavy finalisation & payment settlement to Celery worker
-        # pyrefly: ignore [not-callable]
+    
         complete_task_assignment.delay(
             task_id, current_user.id, payment_mode=body.payment_mode.value
-        )
+        ) # type: ignore
 
         await system_logger.metric('complete_task', timer.stop(), source='assignments.complete_task')
         return BaseAPIResponse[None](
