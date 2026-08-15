@@ -142,6 +142,7 @@ class DispatchEventService:
         task = await self.task_repo.get(task_id)
         if task:
             task.status = TaskStatus.ASSIGNED
+            task.assigned_provider_id=provider_id
             await self.task_repo.add(task)
 
         # Bind provider in TaskAssignment

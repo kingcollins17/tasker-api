@@ -548,8 +548,11 @@ async def start_task(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Task not found.",
             )
+        assignment=task.assignment
+        if not assignment:
+            raise HTTPException(status_code=404, detail='Task assignment not found')
 
-        if task.assigned_provider_id != current_user.id:
+        if assignment.provider_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You are not the assigned provider for this task.",
@@ -633,8 +636,11 @@ async def complete_task(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Task not found.",
             )
+        assignment=task.assignment
+        if not assignment:
+            raise HTTPException(status_code=404, detail='Task assignment not found')
 
-        if task.assigned_provider_id != current_user.id:
+        if assignment.provider_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You are not the assigned provider for this task.",
@@ -654,6 +660,7 @@ async def complete_task(
 
         # Enqueue heavy finalisation & payment settlement to Celery worker
     
+        # pyrefly: ignore [not-callable]
         complete_task_assignment.delay(
             task_id, current_user.id, payment_mode=body.payment_mode.value
         ) # type: ignore
