@@ -1,3 +1,4 @@
+from app.core.models.users import DutyStatus
 import math
 import random
 from datetime import datetime
@@ -412,6 +413,25 @@ class TaskService:
                 detail=f"Cannot redispatch task with status {task.status.value}. Only ASSIGNED tasks can be redispatched.",
             )
         
+        # Check maximum allowed redispatches limit
+        max_allowed = (
+            task.max_customer_redispatches
+            if task.max_customer_redispatches is not None
+            else 3
+        )
+        stmt_redispatch_count = select(func.count(col(DispatchSession.id))).where(
+            col(DispatchSession.task_id) == task_id,
+            col(DispatchSession.is_redispatch) == True,  # noqa: E712
+        )
+        res_count = await self.task_repo.execute(stmt_redispatch_count)
+        redispatch_count = res_count.first() or 0
+
+        if redispatch_count >= max_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Maximum allowed redispatches ({max_allowed}) reached for this task.",
+            )
+        
         # Get assignment details
         assignment = task.assignment
         if not assignment:
@@ -423,47 +443,57 @@ class TaskService:
         old_provider_id = assignment.provider_id
         old_assignment_id = assignment.id
         
-        # Get old dispatch session to close it
-        stmt_old_session = select(DispatchSession).where(
-            DispatchSession.task_id == task_id,
-            DispatchSession.status == DispatchSessionStatus.ASSIGNED,
-        )
-        res_old_session = await self.task_repo.execute(stmt_old_session)
-        old_dispatch_session = res_old_session.one_or_none()
-        
         # Step 1: Cancel the current assignment
         assignment_updates = {
             "status": TaskAssignmentStatus.CANCELLED,
             "updated_at": lagos_now(),
         }
         await self.assignment_repo.update(old_assignment_id, assignment_updates)
-        
-        # Step 2: Create a fake dispatch attempt with status CANCELLED for the old provider
-        # This ensures the matching engine will naturally exclude them from next batch
-        fake_attempt = TaskDispatchAttempt(
-            task_id=task_id,
-            dispatch_session_id=old_dispatch_session.id if old_dispatch_session else None,
-            provider_id=old_provider_id,
-            sequence_order=0,
-            status=DispatchAttemptStatus.CANCELED,
-            pinged_at=lagos_now(),
-            responded_at=lagos_now(),
-            match_score=0.0,
-            offered_payout=0.0,
-        )
-        await self.attempt_repo.add(fake_attempt)
-        
-        # Step 3: Close old dispatch session if it exists
-        if old_dispatch_session:
-            session_updates = {
-                "status": DispatchSessionStatus.CANCELLED,
-                "updated_at": lagos_now(),
-            }
-            await self.task_repo.execute(
-                update(DispatchSession).where(
-                    DispatchSession.id == old_dispatch_session.id
-                ).values(**session_updates)
+
+        # Mark old provider duty status back to ONLINE_AVAILABLE if currently ON_TASK or ON_DISPATCH
+        stmt_reset_provider = (
+            update(ProviderProfile)
+            .where(
+                col(ProviderProfile.user_id) == old_provider_id,
+                col(ProviderProfile.duty_status).in_([DutyStatus.ON_TASK, DutyStatus.ON_DISPATCH]),
             )
+            .values(duty_status=DutyStatus.ONLINE_AVAILABLE)
+        )
+        await self.task_repo.execute(stmt_reset_provider)
+        
+        # Step 2: Cancel ALL active/open dispatch sessions for this task
+        stmt_cancel_sessions = (
+            update(DispatchSession)
+            .where(
+                col(DispatchSession.task_id) == task_id,
+                col(DispatchSession.status).in_([
+                    DispatchSessionStatus.SEARCHING,
+                    DispatchSessionStatus.ASSIGNED,
+                ]),
+            )
+            .values(
+                status=DispatchSessionStatus.CANCELLED,
+                updated_at=lagos_now(),
+            )
+        )
+        await self.task_repo.execute(stmt_cancel_sessions)
+
+        # Step 3: Cancel ALL pending and accepted dispatch attempts for this task
+        stmt_cancel_attempts = (
+            update(TaskDispatchAttempt)
+            .where(
+                col(TaskDispatchAttempt.task_id) == task_id,
+                col(TaskDispatchAttempt.status).in_([
+                    DispatchAttemptStatus.PENDING,
+                    DispatchAttemptStatus.ACCEPTED,
+                ]),
+            )
+            .values(
+                status=DispatchAttemptStatus.CANCELED,
+                responded_at=lagos_now(),
+            )
+        )
+        await self.attempt_repo.execute(stmt_cancel_attempts)
         
         # Step 4: Move task back to OPEN and clear assigned provider
         old_status = task.status
@@ -510,7 +540,13 @@ class TaskService:
         # Step 7: Trigger new dispatch session
         from app.features.tasks.celery.dispatch import start_dispatch_session_task
         # pyrefly: ignore [not-callable]
-        start_dispatch_session_task.delay(task.id)  # type: ignore
+        start_dispatch_session_task.delay(
+            task.id,
+            is_redispatch=True,
+            redispatch_reason=feedback,
+            exclude_previous_sessions=False,
+            excluded_provider_ids=[old_provider_id],
+        )  # type: ignore
         
         # Refresh and return updated task
         await self.task_repo.refresh(task)

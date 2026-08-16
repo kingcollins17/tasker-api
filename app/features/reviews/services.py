@@ -101,7 +101,7 @@ class ReviewService:
 
         # Insert credibility entry via CredibilityService (which enqueues score sync Celery task)
         reason = get_review_credibility_reason(schema.rating)
-        await self.credibility_service.add_credibility_entry(
+        await self.credibility_service.add(
             user_id=reviewee_id,
             reason=reason,
             task_id=schema.task_id,

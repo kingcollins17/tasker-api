@@ -285,7 +285,7 @@ class DispatchEventService:
     ) -> None:
         """Handles decline or timeout by applying penalties and cascading the matching engine."""
 
-        await self.credibility_service.add_credibility_entry(
+        await self.credibility_service.add(
             user_id=provider_id,
             reason=CredibilityReason.JOB_DECLINED,
             task_id=task_id,

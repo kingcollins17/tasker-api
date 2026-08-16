@@ -30,7 +30,7 @@ async def test_add_credibility_entry_triggers_celery_task(mock_ledger_repo):
     with patch(
         "app.features.credibility.services.sync_user_credibility_score"
     ) as mock_sync_task:
-        entry = await service.add_credibility_entry(
+        entry = await service.add(
             user_id="user-456",
             reason=CredibilityReason.TASK_COMPLETED,
             task_id="task-789",
@@ -50,7 +50,7 @@ async def test_add_credibility_entry_zero_delta_skipped(mock_ledger_repo):
     with patch(
         "app.features.credibility.services.sync_user_credibility_score"
     ) as mock_sync_task:
-        entry = await service.add_credibility_entry(
+        entry = await service.add(
             user_id="user-456",
             reason=CredibilityReason.THREE_STAR_REVIEW,
         )

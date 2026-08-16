@@ -102,6 +102,9 @@ class Task(SQLModel, table=True):
     status: TaskStatus = Field(default=TaskStatus.OPEN, index=True, description="Current lifecycle status of the task")
     dispatch_started_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when cascading dispatch loop was initiated")
     current_attempt_sequence: Optional[int] = Field(default=0, nullable=True, description="Current attempt number in candidate dispatch queue")
+    
+    max_customer_redispatches: Optional[int] = Field(default=3, nullable=True, description="Maximum number of redispatches a customer is allowed")
+    
     scheduled_start_at: Optional[datetime] = Field(default=None, nullable=True, description="Target scheduled start time if not immediate")
     start_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN to initiate task on-site")
     completion_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN to complete task on-site")
@@ -166,6 +169,11 @@ class DispatchSession(SQLModel, table=True):
     status: DispatchSessionStatus = Field(default=DispatchSessionStatus.SEARCHING, index=True, description="Current workflow state of the dispatch session")
     batch_size: int = Field(default=5, description="Number of candidate pings to process per step")
     current_batch: int = Field(default=1, description="Current batch step iteration number")
+    is_redispatch: Optional[bool] = Field(default=False, nullable=True, description="Tracks whether the dispatch was automatically started by the system (False) or is a redispatch by the customer (True)")
+    redispatch_reason: Optional[str] = Field(default=None, nullable=True, description="Optional rationale or customer feedback for requesting a task redispatch")
+    excluded_provider_ids: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True), description="Optional list of provider IDs to exclude from candidate matching during this dispatch session"
+    )
     created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
     updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
 

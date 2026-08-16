@@ -1,7 +1,7 @@
 from app.core.repository import QueryOptions
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import List, Optional, Set, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
 from sqlalchemy import update
 from sqlmodel import col, select
@@ -34,7 +34,18 @@ from app.core.services.provider_location import (
     PostGISProviderLocationService,
 )
 from app.core.utils.datetime_helper import lagos_now
-from app.features.notifications.services import get_notification_service_manual
+from app.features.notifications.services import (
+    NotificationService,
+    get_notification_service_manual,
+)
+from app.core.services.availability_service import (
+    AvailabilityService,
+    get_availability_service_manual,
+)
+from app.core.services.logger_service import (
+    LoggerService,
+    get_logger_service_manual,
+)
 
 _LOG_SOURCE = "core.MatchingEngine"
 
@@ -62,6 +73,8 @@ class MatchingEngine:
         session_id: str,
         db_session: AsyncSession,
         ping_duration: int = 180,
+        exclude_previous_sessions: bool = True,
+        excluded_provider_ids: Optional[List[str]] = None,
         session_repo: Optional[Repository[DispatchSession]] = None,
         task_repo: Optional[Repository[Task]] = None,
         task_location_repo: Optional[Repository[TaskLocation]] = None,
@@ -69,20 +82,28 @@ class MatchingEngine:
         provider_profile_repo: Optional[Repository[ProviderProfile]] = None,
         user_repo: Optional[Repository[User]] = None,
         geo_service: Optional[PostGISProviderLocationService] = None,
-        notification_service=None,
-        availability_service=None,
-        system_logger=None,
+        notification_service: Optional[NotificationService] = None,
+        availability_service: Optional[AvailabilityService] = None,
+        system_logger: Optional[LoggerService] = None,
     ):
 
         self.session_id = session_id
         self.db_session = db_session
         self.ping_duration = ping_duration
+        self.exclude_previous_sessions = exclude_previous_sessions
+        self.excluded_provider_ids = (
+            list(excluded_provider_ids) if excluded_provider_ids else []
+        )
 
         self.session_repo = session_repo or Repository(DispatchSession, db_session)
         self.task_repo = task_repo or Repository(Task, db_session)
-        self.task_location_repo = task_location_repo or Repository(TaskLocation, db_session)
+        self.task_location_repo = task_location_repo or Repository(
+            TaskLocation, db_session
+        )
         self.attempt_repo = attempt_repo or Repository(TaskDispatchAttempt, db_session)
-        self.provider_profile_repo = provider_profile_repo or Repository(ProviderProfile, db_session)
+        self.provider_profile_repo = provider_profile_repo or Repository(
+            ProviderProfile, db_session
+        )
         self.user_repo = user_repo or Repository(User, db_session)
 
         if geo_service is None:
@@ -93,12 +114,18 @@ class MatchingEngine:
             )
         self.geo_service = geo_service
 
-        self.notification_service = notification_service or get_notification_service_manual(db_session)
-        self.availability_service = availability_service or get_availability_service_manual(db_session)
+        self.notification_service = (
+            notification_service or get_notification_service_manual(db_session)
+        )
+        self.availability_service = (
+            availability_service or get_availability_service_manual(db_session)
+        )
         self.system_logger = system_logger or get_logger_service_manual(db_session)
 
     async def _fetch_and_filter_candidates(
-        self, task: Task
+        self,
+        task: Task,
+        excluded_provider_ids: Optional[List[str]] = None,
     ) -> List[_ScoredCandidate]:
         """Discovers nearby providers, filters by eligibility, scores them, and returns them in ranked order."""
         if not task.service_id:
@@ -175,6 +202,12 @@ class MatchingEngine:
             # self.availability_service.get_availability_sql_condition(target_time),
         )
 
+        # Exclude excluded providers at the database level
+        if excluded_provider_ids:
+            stmt_eligibility = stmt_eligibility.where(
+                col(User.id).not_in(excluded_provider_ids)
+            )
+
         res_eligibility = await self.provider_profile_repo.execute(stmt_eligibility)
         rows = res_eligibility.unique().all()
         print(f"DEBUG [_fetch_and_filter]: Eligibility query returned {len(rows)} rows")
@@ -230,11 +263,28 @@ class MatchingEngine:
         task_id: str,
         batch_size: int,
         dispatch_session_id: Optional[str] = None,
+        exclude_previous_sessions: Optional[bool] = None,
+        excluded_provider_ids: Optional[List[str]] = None,
     ) -> List[_ScoredCandidate]:
-        """Excludes candidates already pinged for the task and returns the next batch for a specific session."""
+        """Excludes candidates already pinged for the task (or current session) and explicitly excluded providers.
+
+        Args:
+            scored_candidates: List of scored candidate objects.
+            task_id: ID of the task being dispatched.
+            batch_size: Maximum number of candidates to return.
+            dispatch_session_id: ID of the current dispatch session.
+            exclude_previous_sessions: If True, excludes providers pinged in ANY previous dispatch session for this task.
+                                       If False, only excludes providers pinged in the CURRENT dispatch session.
+            excluded_provider_ids: Optional list of provider IDs explicitly marked for exclusion.
+        """
+        should_exclude_prev = (
+            exclude_previous_sessions
+            if exclude_previous_sessions is not None
+            else self.exclude_previous_sessions
+        )
 
         filters = {"task_id": task_id}
-        if dispatch_session_id is not None:
+        if not should_exclude_prev and dispatch_session_id:
             filters["dispatch_session_id"] = dispatch_session_id
 
         existing_attempts = await self.attempt_repo.get_all(
@@ -244,7 +294,14 @@ class MatchingEngine:
         attempted_ids: Set[str] = {
             a.provider_id for a in existing_attempts if a.provider_id
         }
-        unattempted = [c for c in scored_candidates if c.user_id not in attempted_ids]
+
+        excluded_set: Set[str] = set(attempted_ids)
+        if excluded_provider_ids:
+            excluded_set.update(excluded_provider_ids)
+
+        unattempted = [
+            c for c in scored_candidates if c.user_id not in excluded_set
+        ]
 
         return unattempted[:batch_size]
 
@@ -448,10 +505,11 @@ class MatchingEngine:
             not dispatch_session
             or dispatch_session.status != DispatchSessionStatus.SEARCHING
         ):
+            status_val = dispatch_session.status if dispatch_session else None
             print(
-                f"DEBUG [MatchingEngine.run]: Dispatch session validation failed. exists={bool(dispatch_session)}, status={getattr(dispatch_session, 'status', None)}"
+                f"DEBUG [MatchingEngine.run]: Dispatch session validation failed. exists={bool(dispatch_session)}, status={status_val}"
             )
-            msg = f"MatchingEngine: Session {self.session_id} not searching (status={getattr(dispatch_session, 'status', None)}). Exiting."
+            msg = f"MatchingEngine: Session {self.session_id} not searching (status={status_val}). Exiting."
             print(msg)
             await self.system_logger.info(msg, source=_LOG_SOURCE)
             return False
@@ -471,7 +529,7 @@ class MatchingEngine:
             )
         )
         res_opt = await self.session_repo.execute(stmt_opt)
-        if getattr(res_opt, "rowcount", 0) == 0:
+        if res_opt.rowcount == 0:
             msg = f"MatchingEngine: Optimistic locking conflict for session {self.session_id} (batch={batch_num}). Exiting."
             print(msg)
             await self.system_logger.warn(msg, source=_LOG_SOURCE)
@@ -498,11 +556,19 @@ class MatchingEngine:
             await self.system_logger.info(msg, source=_LOG_SOURCE)
             return False
 
+        # Read and merge session-level excluded_provider_ids with constructor exclusions
+        combined_excluded: Set[str] = set(self.excluded_provider_ids)
+        if dispatch_session.excluded_provider_ids:
+            combined_excluded.update(dispatch_session.excluded_provider_ids)
+        excluded_ids_list = list(combined_excluded)
+
         # 4. Fetch, score, and select batch of candidates
         print(
             f"DEBUG [MatchingEngine.run]: Calling _fetch_and_filter_candidates for task_id={task.id}"
         )
-        candidates = await self._fetch_and_filter_candidates(task)
+        candidates = await self._fetch_and_filter_candidates(
+            task, excluded_provider_ids=excluded_ids_list
+        )
         print(
             f"DEBUG [MatchingEngine.run]: _fetch_and_filter_candidates returned {len(candidates)} eligible candidates"
         )
@@ -525,15 +591,20 @@ class MatchingEngine:
             scored_candidates,
             task.id,
             batch_size,
+            dispatch_session_id=dispatch_session.id,
+            exclude_previous_sessions=self.exclude_previous_sessions,
+            excluded_provider_ids=excluded_ids_list,
         )
+        batch_user_ids = [c.user_id for c in batch]
         print(
-            f"DEBUG [MatchingEngine.run]: _get_next_batch returned {len(batch)} candidates for batch: {[c.user_id for c in batch]}"
+            f"DEBUG [MatchingEngine.run]: _get_next_batch returned {len(batch)} candidates for batch: {batch_user_ids}"
         )
 
         candidate_summary = [
             {"user_id": c.user_id, "score": c.score, "distance_km": c.distance_km}
             for c in batch
         ]
+
         await self.system_logger.info(
             f"MatchingEngine: Selected batch of {len(batch)} candidate(s) for task {task.id} (batch_num={batch_num})",
             source=_LOG_SOURCE,
@@ -602,7 +673,7 @@ class MatchingEngine:
 
         # Send a single notification to all candidates in the batch at once
         # instead of one notification per candidate.
-        user_ids = [c.user_id for c in batch]
+        user_ids = batch_user_ids
         offered_payout = task.provider_payout or 0.0
         last_expires_at = (
             attempts[-1].expires_at.isoformat()
@@ -623,8 +694,8 @@ class MatchingEngine:
         # pyrefly: ignore [not-callable]
         execute_matching_engine_task.apply_async(
             args=[dispatch_session.id],
-            countdown=ping_duration + 120,  # Add 120 seconds for delay
-        ) # type: ignore
+            countdown=ping_duration + 120,
+        )  # type: ignore
 
         msg = f"MatchingEngine: Dispatched batch of {len(batch)} candidate(s) for session {dispatch_session.id} (task={task.id}). Next iteration scheduled in {ping_duration + 60}s."
         print(f"DEBUG [MatchingEngine.run]: {msg}")

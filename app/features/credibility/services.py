@@ -20,7 +20,7 @@ class CredibilityService:
     def __init__(self, ledger_repo: Repository[CredibilityLedgerEntry]):
         self.ledger_repo = ledger_repo
 
-    async def add_credibility_entry(
+    async def add(
         self,
         user_id: str,
         reason: CredibilityReason,

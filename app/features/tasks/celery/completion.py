@@ -82,7 +82,7 @@ async def _complete_task_assignment_async(
             )
             # Reward provider with credibility for completing a task
             cred_service = get_credibility_service_manual(session)
-            await cred_service.add_credibility_entry(
+            await cred_service.add(
                 user_id=provider_id,
                 reason=CredibilityReason.TASK_COMPLETED,
                 task_id=task_id,
