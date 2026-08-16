@@ -67,7 +67,7 @@ async def create_task(
     ),
     task_service: TaskService = Depends(get_task_service),
     notification_service: NotificationService = Depends(get_notification_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Create a new task with spatial location coordinates."""
     try:
@@ -75,17 +75,25 @@ async def create_task(
         timer.start()
         task = await task_service.create_task(current_user.id, schema)
 
-        await system_logger.metric('create_task', timer.stop(), source='tasks.create_task')
+        await system_logger.metric(
+            "create_task", timer.stop(), source="tasks.create_task"
+        )
         return BaseAPIResponse[TaskResponse](
             data=TaskResponse.model_validate(task),
             detail="Task created successfully.",
             status_code=status.HTTP_201_CREATED,
         )
     except HTTPException as e:
-        await system_logger.warn('create_task failed', source='tasks.create_task', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "create_task failed",
+            source="tasks.create_task",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'create_task error: {str(e)}', source='tasks.create_task')
+        await system_logger.error(
+            f"create_task error: {str(e)}", source="tasks.create_task"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -106,7 +114,7 @@ async def confirm_draft(
         )
     ),
     task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Confirm a draft task and start the dispatch workflow."""
     try:
@@ -117,17 +125,25 @@ async def confirm_draft(
         # pyrefly: ignore [not-callable]
         start_dispatch_session_task.delay(task.id)
 
-        await system_logger.metric('confirm_draft', timer.stop(), source='tasks.confirm_draft')
+        await system_logger.metric(
+            "confirm_draft", timer.stop(), source="tasks.confirm_draft"
+        )
         return BaseAPIResponse[TaskResponse](
             data=TaskResponse.model_validate(task),
             detail="Draft task confirmed and dispatch started.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('confirm_draft failed', source='tasks.confirm_draft', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "confirm_draft failed",
+            source="tasks.confirm_draft",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'confirm_draft error: {str(e)}', source='tasks.confirm_draft')
+        await system_logger.error(
+            f"confirm_draft error: {str(e)}", source="tasks.confirm_draft"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -148,7 +164,7 @@ async def cancel_draft(
         )
     ),
     task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Cancel and delete a draft task."""
     try:
@@ -156,17 +172,25 @@ async def cancel_draft(
         timer.start()
         success = await task_service.cancel_draft(task_id, current_user.id)
 
-        await system_logger.metric('cancel_draft', timer.stop(), source='tasks.cancel_draft')
+        await system_logger.metric(
+            "cancel_draft", timer.stop(), source="tasks.cancel_draft"
+        )
         return BaseAPIResponse[bool](
             data=success,
             detail="Draft task cancelled and deleted.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('cancel_draft failed', source='tasks.cancel_draft', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "cancel_draft failed",
+            source="tasks.cancel_draft",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'cancel_draft error: {str(e)}', source='tasks.cancel_draft')
+        await system_logger.error(
+            f"cancel_draft error: {str(e)}", source="tasks.cancel_draft"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -181,27 +205,42 @@ async def cancel_draft(
 )
 async def get_task_price_breakdown(
     schema: TaskPriceEstimateRequest,
-    current_user: Optional[Union[UserResponse, AdminUser]] = Depends(GetCurrentUserOrAdminOptional()),
+    current_user: Optional[Union[UserResponse, AdminUser]] = Depends(
+        GetCurrentUserOrAdminOptional()
+    ),
     task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Calculate and return upfront price breakdown for a task request before posting."""
     try:
         timer = Timer()
         timer.start()
-        user_id = current_user.id if current_user and hasattr(current_user, "id") else None
+        user_id = (
+            current_user.id if current_user and hasattr(current_user, "id") else None
+        )
         breakdown = await task_service.estimate_task_price(schema, customer_id=user_id)
-        await system_logger.metric('get_task_price_breakdown', timer.stop(), source='tasks.get_task_price_breakdown')
+        await system_logger.metric(
+            "get_task_price_breakdown",
+            timer.stop(),
+            source="tasks.get_task_price_breakdown",
+        )
         return BaseAPIResponse[PricingBreakdown](
             data=breakdown,
             detail="Price breakdown calculated successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('get_task_price_breakdown failed', source='tasks.get_task_price_breakdown', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "get_task_price_breakdown failed",
+            source="tasks.get_task_price_breakdown",
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'get_task_price_breakdown error: {str(e)}', source='tasks.get_task_price_breakdown')
+        await system_logger.error(
+            f"get_task_price_breakdown error: {str(e)}",
+            source="tasks.get_task_price_breakdown",
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -217,7 +256,7 @@ async def get_task_price_breakdown(
 async def list_tasks(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
-    status_filter: Optional[TaskStatus] = Query(None, alias="status"),
+    status_filter: Optional[List[TaskStatus]] = Query(None, alias="status"),
     category_id: Optional[str] = Query(None),
     service_id: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
@@ -231,7 +270,7 @@ async def list_tasks(
     expires_at: Optional[datetime] = Query(None),
     customer_id: Optional[str] = Query(None),
     task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Retrieve a list of tasks matching the filters and coordinates."""
     try:
@@ -260,17 +299,25 @@ async def list_tasks(
             page=page,
             per_page=per_page,
         )
-        await system_logger.metric('list_tasks', timer.stop(), source='tasks.list_tasks')
+        await system_logger.metric(
+            "list_tasks", timer.stop(), source="tasks.list_tasks"
+        )
         return BaseAPIResponse[PaginatedData[TaskListResponse]](
             data=data,
             detail="Tasks retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('list_tasks failed', source='tasks.list_tasks', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "list_tasks failed",
+            source="tasks.list_tasks",
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'list_tasks error: {str(e)}', source='tasks.list_tasks')
+        await system_logger.error(
+            f"list_tasks error: {str(e)}", source="tasks.list_tasks"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -295,7 +342,7 @@ async def list_active_tasks(
         GetCurrentUser(required_type=UserType.CUSTOMER)
     ),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Retrieve a list of active tasks (assigned or in progress) for the signed in customer."""
     try:
@@ -326,17 +373,25 @@ async def list_active_tasks(
             page=page,
             per_page=per_page,
         )
-        await system_logger.metric('list_active_tasks', timer.stop(), source='tasks.list_active_tasks')
+        await system_logger.metric(
+            "list_active_tasks", timer.stop(), source="tasks.list_active_tasks"
+        )
         return BaseAPIResponse[PaginatedData[TaskListResponse]](
             data=data,
             detail="Active tasks retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('list_active_tasks failed', source='tasks.list_active_tasks', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "list_active_tasks failed",
+            source="tasks.list_active_tasks",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'list_active_tasks error: {str(e)}', source='tasks.list_active_tasks')
+        await system_logger.error(
+            f"list_active_tasks error: {str(e)}", source="tasks.list_active_tasks"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -361,7 +416,7 @@ async def list_pending_tasks(
         GetCurrentUser(required_type=UserType.CUSTOMER)
     ),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Retrieve a list of pending tasks (open, matching, or searching) for the signed in customer."""
     try:
@@ -392,17 +447,25 @@ async def list_pending_tasks(
             page=page,
             per_page=per_page,
         )
-        await system_logger.metric('list_pending_tasks', timer.stop(), source='tasks.list_pending_tasks')
+        await system_logger.metric(
+            "list_pending_tasks", timer.stop(), source="tasks.list_pending_tasks"
+        )
         return BaseAPIResponse[PaginatedData[TaskListResponse]](
             data=data,
             detail="Pending tasks retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('list_pending_tasks failed', source='tasks.list_pending_tasks', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "list_pending_tasks failed",
+            source="tasks.list_pending_tasks",
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'list_pending_tasks error: {str(e)}', source='tasks.list_pending_tasks')
+        await system_logger.error(
+            f"list_pending_tasks error: {str(e)}", source="tasks.list_pending_tasks"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -415,8 +478,10 @@ async def list_pending_tasks(
     response_model=BaseAPIResponse[TaskResponse],
     status_code=status.HTTP_200_OK,
 )
-async def get_task(task_id: str, task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+async def get_task(
+    task_id: str,
+    task_service: TaskService = Depends(get_task_service),
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Retrieve details for a single task by ID."""
     try:
@@ -451,17 +516,21 @@ async def get_task(task_id: str, task_service: TaskService = Depends(get_task_se
                     gender=gender,
                 )
 
-        await system_logger.metric('get_task', timer.stop(), source='tasks.get_task')
+        await system_logger.metric("get_task", timer.stop(), source="tasks.get_task")
         return BaseAPIResponse[TaskResponse](
             data=task_data,
             detail="Task retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('get_task failed', source='tasks.get_task', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "get_task failed",
+            source="tasks.get_task",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'get_task error: {str(e)}', source='tasks.get_task')
+        await system_logger.error(f"get_task error: {str(e)}", source="tasks.get_task")
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -481,7 +550,7 @@ async def update_task(
         GetCurrentUserOrAdminOptional
     ),
     task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Update details for an existing task."""
     try:
@@ -496,17 +565,25 @@ async def update_task(
         task = await task_service.update_task(
             task_id, current_user.id, schema, is_admin=is_admin
         )
-        await system_logger.metric('update_task', timer.stop(), source='tasks.update_task')
+        await system_logger.metric(
+            "update_task", timer.stop(), source="tasks.update_task"
+        )
         return BaseAPIResponse[TaskResponse](
             data=TaskResponse.model_validate(task),
             detail="Task updated successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('update_task failed', source='tasks.update_task', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "update_task failed",
+            source="tasks.update_task",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'update_task error: {str(e)}', source='tasks.update_task')
+        await system_logger.error(
+            f"update_task error: {str(e)}", source="tasks.update_task"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -523,7 +600,7 @@ async def delete_task(
         GetCurrentUserOrAdminOptional
     ),
     task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Cancel/Delete a task."""
     try:
@@ -538,17 +615,25 @@ async def delete_task(
         success = await task_service.delete_task(
             task_id, current_user.id, is_admin=is_admin
         )
-        await system_logger.metric('delete_task', timer.stop(), source='tasks.delete_task')
+        await system_logger.metric(
+            "delete_task", timer.stop(), source="tasks.delete_task"
+        )
         return BaseAPIResponse[bool](
             data=success,
             detail="Task cancelled successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('delete_task failed', source='tasks.delete_task', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "delete_task failed",
+            source="tasks.delete_task",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'delete_task error: {str(e)}', source='tasks.delete_task')
+        await system_logger.error(
+            f"delete_task error: {str(e)}", source="tasks.delete_task"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -569,7 +654,7 @@ async def update_task_location(
         GetCurrentUserOrAdminOptional
     ),
     task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Update a task's location."""
     try:
@@ -609,17 +694,25 @@ async def update_task_location(
         if updates:
             location = await task_service.location_repo.update(location_id, updates)
 
-        await system_logger.metric('update_task_location', timer.stop(), source='tasks.update_task_location')
+        await system_logger.metric(
+            "update_task_location", timer.stop(), source="tasks.update_task_location"
+        )
         return BaseAPIResponse[TaskLocationResponse](
             data=TaskLocationResponse.model_validate(location),
             detail="Task location updated successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('update_task_location failed', source='tasks.update_task_location', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "update_task_location failed",
+            source="tasks.update_task_location",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'update_task_location error: {str(e)}', source='tasks.update_task_location')
+        await system_logger.error(
+            f"update_task_location error: {str(e)}", source="tasks.update_task_location"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -639,7 +732,7 @@ async def delete_task_location(
         GetCurrentUserOrAdminOptional
     ),
     task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Delete a task's location."""
     try:
@@ -669,17 +762,25 @@ async def delete_task_location(
             )
 
         await task_service.location_repo.delete(location_id)
-        await system_logger.metric('delete_task_location', timer.stop(), source='tasks.delete_task_location')
+        await system_logger.metric(
+            "delete_task_location", timer.stop(), source="tasks.delete_task_location"
+        )
         return BaseAPIResponse[bool](
             data=True,
             detail="Task location deleted successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('delete_task_location failed', source='tasks.delete_task_location', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "delete_task_location failed",
+            source="tasks.delete_task_location",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'delete_task_location error: {str(e)}', source='tasks.delete_task_location')
+        await system_logger.error(
+            f"delete_task_location error: {str(e)}", source="tasks.delete_task_location"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -700,7 +801,7 @@ async def upload_task_attachment(
     ),
     task_service: TaskService = Depends(get_task_service),
     storage_service: StorageService = Depends(get_storage_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Upload a file attachment for a task."""
     try:
@@ -737,17 +838,28 @@ async def upload_task_attachment(
         )
         attachment = await task_service.attachment_repo.add(attachment)
 
-        await system_logger.metric('upload_task_attachment', timer.stop(), source='tasks.upload_task_attachment')
+        await system_logger.metric(
+            "upload_task_attachment",
+            timer.stop(),
+            source="tasks.upload_task_attachment",
+        )
         return BaseAPIResponse[TaskAttachmentResponse](
             data=TaskAttachmentResponse.model_validate(attachment),
             detail="Attachment uploaded successfully.",
             status_code=status.HTTP_201_CREATED,
         )
     except HTTPException as e:
-        await system_logger.warn('upload_task_attachment failed', source='tasks.upload_task_attachment', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "upload_task_attachment failed",
+            source="tasks.upload_task_attachment",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'upload_task_attachment error: {str(e)}', source='tasks.upload_task_attachment')
+        await system_logger.error(
+            f"upload_task_attachment error: {str(e)}",
+            source="tasks.upload_task_attachment",
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -766,7 +878,7 @@ async def delete_task_attachment(
     current_user: UserResponse = Depends(GetCurrentUser()),
     task_service: TaskService = Depends(get_task_service),
     storage_service: StorageService = Depends(get_storage_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Delete a task attachment."""
     try:
@@ -788,17 +900,28 @@ async def delete_task_attachment(
 
         await task_service.attachment_repo.delete(attachment_id)
 
-        await system_logger.metric('delete_task_attachment', timer.stop(), source='tasks.delete_task_attachment')
+        await system_logger.metric(
+            "delete_task_attachment",
+            timer.stop(),
+            source="tasks.delete_task_attachment",
+        )
         return BaseAPIResponse[bool](
             data=True,
             detail="Task attachment deleted successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('delete_task_attachment failed', source='tasks.delete_task_attachment', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "delete_task_attachment failed",
+            source="tasks.delete_task_attachment",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'delete_task_attachment error: {str(e)}', source='tasks.delete_task_attachment')
+        await system_logger.error(
+            f"delete_task_attachment error: {str(e)}",
+            source="tasks.delete_task_attachment",
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -816,7 +939,7 @@ async def get_nearby_providers(
     radius_km: float = Query(10.0, ge=0.1, description="Radius in kilometers"),
     current_user: UserResponse = Depends(GetCurrentUser()),
     task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Fetch providers within a specific radius of a task."""
     try:
@@ -845,17 +968,25 @@ async def get_nearby_providers(
                 )
             )
 
-        await system_logger.metric('get_nearby_providers', timer.stop(), source='tasks.get_nearby_providers')
+        await system_logger.metric(
+            "get_nearby_providers", timer.stop(), source="tasks.get_nearby_providers"
+        )
         return BaseAPIResponse[List[MinimalProviderResponse]](
             data=providers,
             detail="Nearby providers fetched successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('get_nearby_providers failed', source='tasks.get_nearby_providers', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "get_nearby_providers failed",
+            source="tasks.get_nearby_providers",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'get_nearby_providers error: {str(e)}', source='tasks.get_nearby_providers')
+        await system_logger.error(
+            f"get_nearby_providers error: {str(e)}", source="tasks.get_nearby_providers"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

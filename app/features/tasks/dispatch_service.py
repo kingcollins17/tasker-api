@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import random
 from typing import Any, Optional, Tuple, Union
 
 from fastapi import Depends
@@ -153,6 +154,8 @@ class DispatchEventService:
             assignment.provider_id = provider_id
             assignment.status = TaskAssignmentStatus.ASSIGNED
             assignment.assigned_at = now
+            if not assignment.pin:
+                assignment.pin = f"{random.randint(0, 9999):04d}"
             await self.assignment_repo.add(assignment)
         else:
             new_assignment = TaskAssignment(
@@ -160,6 +163,7 @@ class DispatchEventService:
                 provider_id=provider_id,
                 status=TaskAssignmentStatus.ASSIGNED,
                 assigned_at=now,
+                pin=f"{random.randint(0, 9999):04d}",
                 created_at=now,
                 updated_at=now,
             )

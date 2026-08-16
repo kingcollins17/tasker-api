@@ -244,7 +244,7 @@ class TaskService:
         self,
         page: int = 1,
         per_page: int = 20,
-        status_filter: Optional[TaskStatus] = None,
+        status_filter: Optional[List[TaskStatus]] = None,
         category_id: Optional[str] = None,
         service_id: Optional[str] = None,
         search: Optional[str] = None,
@@ -262,8 +262,10 @@ class TaskService:
         count_statement = select(func.count()).select_from(Task)
 
         if status_filter:
-            statement = statement.where(Task.status == status_filter)
-            count_statement = count_statement.where(Task.status == status_filter)
+            statement = statement.where(col(Task.status).in_(status_filter))
+            count_statement = count_statement.where(
+                col(Task.status).in_(status_filter)
+            )
 
         if category_id:
             statement = statement.where(Task.category_id == category_id)

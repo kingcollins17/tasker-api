@@ -8,10 +8,9 @@ via ``.delay()``.  Nothing outside this module should instantiate
 ``DispatchEventService`` for DB work.
 """
 
-from typing import Any
+import random
+from typing import Any, List, Optional
 from pydantic import BaseModel
-from datetime import timedelta
-from typing import List, Optional
 
 from celery import shared_task
 
@@ -171,6 +170,7 @@ async def _handle_provider_response_async(
                     accepted_dispatch_attempt_id=attempt.id,
                     accepted_price=attempt.offered_payout or 0.0,
                     assigned_at=now,
+                    pin=f"{random.randint(0, 9999):04d}",
                     status=TaskAssignmentStatus.ASSIGNED,
                 )
                 await assignment_repo.add(assignment)

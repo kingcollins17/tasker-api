@@ -681,3 +681,93 @@ async def complete_task(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while completing the task.",
         )
+
+
+@router.post(
+    "/tasks/{task_id}/verify-provider",
+    response_model=BaseAPIResponse[MinimalProviderResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def verify_provider_pin(
+    task_id: str,
+    body: PinBody,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.CUSTOMER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    task_repo: Repository[Task] = Depends(GetRepository(Task)),
+    user_repo: Repository[User] = Depends(GetRepository(User)),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Customer verifies the assigned provider's identity using the assignment PIN given by the provider.
+
+    Returns MinimalProviderResponse if verified. Otherwise, returns HTTP 400 with security warning.
+    """
+    try:
+        timer = Timer()
+        timer.start()
+        task = await task_repo.get(task_id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Task not found.",
+            )
+
+        if task.customer_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not authorized to verify provider for this task.",
+            )
+
+        assignment = task.assignment
+        if not assignment or not assignment.provider_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No assigned provider found for this task.",
+            )
+
+        if not assignment.pin or assignment.pin != body.pin:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Verification failed: We do not know who this person is and the PIN does not match. Do not allow them entry or contact them, as they may be an imposter.",
+            )
+
+        provider_user = await user_repo.get(assignment.provider_id)
+        if not provider_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assigned provider user profile not found.",
+            )
+
+        provider_data = MinimalProviderResponse.from_user(provider_user)
+
+        await system_logger.metric(
+            'verify_provider_pin',
+            timer.stop(),
+            source='assignments.verify_provider_pin',
+        )
+        return BaseAPIResponse[MinimalProviderResponse](
+            data=provider_data,
+            detail="Provider identity verified successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn(
+            'verify_provider_pin failed',
+            source='assignments.verify_provider_pin',
+            metadata={'detail': e.detail if hasattr(e, 'detail') else str(e)},
+        )
+        raise
+    except Exception as e:
+        await system_logger.error(
+            f'verify_provider_pin error: {str(e)}',
+            source='assignments.verify_provider_pin',
+        )
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while verifying the provider PIN.",
+        )

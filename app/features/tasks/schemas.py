@@ -98,6 +98,7 @@ class TaskAssignmentResponse(BaseModel):
     assigned_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    pin: Optional[str] = None
     status: Optional[TaskAssignmentStatus] = None
 
 

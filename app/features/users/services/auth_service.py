@@ -126,6 +126,11 @@ class UserAuthService:
                 detail="User account is inactive.",
             )
 
+        if schema.user_type is not None and (schema.user_type != user.type.value):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"User cannot sign-in as {schema.user_type}",
+            )
         token_payload = {
             "id": user.id,
             "email": user.email,

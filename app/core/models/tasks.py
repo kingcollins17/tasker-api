@@ -253,6 +253,7 @@ class TaskAssignment(SQLModel, table=True):
     assigned_at: datetime = Field(default_factory=lagos_now, description="Timestamp when provider accepted assignment")
     started_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when provider initiated work on-site")
     completed_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when task work was finished and verified")
+    pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN generated for the assignment")
     status: TaskAssignmentStatus = Field(default=TaskAssignmentStatus.ASSIGNED, description="Assignment status")
 
     task: Task = Relationship(back_populates="assignment")

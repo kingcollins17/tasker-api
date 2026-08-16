@@ -204,6 +204,7 @@ class VerifyPhoneOTP(BaseModel):
 class UserLogin(BaseModel):
     email: str = Field(..., description="Email address of the user")
     password: str = Field(..., description="Password of the user")
+    user_type: Optional[str]=None
 
     @field_validator("email")
     @classmethod
