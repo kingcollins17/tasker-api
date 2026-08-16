@@ -294,7 +294,7 @@ async def _handle_provider_response_async(
 
             
 async def _start_dispatch_session_async(
-    task_id: str, batch_size: int = 1
+    task_id: str, batch_size: int = 1,
 ) -> Optional[str]:
     """Creates a stateful DispatchSession in DB for a task and triggers the MatchingEngine Celery task."""
     async with async_session_maker() as session:

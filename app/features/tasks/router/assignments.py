@@ -321,7 +321,7 @@ async def get_task_assignment(
     response_model=BaseAPIResponse[TaskDispatchAttemptResponse],
     status_code=status.HTTP_200_OK,
 )
-async def get_current_dispatch(
+async def get_provider_current_dispatch(
     current_user: UserResponse = Depends(
         GetCurrentUser(
             required_type=UserType.PROVIDER,
@@ -387,71 +387,6 @@ async def get_current_dispatch(
         )
 
 
-@router.get(
-    "/tasks/{task_id}/dispatch/pending",
-    response_model=BaseAPIResponse[TaskDispatchAttemptResponse],
-    status_code=status.HTTP_200_OK,
-)
-async def get_pending_dispatch(
-    task_id: str,
-    current_user: UserResponse = Depends(GetCurrentUser()),
-    attempt_repo: Repository[TaskDispatchAttempt] = Depends(
-        GetRepository(TaskDispatchAttempt)
-    ),
-    system_logger: LoggerService = Depends(get_logger_service)
-):
-    """Retrieve the most recent pending dispatch attempt for a given task."""
-    try:
-        timer = Timer()
-        timer.start()
-
-        # Find the pending dispatch attempt for this task
-        stmt = (
-            select(TaskDispatchAttempt, User)
-            # pyrefly: ignore [bad-argument-type]
-            .join(User, col(TaskDispatchAttempt.provider_id) == col(User.id), isouter=True)
-            .where(
-                col(TaskDispatchAttempt.task_id) == task_id,
-                col(TaskDispatchAttempt.status) == DispatchAttemptStatus.PENDING
-            )
-            # pyrefly: ignore [bad-argument-type]
-            .order_by(desc(col(TaskDispatchAttempt.pinged_at)))
-            .limit(1)
-        )
-        
-        result = await attempt_repo.execute(stmt)
-        row = result.first()
-
-        if not row:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No pending dispatch attempt found for this task.",
-            )
-            
-        attempt, provider_user = row
-
-        data = TaskDispatchAttemptResponse.model_validate(attempt)
-        if provider_user:
-            data.provider = MinimalProviderResponse.model_validate(provider_user)
-
-        await system_logger.metric('get_pending_dispatch', timer.stop(), source='assignments.get_pending_dispatch')
-        return BaseAPIResponse[TaskDispatchAttemptResponse](
-            data=data,
-            detail="Pending dispatch attempt retrieved successfully.",
-            status_code=status.HTTP_200_OK,
-        )
-    except HTTPException as e:
-        await system_logger.warn('get_pending_dispatch failed', source='assignments.get_pending_dispatch', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
-        raise
-    except Exception as e:
-        await system_logger.error(f'get_pending_dispatch error: {str(e)}', source='assignments.get_pending_dispatch')
-        AppErrorHandler.handleError(e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while retrieving the pending dispatch attempt.",
-        )
-
-
 @router.post(
     "/tasks/{task_id}/dispatch/respond",
     response_model=BaseAPIResponse[None],
@@ -469,6 +404,7 @@ async def respond_to_dispatch_ping(
     ),
     dispatch_service: DispatchEventService = Depends(get_dispatch_event_service),
     system_logger: LoggerService = Depends(get_logger_service),
+    task_repo: Repository[Task] = Depends(GetRepository(Task)),
 ):
     """Provider accepts or declines a dispatch ping for a task.
 
@@ -483,6 +419,17 @@ async def respond_to_dispatch_ping(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid response status. Allowed values: {[s.value for s in allowed]}",
+            )
+
+        task = await task_repo.get(task_id)
+        if task and task.status == TaskStatus.ASSIGNED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Task has already been assigned to "
+                    f"{task.assigned_provider_id or 'another provider'}"
+                    + ("." if task.assigned_provider_id == current_user.id else ".")
+                ),
             )
 
         await dispatch_service.handle_ping_response(

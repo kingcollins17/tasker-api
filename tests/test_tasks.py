@@ -11,7 +11,7 @@ from app.core.models.tasks import (
     TaskLocation,
     TaskDispatchAttempt,
     TaskAssignment,
-    TaskStatusHistory,
+    TaskEventHistory,
     TaskAttachment,
     TaskStatus,
     TaskAssignmentStatus,
@@ -216,6 +216,22 @@ async def test_service_create_task(task_service, mock_task_repo, mock_location_r
     mock_location_repo.add.assert_called_once()
     mock_history_repo.add.assert_called_once()
 
+
+@pytest.mark.asyncio
+async def test_task_event_history_records_event_payload(task_service, mock_history_repo):
+    event = TaskEventHistory(
+        task_id="task-1",
+        event="task_created",
+        reason="customer created task",
+        data={"status": "draft", "source": "mobile_app"},
+    )
+
+    assert event.event == "task_created"
+    assert event.reason == "customer created task"
+    assert event.data == {"status": "draft", "source": "mobile_app"}
+    assert event.created_at is not None
+    mock_history_repo.add.assert_not_called()
+
 @pytest.mark.asyncio
 async def test_service_list_tasks_spatial_sqlite(task_service, mock_task_repo):
     # Arrange
@@ -388,7 +404,7 @@ async def test_get_current_assignment_returns_latest_active_assignment_for_provi
 
 @pytest.mark.asyncio
 async def test_get_current_dispatch_returns_latest_unexpired_pending_for_provider():
-    from app.features.tasks.router.assignments import get_current_dispatch
+    from app.features.tasks.router.assignments import get_provider_current_dispatch
     from app.core.models.tasks import TaskDispatchAttempt, DispatchAttemptStatus
 
     mock_attempt_repo = AsyncMock()
@@ -408,7 +424,7 @@ async def test_get_current_dispatch_returns_latest_unexpired_pending_for_provide
     mock_exec_res.first.return_value = (attempt_inst, None)
     mock_attempt_repo.execute.return_value = mock_exec_res
 
-    resp = await get_current_dispatch(
+    resp = await get_provider_current_dispatch(
         current_user=MOCK_PROVIDER,
         attempt_repo=mock_attempt_repo,
         system_logger=mock_logger,

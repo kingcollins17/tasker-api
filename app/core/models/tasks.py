@@ -2,9 +2,9 @@ from sqlalchemy import null
 import enum
 from datetime import datetime
 from uuid import uuid4
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from sqlmodel import Field, SQLModel, Relationship
-from sqlalchemy import Column
+from sqlalchemy import Column, JSON
 from app.core.utils.datetime_helper import lagos_now
 from app.core.models.spatial import PointType
 from sqlalchemy.orm import query_expression
@@ -33,27 +33,20 @@ class PaymentMode(str, enum.Enum):
 
 class PaymentStatus(str, enum.Enum):
     """Lifecycle states of task payment settlement."""
-    PENDING = "pending"
-    PAYMENT_REQUESTED = "payment_requested"
-    PAID = "paid"
-    CASH_PAID = "cash_paid"
-    FAILED = "failed"
+    PENDING = "PENDING"
+    PAYMENT_REQUESTED = "PAYMENT_REQUESTED"
+    PAID = "PAID"
+    CASH_PAID = "CASH_PAID"
+    FAILED = "FAILED"
 
-class TaskBidStatus(str, enum.Enum):
-    """Legacy proposal bidding statuses."""
-    PENDING = "pending"
-    WITHDRAWN = "withdrawn"
-    REJECTED = "rejected"
-    ACCEPTED = "accepted"
-    EXPIRED = "expired"
 
 class DispatchAttemptStatus(str, enum.Enum):
     """Workflow states of a 30-second provider dispatch ping attempt."""
-    PENDING = "pending"
-    ACCEPTED = "accepted"
-    DECLINED = "declined"
-    TIMEOUT = "timeout"
-    CANCELED = "canceled"
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    DECLINED = "DECLINED"
+    TIMEOUT = "TIMEOUT"
+    CANCELED = "CANCELED"
 
 class DispatchSessionStatus(str, enum.Enum):
     """Workflow state of a task dispatch session."""
@@ -65,16 +58,21 @@ class DispatchSessionStatus(str, enum.Enum):
 
 class PriceAdjustmentStatus(str, enum.Enum):
     """Approval status for on-site task scope or fee adjustments."""
-    PENDING_APPROVAL = "pending_approval"
-    APPROVED = "approved"
-    REJECTED = "rejected"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 class TaskAssignmentStatus(str, enum.Enum):
     """Status of an assigned provider working on a task."""
-    ASSIGNED = "assigned"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
+    ASSIGNED = "ASSIGNED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+class CancelledBy(str, enum.Enum):
+    """Who initiated task cancellation."""
+    PLATFORM = "platform"
+    CUSTOMER = "customer"
 
 class Task(SQLModel, table=True):
     """Primary task entity storing request details, location, upfront pricing breakdowns, and dispatch status."""
@@ -108,6 +106,7 @@ class Task(SQLModel, table=True):
     start_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN to initiate task on-site")
     completion_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN to complete task on-site")
     cancellation_reason: Optional[str] = Field(default=None, nullable=True, description="Reason for task cancellation")
+    cancelled_by: Optional[CancelledBy] = Field(default=None, index=True, nullable=True, description="Who initiated the cancellation (platform or customer)")
     # Payment Settlement State
     payment_mode: Optional[PaymentMode] = Field(default=None, index=True, nullable=True, description="Settlement mode selected on completion (cash or online)")
     payment_status: Optional[PaymentStatus] = Field(default=PaymentStatus.PENDING, index=True, nullable=True, description="Payment settlement status")
@@ -137,7 +136,7 @@ class Task(SQLModel, table=True):
             "lazy": "joined",
         },
     )
-    history: List["TaskStatusHistory"] = Relationship(
+    events: List["TaskEventHistory"] = Relationship(
         back_populates="task",
         sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
     )
@@ -146,7 +145,7 @@ class Task(SQLModel, table=True):
         sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
     )
     # pyrefly: ignore [unknown-name]
-    category: Optional["ServiceCategory"] = Relationship(
+    category: Optional["ServiceCategory"] = Relationship( # type: ignore
         sa_relationship_kwargs={"lazy": "joined"}
     )
 
@@ -234,7 +233,7 @@ class TaskPriceAdjustment(SQLModel, table=True):
     description: Optional[str] = Field(default=None, nullable=True, description="Explanation for extra materials or unexpected labor")
     amount: Optional[float] = Field(default=None, nullable=True, description="Additional price amount requested")
     requested_by: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True, description="Foreign key of user requesting adjustment")
-    status: Optional[PriceAdjustmentStatus] = Field(default=PriceAdjustmentStatus.PENDING_APPROVAL, index=True, nullable=True, description="Customer approval status of price adjustment")
+    status: Optional[PriceAdjustmentStatus] = Field(default=PriceAdjustmentStatus.PENDING, index=True, nullable=True, description="Customer approval status of price adjustment")
     created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
 
     task: Task = Relationship(back_populates="price_adjustments")
@@ -254,22 +253,29 @@ class TaskAssignment(SQLModel, table=True):
     started_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when provider initiated work on-site")
     completed_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when task work was finished and verified")
     pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN generated for the assignment")
+    cancellation_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit PIN for customer to cancel task with agreement from provider")
     status: TaskAssignmentStatus = Field(default=TaskAssignmentStatus.ASSIGNED, description="Assignment status")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
 
     task: Task = Relationship(back_populates="assignment")
 
-class TaskStatusHistory(SQLModel, table=True):
-    """Audit log tracking state transitions for tasks."""
-    __tablename__ = "task_status_history"  # type: ignore
+class TaskEventHistory(SQLModel, table=True):
+    """Event log capturing task lifecycle actions, reasons, and structured payloads."""
+    __tablename__ = "task_event_history"  # type: ignore
 
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique status history entry ID")
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique task event history ID")
     task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE", description="Foreign key reference to task")
-    old_status: Optional[TaskStatus] = Field(default=None, nullable=True, description="Previous task status before change")
-    new_status: TaskStatus = Field(description="New task status after change")
-    changed_by: Optional[str] = Field(default=None, foreign_key="users.id", nullable=True, description="User ID or system actor initiating status change")
-    timestamp: datetime = Field(default_factory=lagos_now, description="Timestamp of status transition")
+    event: str = Field(description="Task lifecycle event name")
+    reason: Optional[str] = Field(default=None, nullable=True, description="Human-readable reason or rationale for this event")
+    data: Optional[Dict[str, Any]] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="Structured event payload containing richer context such as status transitions and metadata",
+    )
+    created_at: datetime = Field(default_factory=lagos_now, description="Timestamp of the event")
 
-    task: Task = Relationship(back_populates="history")
+    task: Task = Relationship(back_populates="events")
 
 class TaskAttachment(SQLModel, table=True):
     """Uploaded task attachments such as job photos, invoices, or document images."""

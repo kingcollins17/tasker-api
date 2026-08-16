@@ -31,6 +31,8 @@ from app.features.tasks.schemas import (
     TaskCreate,
     TaskPriceEstimateRequest,
     TaskUpdate,
+    TaskCancellationRequest,
+    TaskRedispatchRequest,
     TaskResponse,
     TaskLocationUpdate,
     TaskLocationResponse,
@@ -123,7 +125,7 @@ async def confirm_draft(
         task = await task_service.confirm_draft(task_id, current_user.id)
 
         # pyrefly: ignore [not-callable]
-        start_dispatch_session_task.delay(task.id)
+        start_dispatch_session_task.delay(task.id) # type: ignore
 
         await system_logger.metric(
             "confirm_draft", timer.stop(), source="tasks.confirm_draft"
@@ -197,55 +199,6 @@ async def cancel_draft(
             detail="An unexpected error occurred while cancelling the draft task.",
         )
 
-
-@router.post(
-    "/price-breakdown",
-    response_model=BaseAPIResponse[PricingBreakdown],
-    status_code=status.HTTP_200_OK,
-)
-async def get_task_price_breakdown(
-    schema: TaskPriceEstimateRequest,
-    current_user: Optional[Union[UserResponse, AdminUser]] = Depends(
-        GetCurrentUserOrAdminOptional()
-    ),
-    task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service),
-):
-    """Calculate and return upfront price breakdown for a task request before posting."""
-    try:
-        timer = Timer()
-        timer.start()
-        user_id = (
-            current_user.id if current_user and hasattr(current_user, "id") else None
-        )
-        breakdown = await task_service.estimate_task_price(schema, customer_id=user_id)
-        await system_logger.metric(
-            "get_task_price_breakdown",
-            timer.stop(),
-            source="tasks.get_task_price_breakdown",
-        )
-        return BaseAPIResponse[PricingBreakdown](
-            data=breakdown,
-            detail="Price breakdown calculated successfully.",
-            status_code=status.HTTP_200_OK,
-        )
-    except HTTPException as e:
-        await system_logger.warn(
-            "get_task_price_breakdown failed",
-            source="tasks.get_task_price_breakdown",
-            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
-        )
-        raise
-    except Exception as e:
-        await system_logger.error(
-            f"get_task_price_breakdown error: {str(e)}",
-            source="tasks.get_task_price_breakdown",
-        )
-        AppErrorHandler.handleError(e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while calculating price breakdown.",
-        )
 
 
 @router.get(
@@ -400,80 +353,6 @@ async def list_active_tasks(
 
 
 @router.get(
-    "/pending",
-    response_model=BaseAPIResponse[PaginatedData[TaskListResponse]],
-    status_code=status.HTTP_200_OK,
-)
-async def list_pending_tasks(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
-    category_id: Optional[str] = Query(None),
-    service_id: Optional[str] = Query(None),
-    search: Optional[str] = Query(None),
-    sort_by: str = Query("scheduled_start_at"),
-    sort_desc: bool = Query(True),
-    current_user: UserResponse = Depends(
-        GetCurrentUser(required_type=UserType.CUSTOMER)
-    ),
-    task_repo: Repository[Task] = Depends(GetRepository(Task)),
-    system_logger: LoggerService = Depends(get_logger_service),
-):
-    """Retrieve a list of pending tasks (open, matching, or searching) for the signed in customer."""
-    try:
-        timer = Timer()
-        timer.start()
-        stmt, count_stmt = TaskQueries.get_customer_tasks_query(
-            customer_id=current_user.id,
-            statuses=[TaskStatus.OPEN, TaskStatus.SEARCHING],
-            category_id=category_id,
-            service_id=service_id,
-            search=search,
-            sort_by=sort_by,
-            sort_desc=sort_desc,
-        )
-
-        count_result = await task_repo.execute(count_stmt)
-        total = count_result.first() or 0
-
-        stmt = stmt.offset((page - 1) * per_page).limit(per_page)
-        results = await task_repo.execute(stmt)
-        tasks = list(results.unique().all())
-
-        items = [TaskListResponse.model_validate(t) for t in tasks]
-
-        data = PaginatedData[TaskListResponse](
-            items=items,
-            total=total,
-            page=page,
-            per_page=per_page,
-        )
-        await system_logger.metric(
-            "list_pending_tasks", timer.stop(), source="tasks.list_pending_tasks"
-        )
-        return BaseAPIResponse[PaginatedData[TaskListResponse]](
-            data=data,
-            detail="Pending tasks retrieved successfully.",
-            status_code=status.HTTP_200_OK,
-        )
-    except HTTPException as e:
-        await system_logger.warn(
-            "list_pending_tasks failed",
-            source="tasks.list_pending_tasks",
-            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
-        )
-        raise
-    except Exception as e:
-        await system_logger.error(
-            f"list_pending_tasks error: {str(e)}", source="tasks.list_pending_tasks"
-        )
-        AppErrorHandler.handleError(e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while fetching pending tasks.",
-        )
-
-
-@router.get(
     "/{task_id}",
     response_model=BaseAPIResponse[TaskResponse],
     status_code=status.HTTP_200_OK,
@@ -563,7 +442,7 @@ async def update_task(
 
         is_admin = isinstance(current_user, AdminUser)
         task = await task_service.update_task(
-            task_id, current_user.id, schema, is_admin=is_admin
+            task_id, current_user.id, schema, is_admin=is_admin,
         )
         await system_logger.metric(
             "update_task", timer.stop(), source="tasks.update_task"
@@ -591,53 +470,118 @@ async def update_task(
         )
 
 
-@router.delete(
-    "/{task_id}", response_model=BaseAPIResponse[bool], status_code=status.HTTP_200_OK
+@router.put(
+    "/{task_id}/cancel",
+    response_model=BaseAPIResponse[TaskResponse],
+    status_code=status.HTTP_200_OK,
 )
-async def delete_task(
+async def cancel_task(
     task_id: str,
-    current_user: Union[UserResponse, AdminUser, None] = Depends(
-        GetCurrentUserOrAdminOptional
-    ),
+    schema: TaskCancellationRequest,
+    current_user: UserResponse = Depends(GetCurrentUser()),
     task_service: TaskService = Depends(get_task_service),
     system_logger: LoggerService = Depends(get_logger_service),
 ):
-    """Cancel/Delete a task."""
+    """Cancel an assigned or in-progress task by the customer.
+    
+    For ASSIGNED tasks:
+    - Task and assignment are marked as cancelled
+    - Provider is notified
+    
+    For IN_PROGRESS tasks:
+    - If cancellation_pin is provided, it must match the assignment's cancellation_pin (mutual agreement)
+    - If no pin is provided, customer is cancelling unilaterally (may incur penalty)
+    - Provider is notified with details about how cancellation occurred
+    """
     try:
         timer = Timer()
         timer.start()
-        if not current_user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
-            )
+        task = await task_service.cancel_task(
+            task_id=task_id,
+            current_user_id=current_user.id,
+            cancellation_reason=schema.cancellation_reason,
+            cancellation_pin=schema.cancellation_pin,
+        )
 
-        is_admin = isinstance(current_user, AdminUser)
-        success = await task_service.delete_task(
-            task_id, current_user.id, is_admin=is_admin
-        )
         await system_logger.metric(
-            "delete_task", timer.stop(), source="tasks.delete_task"
+            "cancel_task", timer.stop(), source="tasks.cancel_task"
         )
-        return BaseAPIResponse[bool](
-            data=success,
+        return BaseAPIResponse[TaskResponse](
+            data=TaskResponse.model_validate(task),
             detail="Task cancelled successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
         await system_logger.warn(
-            "delete_task failed",
-            source="tasks.delete_task",
+            "cancel_task failed",
+            source="tasks.cancel_task",
             metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
         )
         raise
     except Exception as e:
         await system_logger.error(
-            f"delete_task error: {str(e)}", source="tasks.delete_task"
+            f"cancel_task error: {str(e)}", source="tasks.cancel_task"
         )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while cancelling the task.",
+        )
+
+
+@router.put(
+    "/{task_id}/redispatch",
+    response_model=BaseAPIResponse[TaskResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def redispatch_task(
+    task_id: str,
+    schema: TaskRedispatchRequest,
+    current_user: UserResponse = Depends(GetCurrentUser()),
+    task_service: TaskService = Depends(get_task_service),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Redispatch an ASSIGNED task to find a different provider.
+    
+    Only works for ASSIGNED tasks (provider hasn't started work yet).
+    The current assignment is cancelled and a new dispatch session begins,
+    automatically excluding the previous provider from being pinged again.
+    
+    Other providers (including those who declined previously) are eligible
+    to receive new dispatch pings.
+    """
+    try:
+        timer = Timer()
+        timer.start()
+        task = await task_service.redispatch_task(
+            task_id=task_id,
+            current_user_id=current_user.id,
+            feedback=schema.feedback,
+        )
+
+        await system_logger.metric(
+            "redispatch_task", timer.stop(), source="tasks.redispatch_task"
+        )
+        return BaseAPIResponse[TaskResponse](
+            data=TaskResponse.model_validate(task),
+            detail="Task redispatch initiated. Searching for alternative provider.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn(
+            "redispatch_task failed",
+            source="tasks.redispatch_task",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
+        raise
+    except Exception as e:
+        await system_logger.error(
+            f"redispatch_task error: {str(e)}", source="tasks.redispatch_task"
+        )
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while redispatching the task.",
         )
 
 
@@ -717,74 +661,6 @@ async def update_task_location(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while updating the location.",
-        )
-
-
-@router.delete(
-    "/{task_id}/locations/{location_id}",
-    response_model=BaseAPIResponse[bool],
-    status_code=status.HTTP_200_OK,
-)
-async def delete_task_location(
-    task_id: str,
-    location_id: str,
-    current_user: Union[UserResponse, AdminUser, None] = Depends(
-        GetCurrentUserOrAdminOptional
-    ),
-    task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service),
-):
-    """Delete a task's location."""
-    try:
-        timer = Timer()
-        timer.start()
-        if not current_user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
-            )
-
-        task = await task_service.get_task(task_id)
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
-            )
-
-        if isinstance(current_user, UserResponse):
-            if task.customer_id != current_user.id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
-                )
-
-        location = await task_service.location_repo.get(location_id)
-        if not location or location.task_id != task_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Location not found"
-            )
-
-        await task_service.location_repo.delete(location_id)
-        await system_logger.metric(
-            "delete_task_location", timer.stop(), source="tasks.delete_task_location"
-        )
-        return BaseAPIResponse[bool](
-            data=True,
-            detail="Task location deleted successfully.",
-            status_code=status.HTTP_200_OK,
-        )
-    except HTTPException as e:
-        await system_logger.warn(
-            "delete_task_location failed",
-            source="tasks.delete_task_location",
-            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
-        )
-        raise
-    except Exception as e:
-        await system_logger.error(
-            f"delete_task_location error: {str(e)}", source="tasks.delete_task_location"
-        )
-        AppErrorHandler.handleError(e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while deleting the location.",
         )
 
 

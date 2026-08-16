@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.models.tasks import LocationType, TaskAssignmentStatus, TaskStatus, DispatchAttemptStatus
+from app.core.models.tasks import LocationType, TaskAssignmentStatus, TaskStatus, DispatchAttemptStatus, CancelledBy
 from app.core.schemas.users import MinimalCustomerResponse, MinimalProviderResponse
 from app.features.services.schemas import CategoryResponse
 
@@ -39,11 +39,17 @@ class TaskPriceEstimateRequest(BaseModel):
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(default=None)
     description: Optional[str] = Field(default=None)
-    category_id: Optional[str] = Field(default=None)
-    service_id: Optional[str] = Field(default=None)
     expires_at: Optional[datetime] = Field(default=None)
     scheduled_start_at: Optional[datetime] = Field(default=None)
-    status: Optional[TaskStatus] = Field(default=None)
+
+
+class TaskCancellationRequest(BaseModel):
+    cancellation_reason: Optional[str] = Field(default=None, description="Reason for cancelling the task")
+    cancellation_pin: Optional[str] = Field(default=None, description="4-digit PIN for agreeing with provider to cancel task in progress (only for IN_PROGRESS tasks)")
+
+
+class TaskRedispatchRequest(BaseModel):
+    feedback: Optional[str] = Field(default=None, description="Optional feedback about why redispatch is needed (provider late, not a good fit, etc.)")
 
 
 class TaskLocationUpdate(BaseModel):
@@ -99,6 +105,7 @@ class TaskAssignmentResponse(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     pin: Optional[str] = None
+    cancellation_pin: Optional[str] = None
     status: Optional[TaskAssignmentStatus] = None
 
 
@@ -172,6 +179,8 @@ class TaskResponse(BaseModel):
     start_pin: Optional[str] = None
     completion_pin: Optional[str] = None
     updated_at: Optional[datetime] = None
+    cancellation_reason: Optional[str] = None
+    cancelled_by: Optional[CancelledBy] = None
     locations: Optional[List[TaskLocationResponse]] = None
     assignment: Optional[TaskAssignmentResponse] = None
     attachments: Optional[List[TaskAttachmentResponse]] = None

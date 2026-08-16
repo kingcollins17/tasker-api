@@ -10,12 +10,12 @@ if TYPE_CHECKING:
 
 class PricingRuleType(str, enum.Enum):
     """Categorizes dynamic pricing rule calculation types."""
-    BASE_RATE = "base_rate"
-    PER_KM = "per_km"
-    PER_MINUTE = "per_minute"
-    URGENCY_FEE = "urgency_fee"
-    COMPLEXITY_FLAT = "complexity_flat"
-    SURGE_MULTIPLIER = "surge_multiplier"
+    BASE_RATE = "BASE_RATE"
+    PER_KM = "PER_KM"
+    PER_MINUTE = "PER_MINUTE"
+    URGENCY_FEE = "URGENCY_FEE"
+    COMPLEXITY_FLAT = "COMPLEXITY_FLAT"
+    SURGE_MULTIPLIER = "SURGE_MULTIPLIER"
 
 class ProviderServiceLink(SQLModel, table=True):
     """Many-to-many junction table mapping provider profiles to offered services."""

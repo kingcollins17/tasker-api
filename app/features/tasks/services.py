@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 
 from fastapi import Depends, HTTPException, status
 from geoalchemy2 import Geography
-from sqlalchemy import cast
+from sqlalchemy import cast, update
 from sqlalchemy.orm import contains_eager
 from sqlmodel import col, desc, func, select
 
@@ -17,15 +17,16 @@ from app.core.models.notifications import (
 from app.core.models.services import PricingRule, Service, ServiceCategory
 from app.core.models.tasks import (
     DispatchAttemptStatus,
+    DispatchSession,
     LocationType,
     Task,
     TaskAssignment,
     TaskAssignmentStatus,
     TaskAttachment,
     TaskDispatchAttempt,
+    TaskEventHistory,
     TaskLocation,
     TaskStatus,
-    TaskStatusHistory,
 )
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
 from app.core.models.users import ProviderProfile, User, UserLocation, UserType
@@ -59,7 +60,7 @@ class TaskService:
         location_repo: Repository[TaskLocation],
         attempt_repo: Repository[TaskDispatchAttempt],
         assignment_repo: Repository[TaskAssignment],
-        history_repo: Repository[TaskStatusHistory],
+        history_repo: Repository[TaskEventHistory],
         attachment_repo: Repository[TaskAttachment],
         user_repo: Repository[User],
         transaction_repo: Repository[Transaction],
@@ -83,6 +84,23 @@ class TaskService:
 
     def _generate_pin(self) -> str:
         return f"{random.randint(0, 9999):04d}"
+
+    async def log_task_event(
+        self,
+        task_id: str,
+        event: str,
+        reason: Optional[str] = None,
+        **kwargs,
+    ) -> TaskEventHistory:
+        payload = dict(kwargs)
+        history = TaskEventHistory(
+            task_id=task_id,
+            event=event,
+            reason=reason,
+            data=payload if payload else None,
+        )
+        await self.history_repo.add(history)
+        return history
 
     async def create_task(self, customer_id: str, schema: TaskCreate) -> Task:
         # Fetch customer to get their region_id
@@ -150,14 +168,13 @@ class TaskService:
             )
             await self.location_repo.add(location)
 
-        # Write TaskStatusHistory
-        history = TaskStatusHistory(
+        await self.log_task_event(
             task_id=task.id,
-            old_status=None,
-            new_status=TaskStatus.DRAFT,
-            changed_by=customer_id,
+            event="task_created",
+            reason="Customer created task",
+            status=TaskStatus.DRAFT.value,
+            customer_id=customer_id,
         )
-        await self.history_repo.add(history)
 
         # Refresh to populate relationships
         await self.task_repo.refresh(task)
@@ -184,13 +201,14 @@ class TaskService:
         updates = {"status": TaskStatus.OPEN, "updated_at": lagos_now()}
         await self.task_repo.update(task_id, updates)
 
-        history = TaskStatusHistory(
+        await self.log_task_event(
             task_id=task.id,
-            old_status=TaskStatus.DRAFT,
-            new_status=TaskStatus.OPEN,
-            changed_by=current_user_id,
+            event="task_confirmed",
+            reason="Customer confirmed draft task",
+            from_status=TaskStatus.DRAFT.value,
+            to_status=TaskStatus.OPEN.value,
+            user_id=current_user_id,
         )
-        await self.history_repo.add(history)
         await self.task_repo.refresh(task)
         return task
 
@@ -213,6 +231,290 @@ class TaskService:
 
         await self.task_repo.delete(task_id)
         return True
+
+    async def cancel_task(
+        self,
+        task_id: str,
+        current_user_id: str,
+        cancellation_reason: Optional[str] = None,
+        cancellation_pin: Optional[str] = None,
+    ) -> Task:
+        """Cancel an assigned or in-progress task by customer.
+        
+        If task is ASSIGNED:
+        - Marks task and assignment as cancelled
+        - Notifies provider of cancellation
+        - Frees up provider for other tasks
+        
+        If task is IN_PROGRESS:
+        - Validates cancellation_pin if provided (indicates agreement with provider)
+        - If no pin: customer acting alone, incurs penalty
+        - Marks task as cancelled by customer
+        - Notifies provider
+        """
+        from app.core.models.tasks import CancelledBy
+        
+        task = await self.task_repo.get(task_id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
+            )
+        
+        # Authorization: only customer who created task can cancel
+        if task.customer_id != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to cancel this task",
+            )
+        
+        # Only ASSIGNED or IN_PROGRESS tasks can be cancelled
+        if task.status not in [TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot cancel task with status {task.status.value}. Only ASSIGNED or IN_PROGRESS tasks can be cancelled.",
+            )
+        
+        # Get assignment details
+        assignment = task.assignment
+        if not assignment:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No assignment found for this task",
+            )
+        
+        provider_id = assignment.provider_id
+        was_in_progress = task.status == TaskStatus.IN_PROGRESS
+        pin_provided = cancellation_pin is not None and cancellation_pin.strip() != ""
+        pin_valid = False
+        
+        # For IN_PROGRESS tasks, validate cancellation_pin
+        if was_in_progress:
+            if pin_provided:
+                # Check if pin matches the assignment's cancellation_pin
+                pin_valid = assignment.cancellation_pin == cancellation_pin
+                if not pin_valid:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid cancellation PIN",
+                    )
+        
+        # Update task
+        old_status = task.status
+        task_updates = {
+            "status": TaskStatus.CANCELLED,
+            "cancellation_reason": cancellation_reason,
+            "cancelled_by": CancelledBy.CUSTOMER,
+            "updated_at": lagos_now(),
+        }
+        await self.task_repo.update(task_id, task_updates)
+        
+        # Update assignment status
+        assignment_updates = {
+            "status": TaskAssignmentStatus.CANCELLED,
+            "updated_at": lagos_now(),
+        }
+        await self.assignment_repo.update(assignment.id, assignment_updates)
+        
+        # Log event
+        event_data = {
+            "from_status": old_status.value,
+            "to_status": TaskStatus.CANCELLED.value,
+            "cancelled_by": CancelledBy.CUSTOMER.value,
+            "user_id": current_user_id,
+            "provider_id": provider_id,
+        }
+        
+        if was_in_progress:
+            event_data["pin_provided"] = str(pin_provided)
+            event_data["pin_valid"] = str(pin_valid)
+            if not pin_provided:
+                event_data["penalty_applied"] = "true"
+        
+        await self.log_task_event(
+            task_id=task.id,
+            event="task_cancelled_by_customer",
+            reason=cancellation_reason or "Customer cancelled the task",
+            **event_data,
+        )
+        
+        # Send notification to provider
+        provider = await self.user_repo.get(provider_id)
+        if provider:
+            notification_title = "Task Cancelled"
+            if was_in_progress:
+                if pin_valid:
+                    notification_body = f"The customer has cancelled the task '{task.title}' by mutual agreement."
+                else:
+                    notification_body = f"The customer has cancelled the task '{task.title}' they started. This may result in a penalty charge."
+            else:
+                notification_body = f"The customer has cancelled the assigned task '{task.title}'."
+            
+            await self.notification_service.notify(
+                recepients=[provider_id],
+                title=notification_title,
+                body=notification_body,
+                type=NotificationType.TASK_CANCELLED,
+                data={
+                    "task_id": task.id,
+                    "task_title": task.title,
+                    "cancelled_by": CancelledBy.CUSTOMER.value,
+                    "agreement_pin_used": pin_valid,
+                },
+                channels=["push"],
+                expires_at=None,
+            )
+        
+        # Refresh task to return updated state
+        await self.task_repo.refresh(task)
+        return task
+
+    async def redispatch_task(
+        self,
+        task_id: str,
+        current_user_id: str,
+        feedback: Optional[str] = None,
+    ) -> Task:
+        """Redispatch an ASSIGNED task to find a different provider.
+        
+        Flow:
+        1. Validates task is ASSIGNED (customer has not started work yet)
+        2. Gets currently assigned provider
+        3. Cancels current assignment
+        4. Clears task.assigned_provider_id
+        5. Creates a fake CANCELLED dispatch attempt for old provider (to exclude them)
+        6. Closes old dispatch session
+        7. Moves task back to OPEN status
+        8. Triggers new dispatch session to find replacement provider
+        9. Notifies old provider of redispatch
+        
+        This ensures the matching engine will not ping the old provider again,
+        but will consider all other providers (including those who declined before).
+        """
+        from app.core.models.tasks import CancelledBy, DispatchSessionStatus
+        
+        task = await self.task_repo.get(task_id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
+            )
+        
+        # Authorization: only customer who created task can redispatch
+        if task.customer_id != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to redispatch this task",
+            )
+        
+        # Only ASSIGNED tasks can be redispatched (not yet started)
+        if task.status != TaskStatus.ASSIGNED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot redispatch task with status {task.status.value}. Only ASSIGNED tasks can be redispatched.",
+            )
+        
+        # Get assignment details
+        assignment = task.assignment
+        if not assignment:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No assignment found for this task",
+            )
+        
+        old_provider_id = assignment.provider_id
+        old_assignment_id = assignment.id
+        
+        # Get old dispatch session to close it
+        stmt_old_session = select(DispatchSession).where(
+            DispatchSession.task_id == task_id,
+            DispatchSession.status == DispatchSessionStatus.ASSIGNED,
+        )
+        res_old_session = await self.task_repo.execute(stmt_old_session)
+        old_dispatch_session = res_old_session.one_or_none()
+        
+        # Step 1: Cancel the current assignment
+        assignment_updates = {
+            "status": TaskAssignmentStatus.CANCELLED,
+            "updated_at": lagos_now(),
+        }
+        await self.assignment_repo.update(old_assignment_id, assignment_updates)
+        
+        # Step 2: Create a fake dispatch attempt with status CANCELLED for the old provider
+        # This ensures the matching engine will naturally exclude them from next batch
+        fake_attempt = TaskDispatchAttempt(
+            task_id=task_id,
+            dispatch_session_id=old_dispatch_session.id if old_dispatch_session else None,
+            provider_id=old_provider_id,
+            sequence_order=0,
+            status=DispatchAttemptStatus.CANCELED,
+            pinged_at=lagos_now(),
+            responded_at=lagos_now(),
+            match_score=0.0,
+            offered_payout=0.0,
+        )
+        await self.attempt_repo.add(fake_attempt)
+        
+        # Step 3: Close old dispatch session if it exists
+        if old_dispatch_session:
+            session_updates = {
+                "status": DispatchSessionStatus.CANCELLED,
+                "updated_at": lagos_now(),
+            }
+            await self.task_repo.execute(
+                update(DispatchSession).where(
+                    DispatchSession.id == old_dispatch_session.id
+                ).values(**session_updates)
+            )
+        
+        # Step 4: Move task back to OPEN and clear assigned provider
+        old_status = task.status
+        task_updates = {
+            "status": TaskStatus.OPEN,
+            "assigned_provider_id": None,
+            "updated_at": lagos_now(),
+        }
+        await self.task_repo.update(task_id, task_updates)
+        
+        # Step 5: Log the redispatch event
+        await self.log_task_event(
+            task_id=task.id,
+            event="task_redispatched",
+            reason=feedback or "Customer requested redispatch to different provider",
+            from_status=old_status.value,
+            to_status=TaskStatus.OPEN.value,
+            customer_id=current_user_id,
+            old_provider_id=old_provider_id,
+            feedback=feedback,
+        )
+        
+        # Step 6: Notify old provider of redispatch
+        old_provider = await self.user_repo.get(old_provider_id)
+        if old_provider:
+            notification_body = f"The customer has requested a different provider for the task '{task.title}'."
+            if feedback:
+                notification_body += f" Reason: {feedback}"
+            
+            await self.notification_service.notify(
+                recepients=[old_provider_id],
+                title="Task Redispatched",
+                body=notification_body,
+                type=NotificationType.SYSTEM_ALERT,
+                data={
+                    "task_id": task.id,
+                    "task_title": task.title,
+                    "feedback": feedback,
+                },
+                channels=["push"],
+                expires_at=None,
+            )
+        
+        # Step 7: Trigger new dispatch session
+        from app.features.tasks.celery.dispatch import start_dispatch_session_task
+        # pyrefly: ignore [not-callable]
+        start_dispatch_session_task.delay(task.id)  # type: ignore
+        
+        # Refresh and return updated task
+        await self.task_repo.refresh(task)
+        return task
 
     async def estimate_task_price(
         self,
@@ -305,10 +607,10 @@ class TaskService:
 
         if latitude is not None and longitude is not None and radius_km is not None:
             # pyrefly: ignore [bad-argument-type]
-            statement = statement.join(TaskLocation, Task.id == TaskLocation.task_id)
+            statement = statement.join(TaskLocation, col(Task.id) == col(TaskLocation.task_id))
             count_statement = count_statement.join(
                 TaskLocation,
-                Task.id == TaskLocation.task_id,  # pyrefly: ignore [bad-argument-type]
+                col(Task.id) == col(TaskLocation.task_id),  # pyrefly: ignore [bad-argument-type]
             )
 
             dialect_name = (
@@ -340,9 +642,9 @@ class TaskService:
                 )
                 statement = statement.options(
                     # pyrefly: ignore [bad-argument-type]
-                    contains_eager(Task.locations).with_expression(
+                    contains_eager(Task.locations).with_expression( # type: ignore
                         # pyrefly: ignore [bad-argument-type]
-                        TaskLocation.distance_km,
+                        TaskLocation.distance_km, # type: ignore
                         distance_expr,
                     )
                 )
@@ -413,8 +715,6 @@ class TaskService:
         for key in [
             "title",
             "description",
-            "category_id",
-            "service_id",
             "scheduled_start_at",
             "expires_at",
         ]:
@@ -422,24 +722,10 @@ class TaskService:
             if val is not None:
                 updates[key] = val
 
-        old_status = task.status
-        new_status = schema.status
-        if new_status is not None and new_status != old_status:
-            updates["status"] = new_status
-
         if updates:
             updates["updated_at"] = lagos_now()
             await self.task_repo.update(task_id, updates)
             await self.task_repo.refresh(task)
-
-        if new_status is not None and new_status != old_status:
-            history = TaskStatusHistory(
-                task_id=task.id,
-                old_status=old_status,
-                new_status=new_status,
-                changed_by=current_user_id,
-            )
-            await self.history_repo.add(history)
 
         await self.task_repo.refresh(task)
         return task
@@ -469,13 +755,14 @@ class TaskService:
             task_id, {"status": TaskStatus.CANCELLED, "updated_at": lagos_now()}
         )
 
-        history = TaskStatusHistory(
+        await self.log_task_event(
             task_id=task.id,
-            old_status=old_status,
-            new_status=TaskStatus.CANCELLED,
-            changed_by=current_user_id,
+            event="task_cancelled",
+            reason="Task cancelled by user",
+            from_status=old_status.value if isinstance(old_status, TaskStatus) else old_status,
+            to_status=TaskStatus.CANCELLED.value,
+            user_id=current_user_id,
         )
-        await self.history_repo.add(history)
         return True
 
     async def initiate_task_payment(
@@ -572,8 +859,8 @@ def get_task_service(
     assignment_repo: Repository[TaskAssignment] = Depends(
         GetRepository(TaskAssignment)
     ),
-    history_repo: Repository[TaskStatusHistory] = Depends(
-        GetRepository(TaskStatusHistory)
+    history_repo: Repository[TaskEventHistory] = Depends(
+        GetRepository(TaskEventHistory)
     ),
     attachment_repo: Repository[TaskAttachment] = Depends(
         GetRepository(TaskAttachment)

@@ -44,7 +44,7 @@ from .notifications import (
 )
 from .tasks import (
     TaskStatus,
-    TaskBidStatus,
+ 
     DispatchAttemptStatus,
     DispatchSessionStatus,
     PriceAdjustmentStatus,
@@ -55,7 +55,7 @@ from .tasks import (
     TaskDispatchAttempt,
     TaskPriceAdjustment,
     TaskAssignment,
-    TaskStatusHistory,
+    TaskEventHistory,
     TaskAttachment,
 )
 from .transactions import (
@@ -112,7 +112,6 @@ __all__ = [
     "DayOfWeek",
     "ProviderAvailability",
     "TaskStatus",
-    "TaskBidStatus",
     "DispatchAttemptStatus",
     "DispatchSessionStatus",
     "PriceAdjustmentStatus",
@@ -123,7 +122,7 @@ __all__ = [
     "TaskDispatchAttempt",
     "TaskPriceAdjustment",
     "TaskAssignment",
-    "TaskStatusHistory",
+    "TaskEventHistory",
     "TaskAttachment",
     "Transaction",
     "TransactionType",

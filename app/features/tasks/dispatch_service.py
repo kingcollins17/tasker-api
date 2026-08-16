@@ -44,6 +44,7 @@ from app.features.tasks.celery.metrics import (
     sync_provider_metrics,
     sync_service_metrics,
 )
+from app.features.tasks.services import TaskService, get_task_service
 
 
 _LOG_SOURCE = "dispatch.service"
@@ -65,6 +66,7 @@ class DispatchEventService:
         system_logger: LoggerService,
         notification_service: NotificationService,
         credibility_service: CredibilityService,
+        task_service: TaskService,
     ):
         self.session = session
         self.task_repo = task_repo
@@ -75,6 +77,7 @@ class DispatchEventService:
         self.system_logger = system_logger
         self.notification_service = notification_service
         self.credibility_service = credibility_service
+        self.task_service = task_service
 
     
     async def handle_ping_response(
@@ -105,7 +108,7 @@ class DispatchEventService:
             await self.system_logger.warn(msg, source=_LOG_SOURCE, metadata={"task_id": task_id, "provider_id": provider_id})
             return
 
-        # 3. Mark attempt status and responded timestamp
+        task = await self.task_repo.get(task_id)
         now = lagos_now()
         new_status = (
             DispatchAttemptStatus.ACCEPTED
@@ -116,6 +119,34 @@ class DispatchEventService:
                 else DispatchAttemptStatus.TIMEOUT
             )
         )
+
+        if new_status == DispatchAttemptStatus.ACCEPTED:
+            if task and task.status == TaskStatus.ASSIGNED:
+                if task.assigned_provider_id and task.assigned_provider_id != provider_id:
+                    msg = f"DispatchEventService.handle_ping_response: task {task_id} was already assigned to provider {task.assigned_provider_id}; ignoring late acceptance from {provider_id}"
+                    logger.warning(msg)
+                    await self.system_logger.warn(msg, source=_LOG_SOURCE, metadata={"task_id": task_id, "provider_id": provider_id, "assigned_provider_id": task.assigned_provider_id})
+                    return
+                if task.assigned_provider_id == provider_id:
+                    msg = f"DispatchEventService.handle_ping_response: task {task_id} was already assigned to provider {provider_id}; ignoring duplicate response"
+                    logger.warning(msg)
+                    await self.system_logger.warn(msg, source=_LOG_SOURCE, metadata={"task_id": task_id, "provider_id": provider_id})
+                    return
+
+            stmt_existing_accept = select(TaskDispatchAttempt).where(
+                TaskDispatchAttempt.task_id == task_id,
+                TaskDispatchAttempt.status == DispatchAttemptStatus.ACCEPTED,
+                TaskDispatchAttempt.provider_id != provider_id,
+            )
+            res_existing_accept = await self.attempt_repo.execute(stmt_existing_accept)
+            other_accept = res_existing_accept.one_or_none()
+            if other_accept:
+                msg = f"DispatchEventService.handle_ping_response: another provider {other_accept.provider_id} already accepted task {task_id}; ignoring stale acceptance from {provider_id}"
+                logger.warning(msg)
+                await self.system_logger.warn(msg, source=_LOG_SOURCE, metadata={"task_id": task_id, "provider_id": provider_id, "accepted_provider_id": other_accept.provider_id})
+                return
+
+        # 3. Mark attempt status and responded timestamp
         attempt.status = new_status
         attempt.responded_at = now
         await self.attempt_repo.add(attempt)
@@ -126,7 +157,7 @@ class DispatchEventService:
             metadata={"attempt_id": attempt.id, "task_id": task_id, "provider_id": provider_id, "status": new_status.value},
         )
 
-        # 4. Delegate workflow execution based on outcome
+        # 4. Finalize accepted dispatches only after stale checks pass
         if new_status == DispatchAttemptStatus.ACCEPTED:
             await self._process_acceptance(task_id, provider_id, attempt.id, now)
         else:
@@ -168,6 +199,16 @@ class DispatchEventService:
                 updated_at=now,
             )
             await self.assignment_repo.add(new_assignment)
+
+        await self.task_service.log_task_event(
+            task_id=task_id,
+            event="task_assigned",
+            reason="Provider accepted dispatch and task was assigned",
+            provider_id=provider_id,
+            assigned_provider_id=provider_id,
+            task_status=TaskStatus.ASSIGNED.value,
+            assignment_id=(assignment.id if assignment else None),
+        )
 
         # Set provider duty status to ON_TASK
         stmt_prof = select(ProviderProfile).where(ProviderProfile.user_id == provider_id)
@@ -275,6 +316,7 @@ def get_dispatch_event_service(
     system_logger: LoggerService = Depends(get_logger_service),
     notification_service: NotificationService = Depends(get_notification_service),
     credibility_service: CredibilityService = Depends(get_credibility_service),
+    task_service: TaskService = Depends(get_task_service),
 ) -> DispatchEventService:
     """FastAPI dependency returning an active ``DispatchEventService`` instance with injected dependencies."""
     return DispatchEventService(
@@ -287,5 +329,6 @@ def get_dispatch_event_service(
         system_logger=system_logger,
         notification_service=notification_service,
         credibility_service=credibility_service,
+        task_service=task_service,
     )
 

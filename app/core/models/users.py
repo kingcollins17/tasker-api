@@ -16,39 +16,39 @@ class UserType(str, enum.Enum):
 
 class KYCStatus(str, enum.Enum):
     """Tracks Know-Your-Customer verification workflow states for service providers."""
-    PENDING_SUBMISSION = "pending_submission"
-    SUBMITTED = "submitted"
-    PENDING_ADMIN_REVIEW = "pending_admin_review"
-    VERIFIED = "verified"
-    FAILED = "failed"
+    PENDING_SUBMISSION = "PENDING_SUBMISSION"
+    SUBMITTED = "SUBMITTED"
+    PENDING_ADMIN_REVIEW = "PENDING_ADMIN_REVIEW"
+    VERIFIED = "VERIFIED"
+    FAILED = "FAILED"
 
 class PaymentProvider(str, enum.Enum):
     """Supported payment gateway integration partners."""
-    PAYSTACK = "paystack"
-    MONNIFY = "monnify"
-    FLUTTERWAVE = "flutterwave"
+    PAYSTACK = "PAYSTACK"
+    MONNIFY = "MONNIFY"
+    FLUTTERWAVE = "FLUTTERWAVE"
 
 class DutyStatus(str, enum.Enum):
     """Real-time availability and dispatch activity state for service providers."""
-    OFFLINE = "offline"
-    ONLINE_AVAILABLE = "online_available"
-    ON_DISPATCH = "on_dispatch"
-    ON_TASK = "on_task"
+    OFFLINE = "OFFLINE"
+    ONLINE_AVAILABLE = "ONLINE_AVAILABLE"
+    ON_DISPATCH = "ON_DISPATCH"
+    ON_TASK = "ON_TASK"
 
 class VerificationStatus(str, enum.Enum):
     """Status for verification checks."""
-    PENDING = "pending"
-    PASSED = "passed"
-    FAILED = "failed"
-    UNDER_REVIEW = "under_review"
+    PENDING = "PENDING"
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    UNDER_REVIEW = "UNDER_REVIEW"
 
 class OnboardingStep(str, enum.Enum):
     """Current step in the provider onboarding vetting process."""
-    KYC = "kyc"
-    TRADE_QUIZ = "trade_quiz"
-    TOOL_PROOF = "tool_proof"
-    GUARANTOR = "guarantor"
-    COMPLETED = "completed"
+    KYC = "KYC"
+    TRADE_QUIZ = "TRADE_QUIZ"
+    GUARANTOR = "GUARANTOR"
+    INTERVIEW = "INTERVIEW"
+    COMPLETED = "COMPLETED"
 
 class MediaType(str, enum.Enum):
     """Type of portfolio media uploaded by a provider."""
@@ -79,7 +79,7 @@ class User(SQLModel, table=True):
     phone_verified: bool = Field(default=False, description="Whether the user's phone number has been verified")
     region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True, description="Default geographical region assignment")
     credibility_score: float = Field(default=25.0, description="Platform credibility score metric based on history")
-    average_ratings: float = Field(default=0.0, description="Aggregated average rating score across completed tasks")
+    average_ratings: float = Field(default=0.0, description="Aggregated average rating score across completed tasks based on history")
     total_ratings: int = Field(default=0, description="Total number of ratings received from completed tasks")
     created_at: datetime = Field(default_factory=lagos_now, description="Timestamp when the user registered")
     updated_at: datetime = Field(default_factory=lagos_now, description="Timestamp when user details were last updated")

@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import List, Optional, Set, Tuple
 
 from sqlalchemy import update
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.logging import logger
@@ -62,31 +62,45 @@ class MatchingEngine:
         session_id: str,
         db_session: AsyncSession,
         ping_duration: int = 180,
+        session_repo: Optional[Repository[DispatchSession]] = None,
+        task_repo: Optional[Repository[Task]] = None,
+        task_location_repo: Optional[Repository[TaskLocation]] = None,
+        attempt_repo: Optional[Repository[TaskDispatchAttempt]] = None,
+        provider_profile_repo: Optional[Repository[ProviderProfile]] = None,
+        user_repo: Optional[Repository[User]] = None,
+        geo_service: Optional[PostGISProviderLocationService] = None,
+        notification_service=None,
+        availability_service=None,
+        system_logger=None,
     ):
+
         self.session_id = session_id
         self.db_session = db_session
         self.ping_duration = ping_duration
 
-        self.session_repo = Repository(DispatchSession, db_session)
-        self.task_repo = Repository(Task, db_session)
-        self.task_location_repo = Repository(TaskLocation, db_session)
-        self.attempt_repo = Repository(TaskDispatchAttempt, db_session)
-        self.provider_profile_repo = Repository(ProviderProfile, db_session)
-        self.user_repo = Repository(User, db_session)
+        self.session_repo = session_repo or Repository(DispatchSession, db_session)
+        self.task_repo = task_repo or Repository(Task, db_session)
+        self.task_location_repo = task_location_repo or Repository(TaskLocation, db_session)
+        self.attempt_repo = attempt_repo or Repository(TaskDispatchAttempt, db_session)
+        self.provider_profile_repo = provider_profile_repo or Repository(ProviderProfile, db_session)
+        self.user_repo = user_repo or Repository(User, db_session)
 
-        location_repo = Repository(UserLocation, db_session)
-        self.geo_service = PostGISProviderLocationService(
-            location_repo=location_repo,
-            provider_profile_repo=self.provider_profile_repo,
-        )
-        self.notification_service = get_notification_service_manual(db_session)
-        self.availability_service = get_availability_service_manual(db_session)
-        self.system_logger = get_logger_service_manual(db_session)
+        if geo_service is None:
+            location_repo = Repository(UserLocation, db_session)
+            geo_service = PostGISProviderLocationService(
+                location_repo=location_repo,
+                provider_profile_repo=self.provider_profile_repo,
+            )
+        self.geo_service = geo_service
+
+        self.notification_service = notification_service or get_notification_service_manual(db_session)
+        self.availability_service = availability_service or get_availability_service_manual(db_session)
+        self.system_logger = system_logger or get_logger_service_manual(db_session)
 
     async def _fetch_and_filter_candidates(
         self, task: Task
-    ) -> List[Tuple[User, ProviderProfile, float]]:
-        """Discovers nearby providers using spatial index and filters by DB eligibility."""
+    ) -> List[_ScoredCandidate]:
+        """Discovers nearby providers, filters by eligibility, scores them, and returns them in ranked order."""
         if not task.service_id:
             print(
                 f"DEBUG [_fetch_and_filter]: No service_id on task {task.id}, returning empty"
@@ -96,7 +110,6 @@ class MatchingEngine:
         stmt_loc = select(TaskLocation).where(TaskLocation.task_id == task.id).limit(1)
         res_loc = await self.task_location_repo.execute(stmt_loc)
 
-        # Do not call scalar or none, result is already a scalar
         task_loc: Optional[TaskLocation] = res_loc.one_or_none()
         if not task_loc or task_loc.latitude is None or task_loc.longitude is None:
             print(
@@ -156,9 +169,6 @@ class MatchingEngine:
             )
         )
 
-        target_time = (
-            task.scheduled_start_at if task.scheduled_start_at else lagos_now()
-        )
         stmt_eligibility = stmt_eligibility.where(
             ProviderProfile.is_online == True,  # noqa: E712
             ProviderProfile.duty_status == DutyStatus.ONLINE_AVAILABLE,
@@ -182,19 +192,9 @@ class MatchingEngine:
                     f"is_online={p.is_online if p else 'N/A'}, duty_status={p.duty_status if p else 'N/A'}"
                 )
 
-        eligible: List[Tuple[User, ProviderProfile, float]] = []
+        scored: List[_ScoredCandidate] = []
         for user, profile in rows:
             dist_km = nearby_map.get(user.id, 10.0)
-            eligible.append((user, profile, dist_km))
-
-        return eligible
-
-    def _score_and_sort_candidates(
-        self, candidates: List[Tuple[User, ProviderProfile, float]]
-    ) -> List[_ScoredCandidate]:
-        """Calculates multi-factor ranking scores and sorts candidates descending."""
-        scored: List[_ScoredCandidate] = []
-        for user, profile, dist_km in candidates:
             acceptance_rate = (
                 profile.acceptance_rate_30d
                 if profile.acceptance_rate_30d is not None
@@ -336,7 +336,7 @@ class MatchingEngine:
         # Set provider duty status to ON_DISPATCH
         stmt_update = (
             update(ProviderProfile)
-            .where(ProviderProfile.user_id == candidate.user_id)
+            .where(col(ProviderProfile.user_id) == candidate.user_id)
             .values(duty_status=DutyStatus.ON_DISPATCH)
         )
         await self.provider_profile_repo.execute(stmt_update)
@@ -512,11 +512,10 @@ class MatchingEngine:
             metadata={"task_id": task.id, "eligible_candidates_count": len(candidates)},
         )
 
-        print(f"DEBUG [MatchingEngine.run]: Calling _score_and_sort_candidates")
-        scored_candidates = self._score_and_sort_candidates(candidates)
         print(
-            f"DEBUG [MatchingEngine.run]: _score_and_sort_candidates returned {len(scored_candidates)} scored candidates"
+            f"DEBUG [MatchingEngine.run]: _fetch_and_filter_candidates returned {len(candidates)} scored candidates in ranked order"
         )
+        scored_candidates = candidates
 
         batch_size = max(1, dispatch_session.batch_size or 1)
         print(
@@ -526,7 +525,6 @@ class MatchingEngine:
             scored_candidates,
             task.id,
             batch_size,
-            dispatch_session_id=dispatch_session.id,
         )
         print(
             f"DEBUG [MatchingEngine.run]: _get_next_batch returned {len(batch)} candidates for batch: {[c.user_id for c in batch]}"
@@ -625,8 +623,8 @@ class MatchingEngine:
         # pyrefly: ignore [not-callable]
         execute_matching_engine_task.apply_async(
             args=[dispatch_session.id],
-            countdown=ping_duration + 60,  # Add 60 seconds for delay
-        )
+            countdown=ping_duration + 120,  # Add 120 seconds for delay
+        ) # type: ignore
 
         msg = f"MatchingEngine: Dispatched batch of {len(batch)} candidate(s) for session {dispatch_session.id} (task={task.id}). Next iteration scheduled in {ping_duration + 60}s."
         print(f"DEBUG [MatchingEngine.run]: {msg}")
