@@ -37,10 +37,10 @@ psql command = PGPASSWORD=fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa psql -h dpg-d8kp6e3eo
 
 // create task example 
 {
-  "title": "Express Parcel Courier",
+  "title": "Standard Home Cleaning",
   "description": "I need urgent courier services",
-  "category_id": "c101a111-2222-3333-4444-555555555503",
-  "service_id": "s202b222-1111-2222-3333-444444444101",
+  "category_id": "c101a111-2222-3333-4444-555555555502",
+  "service_id": "s202b222-1111-2222-3333-444444444201",
   "expires_at": "2026-08-02T18:27:38.950257",
   "scheduled_start_at": null,
   "locations": [

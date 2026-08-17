@@ -473,7 +473,7 @@ class MatchingEngine:
         # 1. Atomically lock the task row to verify it's still SEARCHING
         stmt_task = select(Task.status).where(Task.id == task.id).with_for_update()
         res_task = await self.task_repo.execute(stmt_task)
-        current_status = res_task.scalar_one_or_none()
+        current_status = res_task.one_or_none()
         if current_status != TaskStatus.SEARCHING:
             logger.info(f"MatchingEngine: Task {task.id} is no longer SEARCHING. Aborting dispatch attempt.")
             return None
