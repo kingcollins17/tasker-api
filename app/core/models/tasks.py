@@ -1,13 +1,14 @@
-from sqlalchemy import null
 import enum
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
-from typing import List, Optional, Any, Dict
-from sqlmodel import Field, SQLModel, Relationship
-from sqlalchemy import Column, JSON
-from app.core.utils.datetime_helper import lagos_now
-from app.core.models.spatial import PointType
+
+from sqlalchemy import Column, Index, JSON, null
 from sqlalchemy.orm import query_expression
+from sqlmodel import Field, Relationship, SQLModel
+
+from app.core.models.spatial import PointType
+from app.core.utils.datetime_helper import lagos_now
 
 class LocationType(str, enum.Enum):
     """Discriminates task geographical point roles."""
@@ -36,7 +37,6 @@ class PaymentStatus(str, enum.Enum):
     PENDING = "PENDING"
     PAYMENT_REQUESTED = "PAYMENT_REQUESTED"
     PAID = "PAID"
-    CASH_PAID = "CASH_PAID"
     FAILED = "FAILED"
 
 
@@ -71,8 +71,8 @@ class TaskAssignmentStatus(str, enum.Enum):
 
 class CancelledBy(str, enum.Enum):
     """Who initiated task cancellation."""
-    PLATFORM = "platform"
-    CUSTOMER = "customer"
+    PLATFORM = "PLATFORM"
+    CUSTOMER = "CUSTOMER"
 
 class Task(SQLModel, table=True):
     """Primary task entity storing request details, location, upfront pricing breakdowns, and dispatch status."""
@@ -168,7 +168,25 @@ class DispatchSession(SQLModel, table=True):
     task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE", description="Foreign key reference to task being dispatched")
     status: DispatchSessionStatus = Field(default=DispatchSessionStatus.SEARCHING, index=True, description="Current workflow state of the dispatch session")
     batch_size: int = Field(default=5, description="Number of candidate pings to process per step")
-    current_batch: int = Field(default=1, description="Current batch step iteration number")
+    lock_version: int = Field(
+        default=1,
+        description="Optimistic-concurrency version counter. Incremented exactly once per `run()` step, by run() only. Never read or written by pagination logic.",
+    )
+    search_radius_km: Optional[float] = Field(
+        default=10.0,
+        nullable=True,
+        description="Current search radius in kilometers for provider candidate matching",
+    )
+    max_search_radius_km: Optional[float] = Field(
+        default=30.0,
+        nullable=True,
+        description="Maximum search radius limit in kilometers for expanding provider search",
+    )
+    auto_expand_radius: Optional[bool] = Field(
+        default=True,
+        nullable=True,
+        description="Tracks whether this dispatch session should keep increasing search radius up to max_search_radius_km if previous PostGIS searches do not return candidates",
+    )
     is_redispatch: Optional[bool] = Field(default=False, nullable=True, description="Tracks whether the dispatch was automatically started by the system (False) or is a redispatch by the customer (True)")
     redispatch_reason: Optional[str] = Field(default=None, nullable=True, description="Optional rationale or customer feedback for requesting a task redispatch")
     excluded_provider_ids: Optional[List[str]] = Field(
@@ -186,6 +204,9 @@ class DispatchSession(SQLModel, table=True):
 class TaskLocation(SQLModel, table=True):
     """Geographical address and PostGIS coordinate point associated with a task."""
     __tablename__ = "task_locations"  # type: ignore
+    __table_args__ = (
+        Index("idx_task_locations_spatial", "geography_point", postgresql_using="gist"),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique location entry ID")
     task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE", description="Foreign key reference to associated task")

@@ -139,7 +139,7 @@ async def confirm_draft(
         await system_logger.warn(
             "confirm_draft failed",
             source="tasks.confirm_draft",
-            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
         )
         raise
     except Exception as e:

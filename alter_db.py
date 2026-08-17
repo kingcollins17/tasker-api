@@ -4,11 +4,21 @@ from app.core.database import engine
 
 async def main():
     async with engine.begin() as conn:
-        try:
-            await conn.execute(text("ALTER TABLE task_dispatch_attempts ADD COLUMN dispatch_session_id VARCHAR REFERENCES dispatch_sessions(id) ON DELETE CASCADE;"))
-            print("Column added successfully!")
-        except Exception as e:
-            print("Error:", e)
+        for stmt in [
+            "ALTER TABLE dispatch_sessions ADD COLUMN IF NOT EXISTS search_radius_km FLOAT DEFAULT 10.0;",
+            "ALTER TABLE dispatch_sessions ADD COLUMN IF NOT EXISTS max_search_radius_km FLOAT DEFAULT 30.0;",
+            "ALTER TABLE dispatch_sessions ADD COLUMN IF NOT EXISTS auto_expand_radius BOOLEAN DEFAULT TRUE;",
+            "ALTER TABLE dispatch_sessions ADD COLUMN IF NOT EXISTS lock_version INT DEFAULT 1;",
+            "ALTER TABLE dispatch_sessions DROP COLUMN IF EXISTS search_offset;",
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dispatch_sessions' AND column_name='current_batch') THEN UPDATE dispatch_sessions SET lock_version = current_batch; ALTER TABLE dispatch_sessions DROP COLUMN current_batch; END IF; END $$;",
+            "CREATE INDEX IF NOT EXISTS idx_user_locations_spatial ON user_locations USING GIST (last_known_location);",
+            "CREATE INDEX IF NOT EXISTS idx_task_locations_spatial ON task_locations USING GIST (geography_point);",
+        ]:
+            try:
+                await conn.execute(text(stmt))
+                print(f"Executed: {stmt}")
+            except Exception as e:
+                print(f"Error executing {stmt}: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

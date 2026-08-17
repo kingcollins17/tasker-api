@@ -12,7 +12,7 @@ The `MatchingEngine` is an **ephemeral service class**. It is instantiated per e
 Task Created / Confirmed
          │
          ▼
-Create DispatchSession (status = SEARCHING, current_batch = 1)
+Create DispatchSession (status = SEARCHING, lock_version = 1, search_offset = 0)
          │
          ▼
 Schedule execute_matching_engine_task(session_id)
@@ -37,7 +37,7 @@ Celery Worker Starts
          │
          ▼
 engine = MatchingEngine(session_id, db_session)
-engine.run() (advances current_batch = 2)
+engine.run() (advances lock_version = 2)
          │
          ▼
 Engine Destroyed
@@ -53,14 +53,14 @@ Engine Destroyed
 - **Reason**: If another provider already accepted the job or the session was cancelled, `run()` exits immediately without doing work.
 
 ### Step 2: Optimistic Concurrency Locking
-- Checks the session's `current_batch` number (e.g. batch = 1).
+- Checks the session's `lock_version` number (e.g. lock_version = 1).
 - Executes an atomic SQL `UPDATE`:
   ```sql
   UPDATE dispatch_sessions
-  SET current_batch = current_batch + 1, updated_at = NOW()
-  WHERE id = :session_id AND current_batch = :batch_num AND status = 'SEARCHING';
+  SET lock_version = lock_version + 1, updated_at = NOW()
+  WHERE id = :session_id AND lock_version = :lock_version AND status = 'SEARCHING';
   ```
-- **Reason**: Prevents race conditions. If two workers run for the exact same session at the same time, only ONE worker succeeds in updating the batch counter (`rowcount == 1`). The loser worker gets `rowcount == 0` and exits cleanly.
+- **Reason**: Prevents race conditions. If two workers run for the exact same session at the same time, only ONE worker succeeds in updating the lock version (`rowcount == 1`). The loser worker gets `rowcount == 0` and exits cleanly. Spatial search pagination uses an independent `search_offset` cursor.
 
 ### Step 3: Task Validation
 - Loads `Task` by `task_id`.

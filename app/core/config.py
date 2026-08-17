@@ -35,3 +35,7 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+IS_PRODUCTION = settings.ENVIRONMENT.lower() == "production"
+IS_STAGING = settings.ENVIRONMENT.lower() == 'staging'
+IS_LOCAL = settings.ENVIRONMENT.lower() == 'local'

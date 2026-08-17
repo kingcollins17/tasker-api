@@ -117,6 +117,9 @@ async def _start_dispatch_session_async(
     excluded_provider_ids: Optional[List[str]] = None,
     is_redispatch: bool = False,
     redispatch_reason: Optional[str] = None,
+    search_radius_km: Optional[float] = 10.0,
+    max_search_radius_km: Optional[float] = 30.0,
+    auto_expand_radius: Optional[bool] = True,
 ) -> Optional[str]:
     """Creates a stateful DispatchSession in DB for a task and triggers the MatchingEngine Celery task."""
     async with async_session_maker() as session:
@@ -147,7 +150,9 @@ async def _start_dispatch_session_async(
                 task_id=task_id,
                 status=DispatchSessionStatus.SEARCHING,
                 batch_size=batch_size,
-                current_batch=1,
+                search_radius_km=search_radius_km,
+                max_search_radius_km=max_search_radius_km,
+                auto_expand_radius=auto_expand_radius,
                 is_redispatch=is_redispatch,
                 redispatch_reason=redispatch_reason,
                 excluded_provider_ids=excluded_provider_ids,
@@ -165,6 +170,15 @@ async def _start_dispatch_session_async(
                 updated = True
             if redispatch_reason is not None:
                 dispatch_session.redispatch_reason = redispatch_reason
+                updated = True
+            if search_radius_km is not None:
+                dispatch_session.search_radius_km = search_radius_km
+                updated = True
+            if max_search_radius_km is not None:
+                dispatch_session.max_search_radius_km = max_search_radius_km
+                updated = True
+            if auto_expand_radius is not None:
+                dispatch_session.auto_expand_radius = auto_expand_radius
                 updated = True
             if updated:
                 dispatch_session.updated_at = lagos_now()
@@ -203,11 +217,14 @@ async def _execute_matching_engine_async(
 @shared_task(name="tasks.start_dispatch_session_task")
 def start_dispatch_session_task(
     task_id: str,
-    batch_size: int = 1,
+    batch_size: int = 5,
     exclude_previous_sessions: bool = True,
     excluded_provider_ids: Optional[List[str]] = None,
     is_redispatch: bool = False,
     redispatch_reason: Optional[str] = None,
+    search_radius_km: Optional[float] = 10.0,
+    max_search_radius_km: Optional[float] = 30.0,
+    auto_expand_radius: Optional[bool] = True,
 ):
     """Celery task entrypoint to initialize a DispatchSession and trigger matching."""
     logger.info(f"start_dispatch_session_task: starting for task {task_id}")
@@ -219,6 +236,9 @@ def start_dispatch_session_task(
             excluded_provider_ids=excluded_provider_ids,
             is_redispatch=is_redispatch,
             redispatch_reason=redispatch_reason,
+            search_radius_km=search_radius_km,
+            max_search_radius_km=max_search_radius_km,
+            auto_expand_radius=auto_expand_radius,
         )
     )
 

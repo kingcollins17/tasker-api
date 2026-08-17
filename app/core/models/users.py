@@ -4,7 +4,7 @@ from uuid import uuid4
 from app.core.utils.datetime_helper import lagos_now
 from typing import List, Optional, Any
 from sqlmodel import Field, SQLModel, Relationship
-from sqlalchemy import Column, JSON, UniqueConstraint, Time
+from sqlalchemy import Column, Index, JSON, UniqueConstraint, Time
 from .spatial import PointType
 from datetime import time
 from .services import ProviderServiceLink, Service
@@ -183,6 +183,9 @@ class CustomerProfile(SQLModel, table=True):
 class UserLocation(SQLModel, table=True):
     """Tracks last known location coordinates and spatial PostGIS point for users."""
     __tablename__ = "user_locations"  # type: ignore
+    __table_args__ = (
+        Index("idx_user_locations_spatial", "last_known_location", postgresql_using="gist"),
+    )
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique location entry ID")
     user_id: str = Field(foreign_key="users.id", unique=True, index=True, ondelete="CASCADE", description="Foreign key reference to user")

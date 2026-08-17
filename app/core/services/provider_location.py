@@ -6,7 +6,7 @@ from fastapi import Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import cast, func
 from geoalchemy2 import Geography
-from sqlmodel import select
+from sqlmodel import select, col
 
 from app.core.database import get_session
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -66,7 +66,8 @@ class ProviderLocationService(abc.ABC):
         latitude: float,
         longitude: float,
         radius_km: float = 10.0,
-        limit: Optional[int] = 50,
+        limit: Optional[int] = 100,
+        excluded_provider_ids: Optional[List[str]] = None,
         service_id: Optional[str] = None,
     ) -> List[NearbyProviderResult]:
         """Queries spatial index to find candidate providers within radius_km sorted by distance."""
@@ -96,6 +97,7 @@ class PostGISProviderLocationService(ProviderLocationService):
         if loc:
             loc.latitude = None
             loc.longitude = None
+            loc.last_known_location = None
             loc.updated_at = lagos_now()
             await self.location_repo.add(loc)
             return True
@@ -120,6 +122,7 @@ class PostGISProviderLocationService(ProviderLocationService):
         longitude: float,
         radius_km: float = 10.0,
         limit: Optional[int] = 100,
+        excluded_provider_ids: Optional[List[str]] = None,
         service_id: Optional[str] = None,
     ) -> List[NearbyProviderResult]:
         target_point = func.ST_SetSRID(func.ST_MakePoint(longitude, latitude), 4326)
@@ -134,7 +137,7 @@ class PostGISProviderLocationService(ProviderLocationService):
                 ProviderProfile,
                 (distance_m_expr / 1000.0).label("distance_km"),
             )
-            .join(ProviderProfile, UserLocation.user_id == ProviderProfile.user_id)
+            .join(ProviderProfile, col(UserLocation.user_id) == col(ProviderProfile.user_id))
         )
 
         if service_id:
@@ -160,6 +163,8 @@ class PostGISProviderLocationService(ProviderLocationService):
 
         if limit:
             stmt = stmt.limit(limit)
+        if excluded_provider_ids:
+            stmt = stmt.where(~col(UserLocation.user_id).in_(excluded_provider_ids))
 
         result = await self.location_repo.execute(stmt)
         rows = result.all()
