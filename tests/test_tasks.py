@@ -437,6 +437,50 @@ async def test_get_current_dispatch_returns_latest_unexpired_pending_for_provide
 
 
 @pytest.mark.asyncio
+async def test_get_current_dispatch_returns_latest_unexpired_pending_for_provider_with_user():
+    from app.features.tasks.router.assignments import get_provider_current_dispatch
+    from app.core.models.tasks import TaskDispatchAttempt, DispatchAttemptStatus
+    from app.core.models.users import User
+
+    mock_attempt_repo = AsyncMock()
+    mock_logger = AsyncMock()
+
+    now = datetime.now(timezone.utc)
+    attempt_inst = TaskDispatchAttempt(
+        id="dispatch-1",
+        task_id="task-100",
+        provider_id="provider-1",
+        status=DispatchAttemptStatus.PENDING,
+        pinged_at=now - timedelta(minutes=1),
+        expires_at=now + timedelta(minutes=5),
+    )
+    provider_inst = User(
+        id="provider-1",
+        email="provider@example.com",
+        phone_number="1234567890",
+        average_ratings=4.8,
+        credibility_score=95.0,
+    )
+
+    mock_exec_res = MagicMock()
+    mock_exec_res.first.return_value = (attempt_inst, provider_inst)
+    mock_attempt_repo.execute.return_value = mock_exec_res
+
+    resp = await get_provider_current_dispatch(
+        current_user=MOCK_PROVIDER,
+        attempt_repo=mock_attempt_repo,
+        system_logger=mock_logger,
+    )
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.data.id == "dispatch-1"
+    assert resp.data.task_id == "task-100"
+    assert resp.data.status == DispatchAttemptStatus.PENDING
+    assert resp.data.provider is not None
+    assert resp.data.provider.id == "provider-1"
+
+
+@pytest.mark.asyncio
 async def test_get_task_assignment_attaches_minimal_provider():
     from app.features.tasks.router.assignments import get_task_assignment
     from app.core.models.tasks import TaskAssignment, Task, TaskStatus, TaskAssignmentStatus

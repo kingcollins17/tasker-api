@@ -1,22 +1,20 @@
-from typing import Any
-from typing import Dict
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, status
 from sqlmodel import func, select
 
 from app.core.logging import logger
+from app.core.models.notifications import NotificationType
 from app.core.models.payments import DebtReason, ProviderDebt, PayoutQueue, PayoutStatus
-from app.core.models.tasks import Task
-from app.core.models.transactions import Transaction
+from app.core.models.tasks import PaymentMode, PaymentStatus, Task
+from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
 from app.core.models.users import User
 from app.core.repository import GetRepository, Repository, QueryOptions
 from app.core.services.payment import get_paystack_gateway
-from app.core.utils.datetime_helper import lagos_now
-from app.features.payments.celery.tasks import (
-    process_debt_settlement as process_debt_settlement_task,
-    process_provider_payout as process_provider_payout_task,
-    process_task_payment as process_task_payment_task,
+from app.core.utils.datetime_helper import lagos_now, now
+from app.features.notifications.services import (
+    NotificationService,
+    get_notification_service,
 )
 from app.features.payments.schemas import (
     ProviderDebtSummaryResponse,
@@ -27,7 +25,11 @@ from app.features.payments.schemas import (
 
 
 class PaymentService:
-    """Service encapsulating payment settlement logic and Celery task invocation proxies."""
+    """Service encapsulating all payment settlement logic.
+
+    Methods are real async implementations that can be called directly from
+    Celery async helpers or FastAPI endpoints.
+    """
 
     def __init__(
         self,
@@ -36,35 +38,264 @@ class PaymentService:
         transaction_repo: Repository[Transaction],
         debt_repo: Repository[ProviderDebt],
         payout_queue_repo: Repository[PayoutQueue],
+        notification_service: NotificationService,
     ):
         self.task_repo = task_repo
         self.user_repo = user_repo
         self.transaction_repo = transaction_repo
         self.debt_repo = debt_repo
         self.payout_queue_repo = payout_queue_repo
+        self.notification_service = notification_service
 
-    # ── Celery Task Proxy Methods ──────────────────────────────────────────
+    # ── Core Payment Processing Methods ────────────────────────────────────
 
-    def trigger_task_payment(
-        self, task_id: str, provider_id: str, payment_mode: str
+    async def process_task_payment(
+        self, task_id: str, provider_id: str, payment_mode: str = "cash"
     ) -> None:
-        """Proxy method to enqueue process_task_payment Celery task."""
-        # pyrefly: ignore [not-callable]
-        process_task_payment_task.delay(task_id, provider_id, payment_mode)
+        """Handle task payment processing after task completion.
 
-    def trigger_provider_payout(
+        Steps:
+        1. Get task amount/pricing.
+        2. Create PayoutQueue object (COMPLETED for cash, PENDING for online).
+        3. Cash path: record debt ledger entry for platform fee, notify provider.
+        4. Online path: generate Paystack payment link, update payout queue.
+        5. Online path: notify customer to make payment via email, push, in_app.
+        """
+        task = await self.task_repo.get(task_id)
+        if not task:
+            logger.error(f"process_task_payment: task {task_id} not found")
+            return
+
+        mode = (
+            PaymentMode(payment_mode)
+            if payment_mode in ("cash", "online")
+            else PaymentMode.CASH
+        )
+        task.payment_mode = mode
+
+        if mode == PaymentMode.CASH:
+            await self._process_cash_payment(task, provider_id)
+        elif mode == PaymentMode.ONLINE:
+            await self._process_online_payment(task, provider_id)
+
+        await self.task_repo.add(task)
+
+    async def process_provider_payout(
         self, task_id: str, provider_id: str, payout_amount: float
     ) -> None:
-        """Proxy method to enqueue process_provider_payout Celery task."""
-        # pyrefly: ignore [not-callable]
-        process_provider_payout_task.delay(task_id, provider_id, payout_amount)
+        """Transfer net payout to provider, offsetting any pending debt balance first.
 
-    def trigger_debt_settlement(
+        Steps:
+        6. Insert Transaction for incoming payment, send out the payment to the provider.
+        7. Update payout queue with transfer reference.
+        """
+        # 1. Calculate net debt balance using SUM(amount) from append-only ledger
+        stmt = select(func.coalesce(func.sum(ProviderDebt.amount), 0.0)).where(
+            ProviderDebt.provider_id == provider_id
+        )
+        total_debt = float(
+            (await self.debt_repo.execute(stmt)).one_or_none() or 0.0
+        )
+
+        remaining_payout = payout_amount
+        debt_offset = 0.0
+
+        if total_debt > 0.0:
+            debt_offset = min(payout_amount, total_debt)
+            remaining_payout = payout_amount - debt_offset
+
+            # Append negative (-) debt ledger entry for payout offset
+            offset_entry = ProviderDebt(
+                provider_id=provider_id,
+                task_id=task_id,
+                amount=-debt_offset,
+                reason=DebtReason.PAYOUT_OFFSET,
+                description=f"Automated debt offset from online task payout #{task_id}",
+            )
+            await self.debt_repo.add(offset_entry)
+
+            # Log debt settlement transaction for revenue audit
+            debt_settle_tx = Transaction(
+                amount=debt_offset,
+                transaction_type=TransactionType.DEBT_SETTLEMENT,
+                status=TransactionStatus.SUCCESS,
+                user_id=provider_id,
+                task_id=task_id,
+                metadata_info={
+                    "source": "payout_offset",
+                    "debt_offset": debt_offset,
+                },
+            )
+            await self.transaction_repo.add(debt_settle_tx)
+
+        # 2. Transfer net remaining payout via Paystack transfer API
+        gateway = get_paystack_gateway()
+        transfer_ref = f"payout_{task_id}_{int(now().timestamp())}"
+
+        if remaining_payout > 0:
+            # Find existing payout queue for the task and update it
+            payouts = await self.payout_queue_repo.get_all(
+                QueryOptions(
+                    filters={"task_id": task_id, "provider_id": provider_id}
+                )
+            )
+            if payouts:
+                p = payouts[0]
+                await self.payout_queue_repo.update(
+                    p.id,
+                    {"reference": transfer_ref, "payout_amount": remaining_payout},
+                )
+
+            await gateway.send_payment(
+                amount=remaining_payout,
+                recipient_code=provider_id,
+                reference=transfer_ref,
+            )
+
+        logger.info(
+            f"Processed payout for provider {provider_id} on task {task_id}: gross=₦{payout_amount:,.2f}, "
+            f"debt_offset=₦{debt_offset:,.2f}, net_transferred=₦{remaining_payout:,.2f}"
+        )
+
+    async def process_debt_settlement(
         self, provider_id: str, amount_paid: float, reference: str
     ) -> None:
-        """Proxy method to enqueue process_debt_settlement Celery task."""
-        # pyrefly: ignore [not-callable]
-        process_debt_settlement_task.delay(provider_id, amount_paid, reference)
+        """Insert negative debt ledger entry for paid debt amount and log revenue Transaction."""
+        # Append negative (-) debt ledger entry for debt payment
+        payment_entry = ProviderDebt(
+            provider_id=provider_id,
+            amount=-amount_paid,
+            reason=DebtReason.DEBT_PAYMENT,
+            description=f"Online debt payment via reference {reference}",
+        )
+        await self.debt_repo.add(payment_entry)
+
+        # Log Debt Settlement Revenue Transaction
+        settlement_tx = Transaction(
+            amount=amount_paid,
+            transaction_type=TransactionType.DEBT_SETTLEMENT,
+            status=TransactionStatus.SUCCESS,
+            user_id=provider_id,
+            reference=reference,
+            payment_mode="online",
+            metadata_info={"applied_amount": amount_paid},
+        )
+        await self.transaction_repo.add(settlement_tx)
+
+        logger.info(
+            f"Processed debt settlement for provider {provider_id}: paid=₦{amount_paid:,.2f}, ref={reference}"
+        )
+
+    # ── Cash / Online Payment Helpers ──────────────────────────────────────
+
+    async def _process_cash_payment(self, task: Task, provider_id: str) -> None:
+        """Handle the cash payment path: debt ledger entry + completed payout queue + notification."""
+        platform_fee = task.platform_fee or 0.0
+        task.payment_status = PaymentStatus.CASH_PAID
+
+        if platform_fee > 0.0:
+            # Append positive (+) debt ledger entry for cash task commission
+            provider_debt = ProviderDebt(
+                provider_id=provider_id,
+                task_id=task.id,
+                amount=platform_fee,
+                reason=DebtReason.CASH_TASK_COMMISSION,
+                description=f"Platform fee for cash task #{task.id}",
+            )
+            await self.debt_repo.add(provider_debt)
+            logger.info(
+                f"Recorded cash debt entry (+₦{platform_fee:,.2f}) for provider {provider_id} on task {task.id}"
+            )
+
+        if task.provider_payout and task.provider_payout > 0:
+            payout = PayoutQueue(
+                provider_id=provider_id,
+                task_id=task.id,
+                customer_id=task.customer_id,
+                payout_amount=task.provider_payout,
+                customer_payment_amount=task.customer_total_price or 0.0,
+                status=PayoutStatus.COMPLETED,
+                description=f"Automated payout queue (CASH) for task {task.id}",
+            )
+            await self.payout_queue_repo.add(payout)
+
+        # Notify customer that provider has been paid in cash for the completed task
+        if task.customer_id:
+            amt_fmt = (
+                f"₦{task.customer_total_price:,.2f}"
+                if task.customer_total_price
+                else ""
+            )
+            await self.notification_service.notify(
+                recepients=[task.customer_id],
+                title="Task Completed — Paid in Cash",
+                body=f"Your task '{task.title}' is completed. Payment of {amt_fmt} was settled in cash.",
+                type=NotificationType.PAYMENT_RECEIVED,
+                channels=["IN_APP", "PUSH"],
+                data={
+                    "task_id": task.id,
+                    "payment_mode": "cash",
+                    "amount": task.customer_total_price,
+                    "type": "cash_payment_confirmed",
+                },
+            )
+
+    async def _process_online_payment(self, task: Task, provider_id: str) -> None:
+        """Handle the online payment path: generate payment link + pending payout queue + notification."""
+        customer = (
+            await self.user_repo.get(task.customer_id) if task.customer_id else None
+        )
+        customer_email = customer.email if customer else "customer@example.com"
+
+        gateway = get_paystack_gateway()
+        payment_resp = await gateway.receive_payment(
+            email=customer_email,
+            amount=task.customer_total_price or 0.0,
+            user_id=task.customer_id,
+            metadata={"task_id": task.id, "type": "task_payment"},
+        )
+        task.payment_url = payment_resp.checkout_url
+        task.payment_status = PaymentStatus.PAYMENT_REQUESTED
+
+        if task.provider_payout and task.provider_payout > 0:
+            payout = PayoutQueue(
+                provider_id=provider_id,
+                task_id=task.id,
+                customer_id=task.customer_id,
+                payout_amount=task.provider_payout,
+                customer_payment_amount=task.customer_total_price or 0.0,
+                payment_url=payment_resp.checkout_url,
+                reference=payment_resp.reference,
+                url_generated_at=now(),
+                status=PayoutStatus.PENDING,
+                description=f"Automated payout queue for task {task.id}",
+            )
+            await self.payout_queue_repo.add(payout)
+
+        # Notify customer to make payment via email, push, and in-app
+        if task.customer_id:
+            purl = payment_resp.checkout_url or ""
+            amt_fmt = (
+                f"₦{task.customer_total_price:,.2f}"
+                if task.customer_total_price
+                else ""
+            )
+            await self.notification_service.notify(
+                recepients=[task.customer_id],
+                title="Payment Requested for Completed Task",
+                body=f"Your task '{task.title}' is completed. Tap to pay {amt_fmt} online.",
+                type=NotificationType.TASK_ACCEPTED,
+                channels=["IN_APP", "PUSH", "EMAIL"],
+                data={
+                    "task_id": task.id,
+                    "payment_url": purl,
+                    "amount": task.customer_total_price,
+                    "type": "payment_request",
+                },
+            )
+        logger.info(
+            f"Initialized online payment checkout link for task {task.id}: {task.payment_url}"
+        )
 
     # ── Payout Queue Operations ──────────────────────────────────────────
 
@@ -236,14 +467,14 @@ class PaymentService:
         total_amount_completed = 0.0
         
         for row in rows:
-            status, count, amount = row
+            payout_status, count, amount = row
             amount = float(amount or 0.0)
             
             total_payouts += count
-            if status == PayoutStatus.PENDING:
+            if payout_status == PayoutStatus.PENDING:
                 total_pending += count
                 total_amount_pending += amount
-            elif status in (PayoutStatus.COMPLETED, PayoutStatus.CUSTOMER_PAID):
+            elif payout_status in (PayoutStatus.COMPLETED, PayoutStatus.CUSTOMER_PAID):
                 total_completed += count
                 total_amount_completed += amount
                 
@@ -314,12 +545,14 @@ class PaymentService:
         # pyrefly: ignore [bad-return]
         return updated_payout
 
+
 def get_payment_service(
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
     user_repo: Repository[User] = Depends(GetRepository(User)),
     transaction_repo: Repository[Transaction] = Depends(GetRepository(Transaction)),
     debt_repo: Repository[ProviderDebt] = Depends(GetRepository(ProviderDebt)),
     payout_queue_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
+    notification_service: NotificationService = Depends(get_notification_service),
 ) -> PaymentService:
     return PaymentService(
         task_repo=task_repo,
@@ -327,4 +560,19 @@ def get_payment_service(
         transaction_repo=transaction_repo,
         debt_repo=debt_repo,
         payout_queue_repo=payout_queue_repo,
+        notification_service=notification_service,
+    )
+
+
+def get_payment_service_manual(session) -> PaymentService:
+    """Factory for constructing PaymentService outside of FastAPI dependency injection (e.g. Celery tasks)."""
+    from app.features.notifications.services import get_notification_service_manual
+
+    return PaymentService(
+        task_repo=Repository(Task, session),
+        user_repo=Repository(User, session),
+        transaction_repo=Repository(Transaction, session),
+        debt_repo=Repository(ProviderDebt, session),
+        payout_queue_repo=Repository(PayoutQueue, session),
+        notification_service=get_notification_service_manual(session),
     )

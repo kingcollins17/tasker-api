@@ -17,6 +17,8 @@ def mock_payment_deps():
     user_repo = MagicMock(spec=Repository)
     transaction_repo = MagicMock(spec=Repository)
     debt_repo = MagicMock(spec=Repository)
+    payout_queue_repo = MagicMock(spec=Repository)
+    notification_service = AsyncMock()
 
     task_repo.get = AsyncMock()
     task_repo.add = AsyncMock()
@@ -24,29 +26,38 @@ def mock_payment_deps():
     transaction_repo.add = AsyncMock()
     debt_repo.add = AsyncMock()
     debt_repo.execute = AsyncMock()
+    payout_queue_repo.add = AsyncMock()
+    payout_queue_repo.get = AsyncMock()
+    payout_queue_repo.update = AsyncMock()
+    payout_queue_repo.execute = AsyncMock()
+    payout_queue_repo.get_all = AsyncMock()
 
     return (
         task_repo,
         user_repo,
         transaction_repo,
         debt_repo,
+        payout_queue_repo,
+        notification_service,
     )
 
 
 @pytest.mark.asyncio
 async def test_get_provider_debt_summary(mock_payment_deps):
-    task_repo, user_repo, transaction_repo, debt_repo = mock_payment_deps
+    task_repo, user_repo, transaction_repo, debt_repo, payout_queue_repo, notification_service = mock_payment_deps
     service = PaymentService(
         task_repo=task_repo,
         user_repo=user_repo,
         transaction_repo=transaction_repo,
         debt_repo=debt_repo,
+        payout_queue_repo=payout_queue_repo,
+        notification_service=notification_service,
     )
 
     mock_sum_res = MagicMock()
-    mock_sum_res.scalar_one_or_none.return_value = 1300.0
+    mock_sum_res.one_or_none.return_value = 1300.0
     mock_count_res = MagicMock()
-    mock_count_res.scalar_one_or_none.return_value = 2
+    mock_count_res.one_or_none.return_value = 2
 
     debt_repo.execute.side_effect = [mock_sum_res, mock_count_res]
 
@@ -58,18 +69,20 @@ async def test_get_provider_debt_summary(mock_payment_deps):
 
 @pytest.mark.asyncio
 async def test_initialize_debt_settlement_prevents_paying_more_than_owed(mock_payment_deps):
-    task_repo, user_repo, transaction_repo, debt_repo = mock_payment_deps
+    task_repo, user_repo, transaction_repo, debt_repo, payout_queue_repo, notification_service = mock_payment_deps
     service = PaymentService(
         task_repo=task_repo,
         user_repo=user_repo,
         transaction_repo=transaction_repo,
         debt_repo=debt_repo,
+        payout_queue_repo=payout_queue_repo,
+        notification_service=notification_service,
     )
 
     mock_sum_res = MagicMock()
-    mock_sum_res.scalar_one_or_none.return_value = 1000.0
+    mock_sum_res.one_or_none.return_value = 1000.0
     mock_count_res = MagicMock()
-    mock_count_res.scalar_one_or_none.return_value = 1
+    mock_count_res.one_or_none.return_value = 1
     debt_repo.execute.side_effect = [mock_sum_res, mock_count_res]
 
     # Requesting to pay 2000.0 when owing 1000.0 should raise HTTPException 400
@@ -82,18 +95,20 @@ async def test_initialize_debt_settlement_prevents_paying_more_than_owed(mock_pa
 
 @pytest.mark.asyncio
 async def test_initialize_debt_settlement_success(mock_payment_deps):
-    task_repo, user_repo, transaction_repo, debt_repo = mock_payment_deps
+    task_repo, user_repo, transaction_repo, debt_repo, payout_queue_repo, notification_service = mock_payment_deps
     service = PaymentService(
         task_repo=task_repo,
         user_repo=user_repo,
         transaction_repo=transaction_repo,
         debt_repo=debt_repo,
+        payout_queue_repo=payout_queue_repo,
+        notification_service=notification_service,
     )
 
     mock_sum_res = MagicMock()
-    mock_sum_res.scalar_one_or_none.return_value = 1000.0
+    mock_sum_res.one_or_none.return_value = 1000.0
     mock_count_res = MagicMock()
-    mock_count_res.scalar_one_or_none.return_value = 1
+    mock_count_res.one_or_none.return_value = 1
     debt_repo.execute.side_effect = [mock_sum_res, mock_count_res]
 
     provider = User(id="p1", email="provider@example.com", hashed_password="", type="provider")

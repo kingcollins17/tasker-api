@@ -405,7 +405,7 @@ async def get_provider_current_dispatch(
         attempt, provider_user = row
         data = TaskDispatchAttemptResponse.model_validate(attempt)
         if provider_user:
-            data.provider = MinimalProviderResponse.model_validate(provider_user)
+            data.provider = MinimalProviderResponse.from_user(provider_user)
 
         await system_logger.metric(
             "get_current_dispatch",

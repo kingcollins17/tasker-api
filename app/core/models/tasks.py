@@ -37,11 +37,12 @@ class PaymentStatus(str, enum.Enum):
     PENDING = "PENDING"
     PAYMENT_REQUESTED = "PAYMENT_REQUESTED"
     PAID = "PAID"
+    CASH_PAID = "CASH_PAID"
     FAILED = "FAILED"
 
 
 class DispatchAttemptStatus(str, enum.Enum):
-    """Workflow states of a 30-second provider dispatch ping attempt."""
+    """Workflow states of a n-second provider dispatch ping attempt."""
     PENDING = "PENDING"
     ACCEPTED = "ACCEPTED"
     DECLINED = "DECLINED"
