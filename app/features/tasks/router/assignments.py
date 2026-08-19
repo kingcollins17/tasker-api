@@ -71,11 +71,13 @@ async def get_my_assignments(
     task_id: Optional[str] = Query(None),
     sort_by: str = Query("assigned_at"),
     sort_desc: bool = Query(True),
-    current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
+    current_user: UserResponse = Depends(
+        GetCurrentUser(required_type=UserType.PROVIDER)
+    ),
     assignment_repo: Repository[TaskAssignment] = Depends(
         GetRepository(TaskAssignment)
     ),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Retrieve a paginated list of assignments for the current user."""
     try:
@@ -89,7 +91,6 @@ async def get_my_assignments(
         )
 
         query = query.where(TaskAssignment.provider_id == current_user.id)
-        
 
         if status_filter:
             query = query.where(TaskAssignment.status == status_filter)
@@ -133,13 +134,13 @@ async def get_my_assignments(
         assignments = assignments_result.unique().all()
 
         items = [
-            TaskAssignmentWithTaskResponse.model_validate(
-                assignment_model
-            ).model_copy(
+            TaskAssignmentWithTaskResponse.model_validate(assignment_model).model_copy(
                 update={
-                    "task": TaskMinimalResponse.model_validate(task_model)
-                    if task_model
-                    else None
+                    "task": (
+                        TaskMinimalResponse.model_validate(task_model)
+                        if task_model
+                        else None
+                    )
                 }
             )
             for assignment_model, task_model in assignments
@@ -151,17 +152,26 @@ async def get_my_assignments(
             page=page,
             per_page=per_page,
         )
-        await system_logger.metric('get_my_assignments', timer.stop(), source='assignments.get_my_assignments')
+        await system_logger.metric(
+            "get_my_assignments", timer.stop(), source="assignments.get_my_assignments"
+        )
         return BaseAPIResponse[PaginatedData[TaskAssignmentWithTaskResponse]](
             data=data,
             detail="Assignments retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('get_my_assignments failed', source='assignments.get_my_assignments', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "get_my_assignments failed",
+            source="assignments.get_my_assignments",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'get_my_assignments error: {str(e)}', source='assignments.get_my_assignments')
+        await system_logger.error(
+            f"get_my_assignments error: {str(e)}",
+            source="assignments.get_my_assignments",
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -220,24 +230,37 @@ async def get_current_assignment(
             )
 
         assignment_model, task_model = row
-        assignment_data = TaskAssignmentWithTaskResponse.model_validate(assignment_model)
+        assignment_data = TaskAssignmentWithTaskResponse.model_validate(
+            assignment_model
+        )
         assignment_data.task = TaskMinimalResponse.model_validate(task_model)
 
         provider_user = await user_repo.get(assignment_model.provider_id)
         if provider_user:
             assignment_data.provider = MinimalProviderResponse.from_user(provider_user)
 
-        await system_logger.metric('get_current_assignment', timer.stop(), source='assignments.get_current_assignment')
+        await system_logger.metric(
+            "get_current_assignment",
+            timer.stop(),
+            source="assignments.get_current_assignment",
+        )
         return BaseAPIResponse[TaskAssignmentWithTaskResponse](
             data=assignment_data,
             detail="Current assignment retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('get_current_assignment failed', source='assignments.get_current_assignment', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "get_current_assignment failed",
+            source="assignments.get_current_assignment",
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'get_current_assignment error: {str(e)}', source='assignments.get_current_assignment')
+        await system_logger.error(
+            f"get_current_assignment error: {str(e)}",
+            source="assignments.get_current_assignment",
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -258,7 +281,7 @@ async def get_task_assignment(
     ),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
     user_repo: Repository[User] = Depends(GetRepository(User)),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Retrieve the assignment for a specific task if available."""
     try:
@@ -296,19 +319,32 @@ async def get_task_assignment(
         if assignment.provider_id:
             provider_user = await user_repo.get(assignment.provider_id)
             if provider_user:
-                assignment_data.provider = MinimalProviderResponse.from_user(provider_user)
+                assignment_data.provider = MinimalProviderResponse.from_user(
+                    provider_user
+                )
 
-        await system_logger.metric('get_task_assignment', timer.stop(), source='assignments.get_task_assignment')
+        await system_logger.metric(
+            "get_task_assignment",
+            timer.stop(),
+            source="assignments.get_task_assignment",
+        )
         return BaseAPIResponse[TaskAssignmentWithTaskResponse](
             data=assignment_data,
             detail="Task assignment retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('get_task_assignment failed', source='assignments.get_task_assignment', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "get_task_assignment failed",
+            source="assignments.get_task_assignment",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'get_task_assignment error: {str(e)}', source='assignments.get_task_assignment')
+        await system_logger.error(
+            f"get_task_assignment error: {str(e)}",
+            source="assignments.get_task_assignment",
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -342,7 +378,9 @@ async def get_provider_current_dispatch(
         now = lagos_now()
         stmt = (
             select(TaskDispatchAttempt, User)
-            .join(User, col(TaskDispatchAttempt.provider_id) == col(User.id), isouter=True)
+            .join(
+                User, col(TaskDispatchAttempt.provider_id) == col(User.id), isouter=True
+            )
             .where(
                 col(TaskDispatchAttempt.provider_id) == current_user.id,
                 col(TaskDispatchAttempt.status) == DispatchAttemptStatus.PENDING,
@@ -369,17 +407,28 @@ async def get_provider_current_dispatch(
         if provider_user:
             data.provider = MinimalProviderResponse.model_validate(provider_user)
 
-        await system_logger.metric('get_current_dispatch', timer.stop(), source='assignments.get_current_dispatch')
+        await system_logger.metric(
+            "get_current_dispatch",
+            timer.stop(),
+            source="assignments.get_current_dispatch",
+        )
         return BaseAPIResponse[TaskDispatchAttemptResponse](
             data=data,
             detail="Current dispatch retrieved successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('get_current_dispatch failed', source='assignments.get_current_dispatch', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "get_current_dispatch failed",
+            source="assignments.get_current_dispatch",
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'get_current_dispatch error: {str(e)}', source='assignments.get_current_dispatch')
+        await system_logger.error(
+            f"get_current_dispatch error: {str(e)}",
+            source="assignments.get_current_dispatch",
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -441,17 +490,28 @@ async def respond_to_dispatch_ping(
         action = (
             "accepted" if body.status == DispatchAttemptStatus.ACCEPTED else "declined"
         )
-        await system_logger.metric('respond_to_dispatch_ping', timer.stop(), source='assignments.respond_to_dispatch_ping')
+        await system_logger.metric(
+            "respond_to_dispatch_ping",
+            timer.stop(),
+            source="assignments.respond_to_dispatch_ping",
+        )
         return BaseAPIResponse[None](
             data=None,
             detail=f"Task dispatch {action} successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('respond_to_dispatch_ping failed', source='assignments.respond_to_dispatch_ping', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "respond_to_dispatch_ping failed",
+            source="assignments.respond_to_dispatch_ping",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'respond_to_dispatch_ping error: {str(e)}', source='assignments.respond_to_dispatch_ping')
+        await system_logger.error(
+            f"respond_to_dispatch_ping error: {str(e)}",
+            source="assignments.respond_to_dispatch_ping",
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -479,7 +539,7 @@ async def start_task(
     assignment_repo: Repository[TaskAssignment] = Depends(
         GetRepository(TaskAssignment)
     ),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Provider confirms on-site arrival and starts a task using the customer's start PIN.
 
@@ -495,9 +555,9 @@ async def start_task(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Task not found.",
             )
-        assignment=task.assignment
+        assignment = task.assignment
         if not assignment:
-            raise HTTPException(status_code=404, detail='Task assignment not found')
+            raise HTTPException(status_code=404, detail="Task assignment not found")
 
         if assignment.provider_id != current_user.id:
             raise HTTPException(
@@ -533,17 +593,25 @@ async def start_task(
             assignment.started_at = now
             await assignment_repo.add(assignment)
 
-        await system_logger.metric('start_task', timer.stop(), source='assignments.start_task')
+        await system_logger.metric(
+            "start_task", timer.stop(), source="assignments.start_task"
+        )
         return BaseAPIResponse[None](
             data=None,
             detail="Task started successfully.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:
-        await system_logger.warn('start_task failed', source='assignments.start_task', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "start_task failed",
+            source="assignments.start_task",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'start_task error: {str(e)}', source='assignments.start_task')
+        await system_logger.error(
+            f"start_task error: {str(e)}", source="assignments.start_task"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -567,7 +635,7 @@ async def complete_task(
         )
     ),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
-    system_logger: LoggerService = Depends(get_logger_service)
+    system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Provider finalises a task using the customer's completion PIN and selects payment_mode (cash or online).
 
@@ -583,9 +651,9 @@ async def complete_task(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Task not found.",
             )
-        assignment=task.assignment
+        assignment = task.assignment
         if not assignment:
-            raise HTTPException(status_code=404, detail='Task assignment not found')
+            raise HTTPException(status_code=404, detail="Task assignment not found")
 
         if assignment.provider_id != current_user.id:
             raise HTTPException(
@@ -606,23 +674,33 @@ async def complete_task(
             )
 
         # Enqueue heavy finalisation & payment settlement to Celery worker
-    
+
         # pyrefly: ignore [not-callable]
         complete_task_assignment.delay(
-            task_id, current_user.id, payment_mode=body.payment_mode.value
-        ) # type: ignore
+            task_id,
+            current_user.id,
+            payment_mode=body.payment_mode.value,
+        )  # type: ignore
 
-        await system_logger.metric('complete_task', timer.stop(), source='assignments.complete_task')
+        await system_logger.metric(
+            "complete_task", timer.stop(), source="assignments.complete_task"
+        )
         return BaseAPIResponse[None](
             data=None,
             detail="Task completion confirmed — finalising in background.",
             status_code=status.HTTP_202_ACCEPTED,
         )
     except HTTPException as e:
-        await system_logger.warn('complete_task failed', source='assignments.complete_task', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
+        await system_logger.warn(
+            "complete_task failed",
+            source="assignments.complete_task",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
         raise
     except Exception as e:
-        await system_logger.error(f'complete_task error: {str(e)}', source='assignments.complete_task')
+        await system_logger.error(
+            f"complete_task error: {str(e)}", source="assignments.complete_task"
+        )
         AppErrorHandler.handleError(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -692,9 +770,9 @@ async def verify_provider_pin(
         provider_data = MinimalProviderResponse.from_user(provider_user)
 
         await system_logger.metric(
-            'verify_provider_pin',
+            "verify_provider_pin",
             timer.stop(),
-            source='assignments.verify_provider_pin',
+            source="assignments.verify_provider_pin",
         )
         return BaseAPIResponse[MinimalProviderResponse](
             data=provider_data,
@@ -703,15 +781,15 @@ async def verify_provider_pin(
         )
     except HTTPException as e:
         await system_logger.warn(
-            'verify_provider_pin failed',
-            source='assignments.verify_provider_pin',
-            metadata={'detail': e.detail if hasattr(e, 'detail') else str(e)},
+            "verify_provider_pin failed",
+            source="assignments.verify_provider_pin",
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
         )
         raise
     except Exception as e:
         await system_logger.error(
-            f'verify_provider_pin error: {str(e)}',
-            source='assignments.verify_provider_pin',
+            f"verify_provider_pin error: {str(e)}",
+            source="assignments.verify_provider_pin",
         )
         AppErrorHandler.handleError(e)
         raise HTTPException(

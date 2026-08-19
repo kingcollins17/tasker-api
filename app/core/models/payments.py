@@ -12,11 +12,11 @@ from app.core.utils.datetime_helper import lagos_now
 
 class DebtReason(str, enum.Enum):
     """Reason for a provider debt ledger entry."""
-    CASH_TASK_COMMISSION = "cash_task_commission"
-    DEBT_PAYMENT = "debt_payment"
-    PAYOUT_OFFSET = "payout_offset"
-    WAIVER = "waiver"
-    ADJUSTMENT = "adjustment"
+    CASH_TASK_COMMISSION = "CASH_TASK_COMMISSION"
+    DEBT_PAYMENT = "DEBT_PAYMENT"
+    PAYOUT_OFFSET = "PAYOUT_OFFSET"
+    WAIVER = "WAIVER"
+    ADJUSTMENT = "ADJUSTMENT"
 
 
 class ProviderDebt(SQLModel, table=True):
@@ -46,10 +46,10 @@ class ProviderDebt(SQLModel, table=True):
 
 class PayoutStatus(str, enum.Enum):
     """Status of a provider payout in the queue."""
-    PENDING = "pending"
-    CUSTOMER_PAID = "customer_paid"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
+    PENDING = "PENDING"
+    CUSTOMER_PAID = "CUSTOMER_PAID"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
 
 
 class PayoutQueue(SQLModel, table=True):
