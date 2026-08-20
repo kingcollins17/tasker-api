@@ -13,6 +13,10 @@ async def main():
             "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dispatch_sessions' AND column_name='current_batch') THEN UPDATE dispatch_sessions SET lock_version = current_batch; ALTER TABLE dispatch_sessions DROP COLUMN current_batch; END IF; END $$;",
             "CREATE INDEX IF NOT EXISTS idx_user_locations_spatial ON user_locations USING GIST (last_known_location);",
             "CREATE INDEX IF NOT EXISTS idx_task_locations_spatial ON task_locations USING GIST (geography_point);",
+            "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'CUSTOMER_PAID';",
+            "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'TRANSFER_INITIATED';",
+            "ALTER TYPE payoutstatus ADD VALUE IF NOT EXISTS 'TRANSFER_INITIATED';",
+            "ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS 'PAYMENT_REQUESTED';",
         ]:
             try:
                 await conn.execute(text(stmt))

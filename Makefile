@@ -25,7 +25,7 @@ activate:
 
 
 dev:
-	$(FASTAPI) dev app/main.py
+	$(FASTAPI) run app/main.py
 
 celery:
 	$(CELERY) -A app.celery_app.celery_app worker --loglevel=info --pool=solo

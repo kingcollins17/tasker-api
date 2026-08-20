@@ -1,8 +1,9 @@
+from typing import List
 from app.core.utils.timer import Timer
 from app.core.services.logger_service import LoggerService, get_logger_service
 from app.core.models.users import KYCStatus
 from fastapi import APIRouter, Depends, status, HTTPException, Query
-from typing import Optional
+from typing import Optional, List, Any 
 from pydantic import BaseModel
 from sqlmodel import select, func, col
 from sqlalchemy import desc, or_
@@ -67,7 +68,7 @@ router = APIRouter(tags=["Assignments"])
 async def get_my_assignments(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
-    status_filter: Optional[TaskAssignmentStatus] = Query(None, alias="status"),
+    status_filter: Optional[List[TaskAssignmentStatus]] = Query(None, alias="status"),
     task_id: Optional[str] = Query(None),
     sort_by: str = Query("assigned_at"),
     sort_desc: bool = Query(True),
@@ -93,7 +94,7 @@ async def get_my_assignments(
         query = query.where(TaskAssignment.provider_id == current_user.id)
 
         if status_filter:
-            query = query.where(TaskAssignment.status == status_filter)
+            query = query.where(col(TaskAssignment.status).in_(status_filter))
         if task_id:
             query = query.where(TaskAssignment.task_id == task_id)
 
@@ -115,7 +116,7 @@ async def get_my_assignments(
             count_query = count_query.where(col(TaskAssignment.id) == "0")
 
         if status_filter:
-            count_query = count_query.where(col(TaskAssignment.status) == status_filter)
+            count_query = count_query.where(col(TaskAssignment.status).in_(status_filter))
         if task_id:
             count_query = count_query.where(col(TaskAssignment.task_id) == task_id)
 
@@ -164,7 +165,7 @@ async def get_my_assignments(
         await system_logger.warn(
             "get_my_assignments failed",
             source="assignments.get_my_assignments",
-            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
         )
         raise
     except Exception as e:
@@ -337,7 +338,7 @@ async def get_task_assignment(
         await system_logger.warn(
             "get_task_assignment failed",
             source="assignments.get_task_assignment",
-            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
         )
         raise
     except Exception as e:
@@ -504,7 +505,7 @@ async def respond_to_dispatch_ping(
         await system_logger.warn(
             "respond_to_dispatch_ping failed",
             source="assignments.respond_to_dispatch_ping",
-            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
         )
         raise
     except Exception as e:
@@ -605,7 +606,7 @@ async def start_task(
         await system_logger.warn(
             "start_task failed",
             source="assignments.start_task",
-            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
         )
         raise
     except Exception as e:
@@ -694,7 +695,7 @@ async def complete_task(
         await system_logger.warn(
             "complete_task failed",
             source="assignments.complete_task",
-            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
         )
         raise
     except Exception as e:

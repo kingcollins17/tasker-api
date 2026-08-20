@@ -12,7 +12,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel
-from sqlmodel import select, desc, func
+from sqlmodel import select, desc, func, col
 
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.deps import GetCurrentUser
@@ -108,7 +108,7 @@ async def list_my_transactions(
     sort_by: str = Query("created_at"),
     sort_desc: bool = Query(True),
     transaction_type: Optional[TransactionType] = Query(None),
-    status_filter: Optional[TransactionStatus] = Query(None, alias="status"),
+    status_filter: Optional[List[TransactionStatus]] = Query(None, alias="status"),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     try:
@@ -121,7 +121,7 @@ async def list_my_transactions(
                 Transaction.transaction_type == transaction_type
             )
         if status_filter:
-            statement = statement.where(Transaction.status == status_filter)
+            statement = statement.where(col(Transaction.status).in_(status_filter))
 
         # pyrefly: ignore [bad-argument-type]
         count_query = select(func.count(Transaction.id)).where(
@@ -132,7 +132,7 @@ async def list_my_transactions(
                 Transaction.transaction_type == transaction_type
             )
         if status_filter:
-            count_query = count_query.where(Transaction.status == status_filter)
+            count_query = count_query.where(col(Transaction.status).in_(status_filter))
 
         total = (await transaction_repo.execute(count_query)).one()
 
@@ -265,7 +265,7 @@ async def list_customer_payouts(
     per_page: int = Query(20, ge=1, le=100),
     sort_by: str = Query("created_at"),
     sort_desc: bool = Query(True),
-    status_filter: Optional[PayoutStatus] = Query(None, alias="status"),
+    status_filter: Optional[List[PayoutStatus]] = Query(None, alias="status"),
     service: PaymentService = Depends(get_payment_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
@@ -305,6 +305,72 @@ async def list_customer_payouts(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch payout queues.",
+        )
+
+
+@router.get(
+    "/customer/payouts/pending-payment",
+    response_model=BaseAPIResponse[Optional[PayoutQueueResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_latest_pending_customer_payout(
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.CUSTOMER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    payout_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Retrieve the customer's most recent PayoutQueue item with status PENDING for checkout completion."""
+    try:
+        timer = Timer()
+        timer.start()
+
+        stmt = (
+            select(PayoutQueue)
+            .where(PayoutQueue.customer_id == current_user.id)
+            .where(PayoutQueue.status == PayoutStatus.PENDING)
+            .order_by(desc(PayoutQueue.created_at))
+            .limit(1)
+        )
+        res = await payout_repo.execute(stmt)
+        payout: Optional[PayoutQueue] = res.unique().one_or_none()
+
+        data = PayoutQueueResponse.model_validate(payout) if payout else None
+
+        await system_logger.metric(
+            "get_latest_pending_customer_payout",
+            timer.stop(),
+            source="payments.get_latest_pending_customer_payout",
+        )
+        return BaseAPIResponse[Optional[PayoutQueueResponse]](
+            data=data,
+            detail=(
+                "Latest pending payout retrieved successfully."
+                if data
+                else "No pending payout found."
+            ),
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn(
+            "get_latest_pending_customer_payout failed",
+            source="payments.get_latest_pending_customer_payout",
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
+        )
+        raise e
+    except Exception as e:
+        await system_logger.error(
+            f"get_latest_pending_customer_payout error: {str(e)}",
+            source="payments.get_latest_pending_customer_payout",
+        )
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve latest pending payout.",
         )
 
 
@@ -365,7 +431,7 @@ async def list_provider_payouts(
     per_page: int = Query(20, ge=1, le=100),
     sort_by: str = Query("created_at"),
     sort_desc: bool = Query(True),
-    status_filter: Optional[PayoutStatus] = Query(None, alias="status"),
+    status_filter: Optional[List[PayoutStatus]] = Query(None, alias="status"),
     service: PaymentService = Depends(get_payment_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):

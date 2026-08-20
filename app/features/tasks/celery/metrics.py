@@ -103,6 +103,8 @@ async def _sync_provider_metrics_async(provider_id: str):
         except Exception as e:
             await system_logger.error(f'sync_provider_metrics Failed: {str(e)}', source='celery.sync_provider_metrics')
             raise e
+
+            
 async def _sync_single_service_duration(
     service_id: str,
     service_repo: Repository[Service],

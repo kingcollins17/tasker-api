@@ -1,4 +1,5 @@
 import enum
+import random
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -9,6 +10,11 @@ from sqlmodel import Field, Relationship, SQLModel
 
 from app.core.models.spatial import PointType
 from app.core.utils.datetime_helper import lagos_now
+
+
+def generate_4digit_pin() -> str:
+    """Generate a random 4-digit PIN string."""
+    return f"{random.randint(0, 9999):04d}"
 
 class LocationType(str, enum.Enum):
     """Discriminates task geographical point roles."""
@@ -36,6 +42,8 @@ class PaymentStatus(str, enum.Enum):
     """Lifecycle states of task payment settlement."""
     PENDING = "PENDING"
     PAYMENT_REQUESTED = "PAYMENT_REQUESTED"
+    CUSTOMER_PAID = "CUSTOMER_PAID"
+    TRANSFER_INITIATED = "TRANSFER_INITIATED"
     PAID = "PAID"
     CASH_PAID = "CASH_PAID"
     FAILED = "FAILED"
@@ -107,8 +115,8 @@ class Task(SQLModel, table=True):
     max_customer_redispatches: Optional[int] = Field(default=3, nullable=True, description="Maximum number of redispatches a customer is allowed")
     
     scheduled_start_at: Optional[datetime] = Field(default=None, nullable=True, description="Target scheduled start time if not immediate")
-    start_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN to initiate task on-site")
-    completion_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN to complete task on-site")
+    start_pin: Optional[str] = Field(default_factory=generate_4digit_pin, nullable=True, description="Secure 4-digit verification PIN to initiate task on-site")
+    completion_pin: Optional[str] = Field(default_factory=generate_4digit_pin, nullable=True, description="Secure 4-digit verification PIN to complete task on-site")
     cancellation_reason: Optional[str] = Field(default=None, nullable=True, description="Reason for task cancellation")
     cancelled_by: Optional[CancelledBy] = Field(default=None, index=True, nullable=True, description="Who initiated the cancellation (platform or customer)")
     # Payment Settlement State
@@ -282,8 +290,8 @@ class TaskAssignment(SQLModel, table=True):
     assigned_at: datetime = Field(default_factory=lagos_now, description="Timestamp when provider accepted assignment")
     started_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when provider initiated work on-site")
     completed_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when task work was finished and verified")
-    pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit verification PIN generated for the assignment")
-    cancellation_pin: Optional[str] = Field(default=None, nullable=True, description="Secure 4-digit PIN for customer to cancel task with agreement from provider")
+    pin: Optional[str] = Field(default_factory=generate_4digit_pin, nullable=True, description="Secure 4-digit verification PIN generated for the assignment")
+    cancellation_pin: Optional[str] = Field(default_factory=generate_4digit_pin, nullable=True, description="Secure 4-digit PIN for customer to cancel task with agreement from provider")
     status: TaskAssignmentStatus = Field(default=TaskAssignmentStatus.ASSIGNED, description="Assignment status")
     created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
     updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")

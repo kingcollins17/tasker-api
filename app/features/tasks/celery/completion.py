@@ -1,7 +1,10 @@
+
 from typing import Any, Optional
 
+from sqlalchemy import func, update
+
 from celery import shared_task
-from sqlmodel import select
+from sqlmodel import select, col
 
 from app.core.database import async_session_maker
 from app.core.logging import logger
@@ -28,11 +31,27 @@ from app.features.tasks.celery.metrics import (
 
 
 async def _complete_task_assignment_async(
-    task_id: str, provider_id: str, payment_mode: str = "cash"
+    task_id: str,
+    provider_id: str,
+    payment_mode: str = "cash",
 ) -> Any:
-    """Marks assignment + task COMPLETED, resets provider duty status, and sets selected payment_mode."""
+    """Async handler for task completion.
+
+    Updates task assignment and task status to COMPLETED, increments the provider's
+    total completed task count and resets duty status to ONLINE_AVAILABLE via a single SQL update statement,
+    and awards provider credibility.
+
+    Args:
+        task_id: Unique identifier for the completed task.
+        provider_id: Unique identifier for the service provider completing the task.
+        payment_mode: Mode of payment used for the task (defaults to "cash").
+
+    Returns:
+        Tuple of (service_id, category_id) if task exists, else (None, None).
+    """
     async with async_session_maker() as session:
         system_logger = get_logger_service_manual(session)
+        cred_service = get_credibility_service_manual(session)
         timer = Timer()
         timer.start()
         try:
@@ -40,7 +59,10 @@ async def _complete_task_assignment_async(
             assignment_repo = Repository(TaskAssignment, session)
             provider_profile_repo = Repository(ProviderProfile, session)
 
-            stmt_assign = select(TaskAssignment).where(TaskAssignment.task_id == task_id)
+            # 1. Update task assignment status to COMPLETED and set completion timestamp
+            stmt_assign = select(TaskAssignment).where(
+                TaskAssignment.task_id == task_id
+            )
             res_assign = await assignment_repo.execute(stmt_assign)
             assignment: Optional[TaskAssignment] = res_assign.one_or_none()
             if assignment:
@@ -48,30 +70,26 @@ async def _complete_task_assignment_async(
                 assignment.completed_at = lagos_now()
                 await assignment_repo.add(assignment)
 
+            # 2. Update parent task status to COMPLETED and retrieve service/category details
             service_id = None
             category_id = None
             task = await task_repo.get(task_id)
             if task:
                 task.status = TaskStatus.COMPLETED
-                selected_mode = (
-                    PaymentMode(payment_mode)
-                    if payment_mode in ("cash", "online")
-                    else PaymentMode.CASH
-                )
-                task.payment_mode = selected_mode
                 await task_repo.add(task)
                 service_id = task.service_id
                 category_id = task.category_id
 
-            stmt_prof = select(ProviderProfile).where(
-                ProviderProfile.user_id == provider_id
+            # 3. Direct SQL update to increment provider's total_tasks_completed and set duty_status to ONLINE_AVAILABLE
+            stmt_prof_update = (
+                update(ProviderProfile)
+                .where(col(ProviderProfile.user_id) == provider_id)
+                .values(
+                    total_tasks_completed=func.coalesce(col(ProviderProfile.total_tasks_completed), 0) + 1,
+                    duty_status=DutyStatus.ONLINE_AVAILABLE,
+                )
             )
-            res_prof = await provider_profile_repo.execute(stmt_prof)
-            profile: Optional[ProviderProfile] = res_prof.one_or_none()
-            if profile:
-                profile.total_tasks_completed = (profile.total_tasks_completed or 0) + 1
-                profile.duty_status = DutyStatus.ONLINE_AVAILABLE
-                await provider_profile_repo.add(profile)
+            await provider_profile_repo.execute(stmt_prof_update)
 
             logger.info(
                 f"complete_task_assignment: task {task_id} completed by provider {provider_id} (payment_mode={payment_mode})"
@@ -80,8 +98,8 @@ async def _complete_task_assignment_async(
                 f"complete_task_assignment: task {task_id} completed by provider {provider_id} (payment_mode={payment_mode})",
                 source="celery.complete_task_assignment",
             )
-            # Reward provider with credibility for completing a task
-            cred_service = get_credibility_service_manual(session)
+
+            # 4. Reward provider with credibility points for completing the task
             await cred_service.add(
                 user_id=provider_id,
                 reason=CredibilityReason.TASK_COMPLETED,
@@ -106,10 +124,23 @@ async def _complete_task_assignment_async(
 def complete_task_assignment(
     task_id: str, provider_id: str, payment_mode: str = "cash"
 ):
-    """Finalises a task — marks COMPLETED, triggers process_task_payment task, resets duty status, and syncs metrics."""
+    """Celery task to finalize task assignment completion.
+
+    Executes DB operations via `_complete_task_assignment_async`, then dispatches
+    asynchronous background tasks for processing payments and updating provider and service metrics.
+
+    Args:
+        task_id: Unique identifier of the task.
+        provider_id: Unique identifier of the provider.
+        payment_mode: Mode of payment ("cash", etc.).
+
+    Returns:
+        bool: True on successful queuing and execution.
+    """
     logger.info(
         f"complete_task_assignment: task={task_id} provider={provider_id} payment_mode={payment_mode}"
     )
+    # Execute database state updates (assignment, task status, provider profile update, credibility reward)
     task_info = run_async(
         _complete_task_assignment_async(task_id, provider_id, payment_mode)
     )
@@ -118,10 +149,16 @@ def complete_task_assignment(
     else:
         service_id, category_id = None, None
 
+    # Dispatch downstream asynchronous background tasks
+    # 1. Process payment for the completed task
     # pyrefly: ignore [not-callable]
     process_task_payment.delay(task_id, provider_id, payment_mode)
+    # 2. Sync provider statistics and metrics
     # pyrefly: ignore [not-callable]
     sync_provider_metrics.delay(provider_id)
-    # pyrefly: ignore [not-callable]
-    sync_service_metrics.delay(service_id=service_id, category_id=category_id)
+    
+    # 3. Sync service and category metrics if available
+    if service_id and category_id:
+        # pyrefly: ignore [not-callable]
+        sync_service_metrics.delay(service_id=service_id, category_id=category_id)
     return True

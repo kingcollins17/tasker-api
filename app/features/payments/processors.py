@@ -111,7 +111,7 @@ class PaymentWebhookProcessor(WebhookProcessor):
             )
             task = await self.task_repo.get(task_id)
             if task:
-                task.payment_status = PaymentStatus.PAID
+                task.payment_status = PaymentStatus.CUSTOMER_PAID
                 await self.task_repo.add(task)
 
                 # Log successful task payment transaction
@@ -134,13 +134,13 @@ class PaymentWebhookProcessor(WebhookProcessor):
                         await self.payout_repo.update(p.id, {"status": PayoutStatus.CUSTOMER_PAID})
 
                 # Immediately trigger transfer out payout to provider via Celery task
-                if task.assigned_provider_id and task.provider_payout:
+                if task.assignment and task.provider_payout:
                     await self.system_logger.info(
                         f"Immediately triggering provider payout for provider {task.assigned_provider_id} on task {task.id}", source="payments.webhook"
                     )
                     # pyrefly: ignore [not-callable]
                     process_provider_payout.delay(
-                        task.id, task.assigned_provider_id, task.provider_payout
+                        task.id, task.assignment.provider_id
                     )
 
                 if user_id:
@@ -243,9 +243,11 @@ class TransferWebhookProcessor(WebhookProcessor):
         notification_service: NotificationService,
         system_logger: LoggerService,
         payout_repo: Repository[PayoutQueue],
+        task_repo: Repository[Task],
     ):
         super().__init__(transaction_repo, notification_service, system_logger)
         self.payout_repo = payout_repo
+        self.task_repo = task_repo
 
     async def process(self, event: str, data: Dict[str, Any]) -> None:
         try:
@@ -288,6 +290,12 @@ class TransferWebhookProcessor(WebhookProcessor):
             for p in payouts:
                 await self.payout_repo.update(p.id, {"status": PayoutStatus.COMPLETED})
 
+        if task_id:
+            task = await self.task_repo.get(task_id)
+            if task:
+                task.payment_status = PaymentStatus.PAID
+                await self.task_repo.add(task)
+
         await self.__create_transaction(
             amount, TransactionStatus.SUCCESS, user_id, task_id, reference, data
         )
@@ -319,6 +327,12 @@ class TransferWebhookProcessor(WebhookProcessor):
         if payouts:
             for p in payouts:
                 await self.payout_repo.update(p.id, {"status": PayoutStatus.CANCELLED})
+
+        if task_id:
+            task = await self.task_repo.get(task_id)
+            if task:
+                task.payment_status = PaymentStatus.FAILED
+                await self.task_repo.add(task)
 
         await self.__create_transaction(
             amount, TransactionStatus.FAILED, user_id, task_id, reference, data
@@ -397,10 +411,13 @@ def get_transfer_processor(
     notification_service: NotificationService = Depends(get_notification_service),
     system_logger: LoggerService = Depends(get_logger_service),
     payout_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
+    task_repo: Repository[Task] = Depends(GetRepository(Task)),
+    
 ) -> TransferWebhookProcessor:
     return TransferWebhookProcessor(
         transaction_repo=transaction_repo,
         notification_service=notification_service,
         system_logger=system_logger,
         payout_repo=payout_repo,
+        task_repo=task_repo
     )

@@ -29,15 +29,18 @@ class Repository(Generic[T]):
         """Fetch a single record by its primary key ID."""
         return await self.session.get(self.model, id)
 
-    async def get_all(self, options: Optional[QueryOptions] = None) -> List[T]:
+    async def get_all(self, options: Optional[QueryOptions] = None, use_unique=False) -> List[T]:
         """Fetch all records matching filters, order, and limit/offset bounds."""
         statement = select(self.model)
 
         if options:
-            # Apply exact match filters dynamically
+            # Apply exact match or IN filters dynamically
             for key, value in options.filters.items():
                 if hasattr(self.model, key):
-                    statement = statement.where(getattr(self.model, key) == value)
+                    if isinstance(value, (list, tuple, set)):
+                        statement = statement.where(col(getattr(self.model, key)).in_(value))
+                    else:
+                        statement = statement.where(getattr(self.model, key) == value)
 
             # Apply ordering
             if options.order_by and hasattr(self.model, options.order_by):
@@ -54,6 +57,8 @@ class Repository(Generic[T]):
                 statement = statement.limit(options.limit)
 
         result = await self.session.exec(statement)
+        if use_unique:
+            return list(result.unique().all())
         return list(result.all())
 
     async def add(self, entity: T) -> T:

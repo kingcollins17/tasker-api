@@ -19,14 +19,12 @@ def process_task_payment(task_id: str, provider_id: str, payment_mode: str = "ca
 
 
 @shared_task(name="payments.process_provider_payout")
-def process_provider_payout(task_id: str, provider_id: str, payout_amount: float):
+def process_provider_payout(task_id: str, provider_id: str):
     """Celery task to handle transferring net payout to provider, offsetting any pending debt balance first."""
     logger.info(
-        f"process_provider_payout: task_id={task_id}, provider_id={provider_id}, payout_amount={payout_amount}"
+        f"process_provider_payout: task_id={task_id}, provider_id={provider_id}"
     )
-    return run_async(
-        _process_provider_payout_async(task_id, provider_id, payout_amount)
-    )
+    return run_async(_process_provider_payout_async(task_id, provider_id))
 
 
 @shared_task(name="payments.process_debt_settlement")
@@ -65,7 +63,7 @@ async def _process_task_payment_async(
 
 
 async def _process_provider_payout_async(
-    task_id: str, provider_id: str, payout_amount: float
+    task_id: str, provider_id: str
 ) -> None:
     async with async_session_maker() as session:
         system_logger = get_logger_service_manual(session)
@@ -73,7 +71,7 @@ async def _process_provider_payout_async(
         timer.start()
         try:
             service = get_payment_service_manual(session)
-            await service.process_provider_payout(task_id, provider_id, payout_amount)
+            await service.process_provider_payout(task_id, provider_id)
 
             await system_logger.metric(
                 "process_provider_payout",

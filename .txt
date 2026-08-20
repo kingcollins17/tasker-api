@@ -56,3 +56,9 @@ psql command = PGPASSWORD=fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa psql -h dpg-d8kp6e3eo
   ]
 }
 wscat -c "ws://127.0.0.1:8000/api/v1/notifications/ws?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImEzNjA5NDcyLTk1Y2UtNDZhYy05NjM3LWNkMGQ5ZTk0ZGNhNyIsImVtYWlsIjoiaGFzc2FuMTIzQHlvcG1haWwuY29tIiwiaXNfYWN0aXZlIjp0cnVlLCJleHAiOjE3ODcwNjY2Mzh9.XBmyzmeOQJVEIdYARPqZRvOrEj7EAuSHR_3sBMkMmqI"
+
+//#--
+JWT TOKENS
+baker@yopmail.com - eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA4Y2Q2NmZlLTQ0NjEtNDI3OC05NmYzLTZhMTZmOTk3ZTE0MyIsImVtYWlsIjoiYmFrZXJAeW9wbWFpbC5jb20iLCJpc19hY3RpdmUiOnRydWUsImV4cCI6MTc5MDI1ODAyOH0.BL3sUHKVZa_D9jAXYJRxx4NmTXMiOk2q6xkrtcYbUUo
+
+//

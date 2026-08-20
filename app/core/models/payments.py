@@ -48,6 +48,7 @@ class PayoutStatus(str, enum.Enum):
     """Status of a provider payout in the queue."""
     PENDING = "PENDING"
     CUSTOMER_PAID = "CUSTOMER_PAID"
+    TRANSFER_INITIATED = "TRANSFER_INITIATED"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
 

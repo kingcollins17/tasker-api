@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, status
-from sqlmodel import func, select
+from sqlmodel import func, select, col
 
 from app.core.logging import logger
 from app.core.models.notifications import NotificationType
@@ -10,7 +10,7 @@ from app.core.models.tasks import PaymentMode, PaymentStatus, Task
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
 from app.core.models.users import User
 from app.core.repository import GetRepository, Repository, QueryOptions
-from app.core.services.payment import get_paystack_gateway
+from app.core.services.payment import get_paystack_gateway, PaystackPaymentGateway
 from app.core.utils.datetime_helper import lagos_now, now
 from app.features.notifications.services import (
     NotificationService,
@@ -39,6 +39,7 @@ class PaymentService:
         debt_repo: Repository[ProviderDebt],
         payout_queue_repo: Repository[PayoutQueue],
         notification_service: NotificationService,
+        payment_gateway: PaystackPaymentGateway, 
     ):
         self.task_repo = task_repo
         self.user_repo = user_repo
@@ -46,11 +47,15 @@ class PaymentService:
         self.debt_repo = debt_repo
         self.payout_queue_repo = payout_queue_repo
         self.notification_service = notification_service
+        self.payment_gateway=payment_gateway
 
     # ── Core Payment Processing Methods ────────────────────────────────────
 
     async def process_task_payment(
-        self, task_id: str, provider_id: str, payment_mode: str = "cash"
+        self,
+        task_id: str,
+        provider_id: str,
+        payment_mode: str = "cash",
     ) -> None:
         """Handle task payment processing after task completion.
 
@@ -81,28 +86,64 @@ class PaymentService:
         await self.task_repo.add(task)
 
     async def process_provider_payout(
-        self, task_id: str, provider_id: str, payout_amount: float
+        self, task_id: str, provider_id: str,
     ) -> None:
         """Transfer net payout to provider, offsetting any pending debt balance first.
 
+        Payout amount is derived from the PayoutQueue entry or task.provider_payout,
+        and a PayoutQueue entry is inserted if one does not already exist.
+
         Steps:
-        6. Insert Transaction for incoming payment, send out the payment to the provider.
-        7. Update payout queue with transfer reference.
+        1. Fetch associated Task and existing PayoutQueue entry for task & provider.
+        2. Resolve gross payout amount from PayoutQueue.payout_amount or task.provider_payout.
+        3. If no PayoutQueue entry exists, insert a new PayoutQueue entry.
+        4. Calculate net debt balance and offset pending provider debt.
+        5. Transfer net remaining payout via payment gateway and update PayoutQueue status to COMPLETED.
         """
+        # Fetch task details for payout calculation and customer ID
+        task = await self.task_repo.get(task_id)
+
+        # Check for existing payout queue entry
+        payouts = await self.payout_queue_repo.get_all(
+            QueryOptions(filters={"task_id": task_id, "provider_id": provider_id})
+        )
+        payout_obj: Optional[PayoutQueue] = payouts[0] if payouts else None
+
+        # Resolve payout amount: payout_obj.payout_amount -> task.provider_payout
+        if payout_obj and payout_obj.payout_amount:
+            resolved_payout_amount = payout_obj.payout_amount
+        elif task and task.provider_payout:
+            resolved_payout_amount = task.provider_payout
+        else:
+            resolved_payout_amount = 0.0
+
+        # If no payout queue entry exists, insert one
+        if not payout_obj:
+            customer_id = task.customer_id if task else None
+            customer_payment_amount = task.customer_total_price if task and task.customer_total_price else 0.0
+            payout_obj = PayoutQueue(
+                task_id=task_id,
+                provider_id=provider_id,
+                customer_id=customer_id,
+                payout_amount=resolved_payout_amount,
+                customer_payment_amount=customer_payment_amount,
+                status=PayoutStatus.PENDING,
+                description=f"Automated payout for task #{task_id}",
+            )
+            payout_obj = await self.payout_queue_repo.add(payout_obj)
+
         # 1. Calculate net debt balance using SUM(amount) from append-only ledger
         stmt = select(func.coalesce(func.sum(ProviderDebt.amount), 0.0)).where(
             ProviderDebt.provider_id == provider_id
         )
-        total_debt = float(
-            (await self.debt_repo.execute(stmt)).one_or_none() or 0.0
-        )
+        total_debt = float((await self.debt_repo.execute(stmt)).one_or_none() or 0.0)
 
-        remaining_payout = payout_amount
+        remaining_payout = resolved_payout_amount
         debt_offset = 0.0
 
         if total_debt > 0.0:
-            debt_offset = min(payout_amount, total_debt)
-            remaining_payout = payout_amount - debt_offset
+            debt_offset = min(resolved_payout_amount, total_debt)
+            remaining_payout = resolved_payout_amount - debt_offset
 
             # Append negative (-) debt ledger entry for payout offset
             offset_entry = ProviderDebt(
@@ -128,32 +169,36 @@ class PaymentService:
             )
             await self.transaction_repo.add(debt_settle_tx)
 
-        # 2. Transfer net remaining payout via Paystack transfer API
-        gateway = get_paystack_gateway()
+        # 2. Transfer net remaining payout via payment gateway
+        gateway = self.payment_gateway
         transfer_ref = f"payout_{task_id}_{int(now().timestamp())}"
 
         if remaining_payout > 0:
-            # Find existing payout queue for the task and update it
-            payouts = await self.payout_queue_repo.get_all(
-                QueryOptions(
-                    filters={"task_id": task_id, "provider_id": provider_id}
-                )
-            )
-            if payouts:
-                p = payouts[0]
-                await self.payout_queue_repo.update(
-                    p.id,
-                    {"reference": transfer_ref, "payout_amount": remaining_payout},
-                )
-
             await gateway.send_payment(
                 amount=remaining_payout,
                 recipient_code=provider_id,
                 reference=transfer_ref,
             )
 
+        # 3. Update payout queue record with transfer reference, resolved payout amount, and status
+        if payout_obj:
+            await self.payout_queue_repo.update(
+                payout_obj.id,
+                {
+                    "reference": transfer_ref,
+                    "payout_amount": resolved_payout_amount,
+                    "status": PayoutStatus.TRANSFER_INITIATED
+                    
+                },
+            )
+
+        # 4. Update task payment status
+        if task:
+            task.payment_status = PaymentStatus.TRANSFER_INITIATED
+            await self.task_repo.add(task)
+
         logger.info(
-            f"Processed payout for provider {provider_id} on task {task_id}: gross=₦{payout_amount:,.2f}, "
+            f"Processed payout for provider {provider_id} on task {task_id}: gross=₦{resolved_payout_amount:,.2f}, "
             f"debt_offset=₦{debt_offset:,.2f}, net_transferred=₦{remaining_payout:,.2f}"
         )
 
@@ -247,7 +292,7 @@ class PaymentService:
         )
         customer_email = customer.email if customer else "customer@example.com"
 
-        gateway = get_paystack_gateway()
+        gateway = self.payment_gateway
         payment_resp = await gateway.receive_payment(
             email=customer_email,
             amount=task.customer_total_price or 0.0,
@@ -284,7 +329,7 @@ class PaymentService:
                 recepients=[task.customer_id],
                 title="Payment Requested for Completed Task",
                 body=f"Your task '{task.title}' is completed. Tap to pay {amt_fmt} online.",
-                type=NotificationType.TASK_ACCEPTED,
+                type=NotificationType.PAYMENT_REQUESTED,
                 channels=["IN_APP", "PUSH", "EMAIL"],
                 data={
                     "task_id": task.id,
@@ -337,7 +382,9 @@ class PaymentService:
         stmt_sum = select(func.coalesce(func.sum(ProviderDebt.amount), 0.0)).where(
             ProviderDebt.provider_id == provider_id
         )
-        total_owed = float((await self.debt_repo.execute(stmt_sum)).one_or_none() or 0.0)
+        total_owed = float(
+            (await self.debt_repo.execute(stmt_sum)).one_or_none() or 0.0
+        )
 
         # pyrefly: ignore [bad-argument-type]
         stmt_count = select(func.count(ProviderDebt.id)).where(
@@ -389,7 +436,7 @@ class PaymentService:
                 detail="Provider user account not found.",
             )
 
-        gateway = get_paystack_gateway()
+        gateway = self.payment_gateway
         payment_resp = await gateway.receive_payment(
             email=provider.email,
             amount=amount_to_pay,
@@ -413,33 +460,45 @@ class PaymentService:
         # Ensure that we inject the customer filter in the options
         options.filters = options.filters or {}
         options.filters["customer_id"] = customer_id
-        
+
         # pyrefly: ignore [bad-argument-type]
-        count_stmt = select(func.count(PayoutQueue.id)).where(PayoutQueue.customer_id == customer_id)
+        count_stmt = select(func.count(PayoutQueue.id)).where(
+            PayoutQueue.customer_id == customer_id
+        )
         for key, value in options.filters.items():
             if key != "customer_id" and hasattr(PayoutQueue, key):
-                count_stmt = count_stmt.where(getattr(PayoutQueue, key) == value)
+                if isinstance(value, (list, tuple, set)):
+                    count_stmt = count_stmt.where(col(getattr(PayoutQueue, key)).in_(value))
+                else:
+                    count_stmt = count_stmt.where(getattr(PayoutQueue, key) == value)
         total = (await self.payout_queue_repo.execute(count_stmt)).one()
 
-        paginated_data = await self.payout_queue_repo.get_all(options)
+        paginated_data = await self.payout_queue_repo.get_all(options, use_unique=True)
         return paginated_data, total
 
     async def get_provider_payout_queues(self, provider_id: str, options: QueryOptions):
         """Fetch paginated payout queue items for a given provider id."""
         options.filters = options.filters or {}
         options.filters["provider_id"] = provider_id
-        
+
         # pyrefly: ignore [bad-argument-type]
-        count_stmt = select(func.count(PayoutQueue.id)).where(PayoutQueue.provider_id == provider_id)
+        count_stmt = select(func.count(PayoutQueue.id)).where(
+            PayoutQueue.provider_id == provider_id
+        )
         for key, value in options.filters.items():
             if key != "provider_id" and hasattr(PayoutQueue, key):
-                count_stmt = count_stmt.where(getattr(PayoutQueue, key) == value)
+                if isinstance(value, (list, tuple, set)):
+                    count_stmt = count_stmt.where(col(getattr(PayoutQueue, key)).in_(value))
+                else:
+                    count_stmt = count_stmt.where(getattr(PayoutQueue, key) == value)
         total = (await self.payout_queue_repo.execute(count_stmt)).one()
 
-        paginated_data = await self.payout_queue_repo.get_all(options)
+        paginated_data = await self.payout_queue_repo.get_all(options, use_unique=True)
         return paginated_data, total
 
-    async def get_provider_payout(self, payout_id: str, provider_id: str) -> PayoutQueue:
+    async def get_provider_payout(
+        self, payout_id: str, provider_id: str
+    ) -> PayoutQueue:
         """Fetch a specific payout queue item for a provider."""
         payout = await self.payout_queue_repo.get(payout_id)
         if not payout or payout.provider_id != provider_id:
@@ -449,27 +508,33 @@ class PaymentService:
             )
         return payout
 
-    async def get_customer_payout_stats(self, customer_id: str) -> CustomerPayoutStatsResponse:
+    async def get_customer_payout_stats(
+        self, customer_id: str
+    ) -> CustomerPayoutStatsResponse:
         """Fetch payout statistics for a customer."""
         stmt = (
             # pyrefly: ignore [bad-argument-type]
-            select(PayoutQueue.status, func.count(PayoutQueue.id), func.sum(PayoutQueue.customer_payment_amount))
+            select(
+                PayoutQueue.status,
+                func.count(col(PayoutQueue.id)),
+                func.sum(PayoutQueue.customer_payment_amount),
+            )
             .where(PayoutQueue.customer_id == customer_id)
             .group_by(PayoutQueue.status)
         )
         results = await self.payout_queue_repo.execute(stmt)
         rows = results.all()
-        
+
         total_payouts = 0
         total_pending = 0
         total_amount_pending = 0.0
         total_completed = 0
         total_amount_completed = 0.0
-        
+
         for row in rows:
             payout_status, count, amount = row
             amount = float(amount or 0.0)
-            
+
             total_payouts += count
             if payout_status == PayoutStatus.PENDING:
                 total_pending += count
@@ -477,7 +542,7 @@ class PaymentService:
             elif payout_status in (PayoutStatus.COMPLETED, PayoutStatus.CUSTOMER_PAID):
                 total_completed += count
                 total_amount_completed += amount
-                
+
         return CustomerPayoutStatsResponse(
             total_payouts=total_payouts,
             total_pending=total_pending,
@@ -486,11 +551,7 @@ class PaymentService:
             total_amount_completed=round(total_amount_completed, 2),
         )
 
-    async def reinitiate_payout(
-        self,
-        payout_id: str,
-        customer_id: str
-    ) -> PayoutQueue:
+    async def reinitiate_payout(self, payout_id: str, customer_id: str) -> PayoutQueue:
         """Reinitiate checkout for a pending customer payout."""
         payout = await self.payout_queue_repo.get(payout_id)
         if not payout or payout.customer_id != customer_id:
@@ -498,7 +559,7 @@ class PaymentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Payout queue item not found.",
             )
-            
+
         if payout.status != PayoutStatus.PENDING:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -526,7 +587,7 @@ class PaymentService:
                 detail="Task total price is invalid.",
             )
 
-        gateway = get_paystack_gateway()
+        gateway = self.payment_gateway
         payment_resp = await gateway.receive_payment(
             email=customer.email,
             amount=amount_to_pay,
@@ -553,6 +614,7 @@ def get_payment_service(
     debt_repo: Repository[ProviderDebt] = Depends(GetRepository(ProviderDebt)),
     payout_queue_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
     notification_service: NotificationService = Depends(get_notification_service),
+    payment_gateway: PaystackPaymentGateway=Depends(get_paystack_gateway),
 ) -> PaymentService:
     return PaymentService(
         task_repo=task_repo,
@@ -561,6 +623,8 @@ def get_payment_service(
         debt_repo=debt_repo,
         payout_queue_repo=payout_queue_repo,
         notification_service=notification_service,
+        payment_gateway=payment_gateway,
+
     )
 
 
@@ -575,4 +639,5 @@ def get_payment_service_manual(session) -> PaymentService:
         debt_repo=Repository(ProviderDebt, session),
         payout_queue_repo=Repository(PayoutQueue, session),
         notification_service=get_notification_service_manual(session),
+        payment_gateway=get_paystack_gateway(),
     )

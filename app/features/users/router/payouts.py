@@ -18,7 +18,7 @@ from app.core.schemas.users import (
 from app.features.users.schemas import UserResponse
 from app.core.error_handler import AppErrorHandler
 
-router = APIRouter(prefix="/payouts", tags=["payouts"])
+router = APIRouter(prefix="/payouts", tags=["Payouts"])
 
 
 @router.get("/banks", response_model=BaseAPIResponse[List[BankResponse]])
