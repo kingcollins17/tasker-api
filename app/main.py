@@ -55,9 +55,9 @@ async def lifespan(app: FastAPI):
     print("Celery worker process started.")
 
     # Start Celery Beat scheduler as a background process
-    celery_beat_process = multiprocessing.Process(target=run_celery_beat, daemon=True)
-    celery_beat_process.start()
-    print("Celery Beat process started.")
+    # celery_beat_process = multiprocessing.Process(target=run_celery_beat, daemon=True)
+    # celery_beat_process.start()
+    # print("Celery Beat process started.")
 
     yield
     # Shutdown logic
