@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from kombu import Queue
 
 from app.core.config import settings
@@ -14,6 +15,7 @@ celery_app = Celery(
         "app.features.reviews.celery.tasks",
         "app.features.credibility.celery.tasks",
         "app.features.payments.celery.tasks",
+        "app.features.payments.celery.transfer_tasks",
     ]
 )
 
@@ -65,6 +67,21 @@ celery_app.conf.update(
         "payments.process_task_payment": {"queue": "payments"},
         "payments.process_provider_payout": {"queue": "payments"},
         "payments.process_debt_settlement": {"queue": "payments"},
+        "transfers.process_transfer": {"queue": "payments"},
+        "transfers.recover_stuck_transfers": {"queue": "payments"},
+        "transfers.reconcile_processing_transfers": {"queue": "payments"},
+    },
+
+    # ── Celery Beat schedule ──────────────────────────────────────────────
+    beat_schedule={
+        "recover-stuck-transfers": {
+            "task": "transfers.recover_stuck_transfers",
+            "schedule": crontab(minute="*/5"),  # every 5 minutes
+        },
+        "reconcile-processing-transfers": {
+            "task": "transfers.reconcile_processing_transfers",
+            "schedule": crontab(minute="*/10"),  # every 10 minutes
+        },
     },
 )
 
@@ -76,4 +93,5 @@ celery_app.autodiscover_tasks([
     "app.features.tasks.celery",
     "app.features.credibility.celery",
     "app.features.payments.celery",
+    "app.features.payments.celery.transfer_tasks",
 ])

@@ -62,9 +62,7 @@ async def _process_task_payment_async(
             raise e
 
 
-async def _process_provider_payout_async(
-    task_id: str, provider_id: str
-) -> None:
+async def _process_provider_payout_async(task_id: str, provider_id: str) -> None:
     async with async_session_maker() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
@@ -87,7 +85,9 @@ async def _process_provider_payout_async(
 
 
 async def _process_debt_settlement_async(
-    provider_id: str, amount_paid: float, reference: str
+    provider_id: str,
+    amount_paid: float,
+    reference: str,
 ) -> None:
     async with async_session_maker() as session:
         system_logger = get_logger_service_manual(session)
@@ -95,7 +95,7 @@ async def _process_debt_settlement_async(
         timer.start()
         try:
             service = get_payment_service_manual(session)
-            await service.process_debt_settlement(provider_id, amount_paid, reference)
+            # await service.process_debt_settlement(provider_id, amount_paid, reference)
 
             await system_logger.metric(
                 "process_debt_settlement",

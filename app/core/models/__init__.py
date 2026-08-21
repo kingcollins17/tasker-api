@@ -69,6 +69,13 @@ from .payments import (
     PayoutStatus,
     PayoutQueue,
 )
+from .transfers import (
+    TransferStatus,
+    TransferErrorType,
+    VALID_TRANSFER_TRANSITIONS,
+    Transfer,
+    TransferAttempt,
+)
 from .vetting import (
     QuizQuestion,
     ProviderQuizResult,
@@ -131,6 +138,11 @@ __all__ = [
     "ProviderDebt",
     "PayoutStatus",
     "PayoutQueue",
+    "TransferStatus",
+    "TransferErrorType",
+    "VALID_TRANSFER_TRANSITIONS",
+    "Transfer",
+    "TransferAttempt",
     "SystemLog",
     "LogLevel",
     "QuizQuestion",

@@ -22,8 +22,9 @@ from app.features.reviews.router import router as reviews_router
 from app.features.system.router import router as system_router
 from app.features.vetting.router import router as vetting_router
 
-# Global variable to hold the celery worker process reference
+# Global variables to hold background process references
 celery_process = None
+celery_beat_process = None
 
 
 def run_celery_worker():
@@ -32,9 +33,15 @@ def run_celery_worker():
     celery_app.worker_main(["worker", "--loglevel=info", "--pool=solo"])
 
 
+def run_celery_beat():
+    from app.celery_app import celery_app
+
+    celery_app.Beat(loglevel="info").run()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global celery_process
+    global celery_process, celery_beat_process
     # Startup logic
     print(f"Starting up {settings.PROJECT_NAME}...")
     await init_db()
@@ -47,20 +54,27 @@ async def lifespan(app: FastAPI):
     celery_process.start()
     print("Celery worker process started.")
 
+    # Start Celery Beat scheduler as a background process
+    celery_beat_process = multiprocessing.Process(target=run_celery_beat, daemon=True)
+    celery_beat_process.start()
+    print("Celery Beat process started.")
+
     yield
     # Shutdown logic
 
     # Terminate Celery worker process
-    if celery_process and celery_process.is_alive():
-        print(f"Terminating Celery worker process (pid={celery_process.pid})...")
-        celery_process.terminate()
-        celery_process.join(timeout=10)
-        if celery_process.is_alive():
-            print("Celery worker did not exit in time, killing...")
-            celery_process.kill()
-            celery_process.join()
+    for name, proc in [("Celery worker", celery_process), ("Celery Beat", celery_beat_process)]:
+        if proc and proc.is_alive():
+            print(f"Terminating {name} process (pid={proc.pid})...")
+            proc.terminate()
+            proc.join(timeout=10)
+            if proc.is_alive():
+                print(f"{name} did not exit in time, killing...")
+                proc.kill()
+                proc.join()
     celery_process = None
-    print("Celery worker process stopped.")
+    celery_beat_process = None
+    print("Celery processes stopped.")
 
     await stop_notification_listener()
     await get_cache_service().close()

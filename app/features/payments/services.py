@@ -22,6 +22,11 @@ from app.features.payments.schemas import (
     CustomerPayoutStatsResponse,
     ProviderEarningStatsResponse,
 )
+from app.features.payments.transfer_service import (
+    TransferService,
+    get_transfer_service,
+    get_transfer_service_manual,
+)
 
 
 class PaymentService:
@@ -39,7 +44,8 @@ class PaymentService:
         debt_repo: Repository[ProviderDebt],
         payout_queue_repo: Repository[PayoutQueue],
         notification_service: NotificationService,
-        payment_gateway: PaystackPaymentGateway, 
+        payment_gateway: PaystackPaymentGateway,
+        transfer_service: "TransferService",
     ):
         self.task_repo = task_repo
         self.user_repo = user_repo
@@ -47,7 +53,8 @@ class PaymentService:
         self.debt_repo = debt_repo
         self.payout_queue_repo = payout_queue_repo
         self.notification_service = notification_service
-        self.payment_gateway=payment_gateway
+        self.payment_gateway = payment_gateway
+        self.transfer_service = transfer_service
 
     # ── Core Payment Processing Methods ────────────────────────────────────
 
@@ -86,20 +93,22 @@ class PaymentService:
         await self.task_repo.add(task)
 
     async def process_provider_payout(
-        self, task_id: str, provider_id: str,
+        self,
+        task_id: str,
+        provider_id: str,
     ) -> None:
-        """Transfer net payout to provider, offsetting any pending debt balance first.
-
-        Payout amount is derived from the PayoutQueue entry or task.provider_payout,
-        and a PayoutQueue entry is inserted if one does not already exist.
+        """Prepare provider payout with debt offset, then create a durable Transfer.
 
         Steps:
         1. Fetch associated Task and existing PayoutQueue entry for task & provider.
         2. Resolve gross payout amount from PayoutQueue.payout_amount or task.provider_payout.
         3. If no PayoutQueue entry exists, insert a new PayoutQueue entry.
         4. Calculate net debt balance and offset pending provider debt.
-        5. Transfer net remaining payout via payment gateway and update PayoutQueue status to COMPLETED.
+        5. Create a durable Transfer record for the net remaining payout.
+        6. Enqueue the Transfer for background processing via Celery.
         """
+        from app.features.payments.celery.transfer_tasks import process_transfer_task
+
         # Fetch task details for payout calculation and customer ID
         task = await self.task_repo.get(task_id)
 
@@ -109,28 +118,21 @@ class PaymentService:
         )
         payout_obj: Optional[PayoutQueue] = payouts[0] if payouts else None
 
-        # Resolve payout amount: payout_obj.payout_amount -> task.provider_payout
-        if payout_obj and payout_obj.payout_amount:
-            resolved_payout_amount = payout_obj.payout_amount
-        elif task and task.provider_payout:
-            resolved_payout_amount = task.provider_payout
-        else:
-            resolved_payout_amount = 0.0
-
-        # If no payout queue entry exists, insert one
         if not payout_obj:
-            customer_id = task.customer_id if task else None
-            customer_payment_amount = task.customer_total_price if task and task.customer_total_price else 0.0
-            payout_obj = PayoutQueue(
-                task_id=task_id,
-                provider_id=provider_id,
-                customer_id=customer_id,
-                payout_amount=resolved_payout_amount,
-                customer_payment_amount=customer_payment_amount,
-                status=PayoutStatus.PENDING,
-                description=f"Automated payout for task #{task_id}",
+            logger.warning(
+                f"process_provider_payout: No PayoutQueue record found for task {task_id} and provider {provider_id}. Skipping payout."
             )
-            payout_obj = await self.payout_queue_repo.add(payout_obj)
+            return
+
+        if payout_obj.status != PayoutStatus.CUSTOMER_PAID:
+            logger.warning(
+                f"process_provider_payout: PayoutQueue {payout_obj.id} status is {payout_obj.status.value}, expected CUSTOMER_PAID. Skipping payout."
+            )
+            return
+
+        resolved_payout_amount = payout_obj.payout_amount or (
+            task.provider_payout if task and task.provider_payout else 0.0
+        )
 
         # 1. Calculate net debt balance using SUM(amount) from append-only ledger
         stmt = select(func.coalesce(func.sum(ProviderDebt.amount), 0.0)).where(
@@ -169,26 +171,25 @@ class PaymentService:
             )
             await self.transaction_repo.add(debt_settle_tx)
 
-        # 2. Transfer net remaining payout via payment gateway
-        gateway = self.payment_gateway
-        transfer_ref = f"payout_{task_id}_{int(now().timestamp())}"
-
-        if remaining_payout > 0:
-            await gateway.send_payment(
+        # 2. Create durable Transfer record for net remaining payout
+        if remaining_payout > 0 and payout_obj:
+            transfer = await self.transfer_service.create_transfer(
+                payment_id=payout_obj.id,
+                task_id=task_id,
+                provider_id=provider_id,
                 amount=remaining_payout,
-                recipient_code=provider_id,
-                reference=transfer_ref,
             )
+            # Enqueue for background processing
+            # pyrefly: ignore [not-callable]
+            process_transfer_task.delay(transfer.id)
 
-        # 3. Update payout queue record with transfer reference, resolved payout amount, and status
+        # 3. Update payout queue status
         if payout_obj:
             await self.payout_queue_repo.update(
                 payout_obj.id,
                 {
-                    "reference": transfer_ref,
                     "payout_amount": resolved_payout_amount,
-                    "status": PayoutStatus.TRANSFER_INITIATED
-                    
+                    "status": PayoutStatus.TRANSFER_INITIATED,
                 },
             )
 
@@ -199,37 +200,9 @@ class PaymentService:
 
         logger.info(
             f"Processed payout for provider {provider_id} on task {task_id}: gross=₦{resolved_payout_amount:,.2f}, "
-            f"debt_offset=₦{debt_offset:,.2f}, net_transferred=₦{remaining_payout:,.2f}"
+            f"debt_offset=₦{debt_offset:,.2f}, net_transfer=₦{remaining_payout:,.2f}"
         )
 
-    async def process_debt_settlement(
-        self, provider_id: str, amount_paid: float, reference: str
-    ) -> None:
-        """Insert negative debt ledger entry for paid debt amount and log revenue Transaction."""
-        # Append negative (-) debt ledger entry for debt payment
-        payment_entry = ProviderDebt(
-            provider_id=provider_id,
-            amount=-amount_paid,
-            reason=DebtReason.DEBT_PAYMENT,
-            description=f"Online debt payment via reference {reference}",
-        )
-        await self.debt_repo.add(payment_entry)
-
-        # Log Debt Settlement Revenue Transaction
-        settlement_tx = Transaction(
-            amount=amount_paid,
-            transaction_type=TransactionType.DEBT_SETTLEMENT,
-            status=TransactionStatus.SUCCESS,
-            user_id=provider_id,
-            reference=reference,
-            payment_mode="online",
-            metadata_info={"applied_amount": amount_paid},
-        )
-        await self.transaction_repo.add(settlement_tx)
-
-        logger.info(
-            f"Processed debt settlement for provider {provider_id}: paid=₦{amount_paid:,.2f}, ref={reference}"
-        )
 
     # ── Cash / Online Payment Helpers ──────────────────────────────────────
 
@@ -468,7 +441,9 @@ class PaymentService:
         for key, value in options.filters.items():
             if key != "customer_id" and hasattr(PayoutQueue, key):
                 if isinstance(value, (list, tuple, set)):
-                    count_stmt = count_stmt.where(col(getattr(PayoutQueue, key)).in_(value))
+                    count_stmt = count_stmt.where(
+                        col(getattr(PayoutQueue, key)).in_(value)
+                    )
                 else:
                     count_stmt = count_stmt.where(getattr(PayoutQueue, key) == value)
         total = (await self.payout_queue_repo.execute(count_stmt)).one()
@@ -488,7 +463,9 @@ class PaymentService:
         for key, value in options.filters.items():
             if key != "provider_id" and hasattr(PayoutQueue, key):
                 if isinstance(value, (list, tuple, set)):
-                    count_stmt = count_stmt.where(col(getattr(PayoutQueue, key)).in_(value))
+                    count_stmt = count_stmt.where(
+                        col(getattr(PayoutQueue, key)).in_(value)
+                    )
                 else:
                     count_stmt = count_stmt.where(getattr(PayoutQueue, key) == value)
         total = (await self.payout_queue_repo.execute(count_stmt)).one()
@@ -614,7 +591,8 @@ def get_payment_service(
     debt_repo: Repository[ProviderDebt] = Depends(GetRepository(ProviderDebt)),
     payout_queue_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
     notification_service: NotificationService = Depends(get_notification_service),
-    payment_gateway: PaystackPaymentGateway=Depends(get_paystack_gateway),
+    payment_gateway: PaystackPaymentGateway = Depends(get_paystack_gateway),
+    transfer_service: "TransferService" = Depends(get_transfer_service),
 ) -> PaymentService:
     return PaymentService(
         task_repo=task_repo,
@@ -624,7 +602,7 @@ def get_payment_service(
         payout_queue_repo=payout_queue_repo,
         notification_service=notification_service,
         payment_gateway=payment_gateway,
-
+        transfer_service=transfer_service,
     )
 
 
@@ -640,4 +618,5 @@ def get_payment_service_manual(session) -> PaymentService:
         payout_queue_repo=Repository(PayoutQueue, session),
         notification_service=get_notification_service_manual(session),
         payment_gateway=get_paystack_gateway(),
+        transfer_service=get_transfer_service_manual(session),
     )
