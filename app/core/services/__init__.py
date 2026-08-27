@@ -19,7 +19,14 @@ from .otp import (
     OTPService,
     OTPVerificationError,
 )
-from .payment import PaymentGateway, PaystackPaymentGateway, get_paystack_gateway
+from .payment import (
+    PaymentGateway,
+    PaystackPaymentGateway,
+    PermanentProviderError,
+    TemporaryProviderError,
+    TransferResult,
+    get_paystack_gateway,
+)
 from .provider_location import (
     LocationPoint,
     NearbyProviderResult,
@@ -63,6 +70,9 @@ __all__ = [
     "CacheService",
     "PaymentGateway",
     "PaystackPaymentGateway",
+    "PermanentProviderError",
+    "TemporaryProviderError",
+    "TransferResult",
     "StorageService",
     "MockStorageService",
     "CloudMessagingService",

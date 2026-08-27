@@ -9,6 +9,12 @@ from app.core.models.transactions import Transaction, TransactionStatus, Transac
 from app.core.models.users import User
 from app.core.repository import Repository
 from app.core.models.transfers import Transfer, TransferStatus
+from app.core.services.payment import (
+    PaystackPaymentGateway,
+    PermanentProviderError,
+    TemporaryProviderError,
+    TransferResult,
+)
 from app.features.payments.processors import PaymentWebhookProcessor, TransferWebhookProcessor
 from app.features.payments.services import PaymentService
 from app.features.payments.transfer_service import TransferService
@@ -35,7 +41,10 @@ def mock_payment_deps():
     payout_queue_repo.add = AsyncMock()
     payout_queue_repo.get = AsyncMock()
     payout_queue_repo.update = AsyncMock()
-    payout_queue_repo.execute = AsyncMock()
+    default_payout_res = MagicMock()
+    default_payout_res.first.return_value = None
+    default_payout_res.rowcount = 1
+    payout_queue_repo.execute = AsyncMock(return_value=default_payout_res)
     payout_queue_repo.get_all = AsyncMock()
 
     return (
@@ -173,7 +182,7 @@ async def test_payment_processor_idempotency(mock_payment_deps):
         "metadata": {"type": "task_payment", "task_id": "t1"},
     }
 
-    await processor.process("charge.success", payload)
+    await processor.process("charge.success", reference="ref_existing", amount=5000.0, task_id="t1", event_type="task_payment", raw_data=payload)
 
     # Should not create duplicate transaction
     transaction_repo.add.assert_not_called()
@@ -209,7 +218,7 @@ async def test_payment_processor_exception_propagation(mock_payment_deps):
     }
 
     with pytest.raises(Exception) as exc_info:
-        await processor.process("charge.success", payload)
+        await processor.process("charge.success", reference="ref_fail", amount=5000.0, raw_data=payload)
 
     assert "DB Connection Lost" in str(exc_info.value)
     system_logger.error.assert_called()
@@ -254,7 +263,7 @@ async def test_payment_processor_state_machine_protection(mock_payment_deps):
         "metadata": {"type": "task_payment", "task_id": "t1", "user_id": "u1"},
     }
 
-    await processor.process("charge.success", payload)
+    await processor.process("charge.success", reference="ref_duplicate_hook", amount=5000.0, user_id="u1", task_id="t1", event_type="task_payment", raw_data=payload)
 
     # Transaction is created
     transaction_repo.add.assert_called_once()
@@ -286,7 +295,7 @@ async def test_transfer_processor_idempotency(mock_payment_deps):
         "metadata": {"user_id": "u1", "task_id": "t1"},
     }
 
-    await processor.process("transfer.success", payload)
+    await processor.process("transfer.success", reference="ref_tr_123", amount=5000.0, user_id="u1", task_id="t1", raw_data=payload)
 
     transaction_repo.add.assert_not_called()
 
@@ -326,7 +335,7 @@ async def test_transfer_processor_marks_transfer_completed(mock_payment_deps):
         "metadata": {"user_id": "u1", "task_id": "t1"},
     }
 
-    await processor.process("transfer.success", payload)
+    await processor.process("transfer.success", reference="TRF_999", amount=5000.0, user_id="u1", task_id="t1", raw_data=payload)
 
     transfer_service._mark_completed.assert_called_once_with(transfer, provider_transfer_id="TRF_999")
 
@@ -377,4 +386,141 @@ async def test_transfer_service_mark_completed_updates_db_records(mock_payment_d
     assert task.payment_status == PaymentStatus.PAID
     payout_queue_repo.add.assert_called_with(payout)
     task_repo.add.assert_called_with(task)
+
+
+@pytest.mark.asyncio
+async def test_paystack_gateway_transfer_success():
+    gateway = PaystackPaymentGateway(secret_key="sk_test_123")
+    res = await gateway.transfer(
+        amount=5000.0,
+        currency="NGN",
+        destination="RCP_123",
+        idempotency_key="key_123",
+        reference="ref_123",
+    )
+    assert isinstance(res, TransferResult)
+    assert res.status == "success"
+    assert res.provider_transfer_id == "ref_123"
+
+
+@pytest.mark.asyncio
+async def test_paystack_gateway_get_transfer_success():
+    gateway = PaystackPaymentGateway(secret_key="sk_test_123")
+    res = await gateway.get_transfer(provider_transfer_id="ref_123")
+    assert isinstance(res, TransferResult)
+    assert res.status == "success"
+    assert res.provider_transfer_id == "ref_123"
+
+
+@pytest.mark.asyncio
+async def test_payment_processor_direct_keyword_params(mock_payment_deps):
+    task_repo, user_repo, transaction_repo, debt_repo, payout_queue_repo, notification_service, payment_gateway, transfer_service = mock_payment_deps
+    system_logger = AsyncMock()
+    payment_service = MagicMock()
+
+    task_repo.get = AsyncMock(return_value=Task(id="t1", title="Test", description="Test", customer_total_price=5000.0))
+
+    processor = PaymentWebhookProcessor(
+        transaction_repo=transaction_repo,
+        notification_service=notification_service,
+        task_repo=task_repo,
+        debt_repo=debt_repo,
+        system_logger=system_logger,
+        payout_repo=payout_queue_repo,
+        transfer_service=transfer_service,
+        payment_service=payment_service,
+    )
+
+    empty_res = MagicMock()
+    empty_res.first.return_value = None
+    transaction_repo.execute.return_value = empty_res
+
+    await processor.handle_charge_success(
+        reference="ref_direct_1",
+        amount=5000.0,
+        user_id="u1",
+        task_id="t1",
+        event_type="task_payment",
+    )
+
+    transaction_repo.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_transfer_processor_direct_keyword_params(mock_payment_deps):
+    task_repo, user_repo, transaction_repo, debt_repo, payout_queue_repo, notification_service, payment_gateway, transfer_service = mock_payment_deps
+    system_logger = AsyncMock()
+
+    transfer_repo = MagicMock()
+    empty_tr_res = MagicMock()
+    empty_tr_res.first.return_value = None
+    transfer_repo.execute = AsyncMock(return_value=empty_tr_res)
+    transfer_service.transfer_repo = transfer_repo
+
+    processor = TransferWebhookProcessor(
+        transaction_repo=transaction_repo,
+        notification_service=notification_service,
+        system_logger=system_logger,
+        payout_repo=payout_queue_repo,
+        task_repo=task_repo,
+        transfer_service=transfer_service,
+    )
+
+    empty_res = MagicMock()
+    empty_res.first.return_value = None
+    transaction_repo.execute.return_value = empty_res
+    payout_queue_repo.get_all.return_value = []
+
+    await processor.handle_transfer_success(
+        reference="ref_tr_direct",
+        amount=5000.0,
+        user_id="u1",
+        task_id="t1",
+    )
+
+    transaction_repo.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_payout_queue_optimistic_locking_conflict(mock_payment_deps):
+    task_repo, user_repo, transaction_repo, debt_repo, payout_queue_repo, notification_service, payment_gateway, transfer_service = mock_payment_deps
+    system_logger = AsyncMock()
+    payment_service = MagicMock()
+
+    processor = PaymentWebhookProcessor(
+        transaction_repo=transaction_repo,
+        notification_service=notification_service,
+        task_repo=task_repo,
+        debt_repo=debt_repo,
+        system_logger=system_logger,
+        payout_repo=payout_queue_repo,
+        transfer_service=transfer_service,
+        payment_service=payment_service,
+    )
+
+    # Mock PayoutQueue object existing with lock_version=1
+    payout = PayoutQueue(id="p1", task_id="t1", payout_amount=5000.0, lock_version=1)
+    payout_res = MagicMock()
+    payout_res.first.return_value = payout
+
+    # Lock update returns rowcount 0 (conflict, lock not acquired)
+    lock_res = MagicMock()
+    lock_res.rowcount = 0
+
+    payout_queue_repo.execute.side_effect = [payout_res, lock_res]
+
+    await processor.handle_charge_success(
+        reference="ref_conflict",
+        amount=5000.0,
+        user_id="u1",
+        task_id="t1",
+        event_type="task_payment",
+    )
+
+    # Should exit early due to lock conflict without adding transaction
+    transaction_repo.add.assert_not_called()
+
+
+
+
 

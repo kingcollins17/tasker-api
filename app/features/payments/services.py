@@ -270,7 +270,11 @@ class PaymentService:
             email=customer_email,
             amount=task.customer_total_price or 0.0,
             user_id=task.customer_id,
-            metadata={"task_id": task.id, "type": "task_payment"},
+            metadata={
+                "task_id": task.id,
+                "user_id": task.customer_id,
+                "type": "task_payment",
+            },
         )
         task.payment_url = payment_resp.checkout_url
         task.payment_status = PaymentStatus.PAYMENT_REQUESTED
@@ -417,6 +421,7 @@ class PaymentService:
             metadata={
                 "type": "debt_settlement",
                 "provider_id": provider_id,
+                "user_id": provider_id,
                 "amount": amount_to_pay,
             },
         )
@@ -569,7 +574,11 @@ class PaymentService:
             email=customer.email,
             amount=amount_to_pay,
             user_id=customer_id,
-            metadata={"task_id": task.id, "type": "task_payment"},
+            metadata={
+                "task_id": task.id,
+                "user_id": customer_id,
+                "type": "task_payment",
+            },
         )
 
         updated_payout = await self.payout_queue_repo.update(

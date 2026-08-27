@@ -53,7 +53,6 @@ class WebhookPayload(BaseModel):
 async def process_payment_webhook(
     request: Request,
     payload: WebhookPayload,
-    background_tasks: BackgroundTasks,
     payment_processor: PaymentWebhookProcessor = Depends(get_payment_processor),
     transfer_processor: TransferWebhookProcessor = Depends(get_transfer_processor),
     system_logger: LoggerService = Depends(get_logger_service)
@@ -69,13 +68,41 @@ async def process_payment_webhook(
 
         logger.info(f"Received payment webhook event: {payload.event}")
 
+        data = payload.data
+        reference = str(data.get("reference") or "")
+        try:
+            amount = float(data.get("amount", 0.0))
+        except (TypeError, ValueError):
+            amount = 0.0
+
+        metadata = data.get("metadata") or {}
+        user_id = metadata.get("user_id")
+        task_id = metadata.get("task_id")
+        event_type = metadata.get("type")
+
         if payload.event.startswith("charge."):
-            background_tasks.add_task(
-                payment_processor.process, payload.event, payload.data
+            provider_id = metadata.get("provider_id")
+            await payment_processor.process(
+                payload.event,
+                reference=reference,
+                amount=amount,
+                user_id=user_id,
+                task_id=task_id,
+                event_type=str(event_type) if event_type is not None else None,
+                provider_id=provider_id,
+                raw_data=data,
             )
         elif payload.event.startswith("transfer."):
-            background_tasks.add_task(
-                transfer_processor.process, payload.event, payload.data
+            reason = data.get("reason")
+            await transfer_processor.process(
+                payload.event,
+                reference=reference,
+                amount=amount,
+                # pyrefly: ignore [bad-argument-type]
+                user_id=user_id,
+                task_id=task_id,
+                reason=reason,
+                raw_data=data,
             )
         else:
             logger.info(f"Unhandled webhook event type: {payload.event}")

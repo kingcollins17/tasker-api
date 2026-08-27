@@ -16,11 +16,11 @@ from app.core.models.transfers import (
 )
 from app.core.models.users import PaymentAccount
 from app.core.repository import GetRepository, Repository
-from app.core.services.transfer_provider import (
-    PaystackTransferProvider,
+from app.core.services.payment import (
+    PaymentGateway,
     PermanentProviderError,
     TemporaryProviderError,
-    get_transfer_provider,
+    get_paystack_gateway,
 )
 from app.core.utils.datetime_helper import lagos_now
 
@@ -49,7 +49,7 @@ class TransferService:
         attempt_repo: Repository[TransferAttempt],
         payout_queue_repo: Repository[PayoutQueue],
         payment_account_repo: Repository[PaymentAccount],
-        transfer_provider: PaystackTransferProvider,
+        transfer_provider: PaymentGateway,
         task_repo: Optional[Repository[Task]] = None,
     ):
         self.transfer_repo = transfer_repo
@@ -172,6 +172,9 @@ class TransferService:
                 destination=destination,
                 idempotency_key=transfer.idempotency_key,
                 reference=f"payout_{transfer.task_id}_{transfer.id[:8]}",
+                user_id=transfer.provider_id,
+                task_id=transfer.task_id,
+                payment_id=transfer.payment_id,
             )
 
             # ── Success ──────────────────────────────────────────────
@@ -415,7 +418,7 @@ def get_transfer_service(
     attempt_repo: Repository[TransferAttempt] = Depends(GetRepository(TransferAttempt)),
     payout_queue_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
     payment_account_repo: Repository[PaymentAccount] = Depends(GetRepository(PaymentAccount)),
-    transfer_provider: PaystackTransferProvider = Depends(get_transfer_provider),
+    transfer_provider: PaymentGateway = Depends(get_paystack_gateway),
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
 ) -> "TransferService":
     return TransferService(
@@ -435,6 +438,6 @@ def get_transfer_service_manual(session) -> "TransferService":
         attempt_repo=Repository(TransferAttempt, session),
         payout_queue_repo=Repository(PayoutQueue, session),
         payment_account_repo=Repository(PaymentAccount, session),
-        transfer_provider=get_transfer_provider(),
+        transfer_provider=get_paystack_gateway(),
         task_repo=Repository(Task, session),
     )

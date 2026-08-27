@@ -847,7 +847,11 @@ class TaskService:
             user_id=customer.id,
             fullname=fullname,
             phone_number=customer.phone_number,
-            metadata={"task_id": task.id},
+            metadata={
+                "task_id": task.id,
+                "user_id": customer.id,
+                "type": "task_payment",
+            },
         )
 
         if not payment_response.checkout_url:

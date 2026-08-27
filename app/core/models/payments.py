@@ -98,6 +98,10 @@ class PayoutQueue(SQLModel, table=True):
     reference: Optional[str] = Field(
         default=None, index=True, nullable=True, description="External payout reference (e.g., Paystack transfer reference)"
     )
+
+    lock_version: int = Field(
+        default=1, description="Optimistic concurrency lock version counter"
+    )
    
     created_at: datetime = Field(
         default_factory=lagos_now, description="Record creation timestamp"
