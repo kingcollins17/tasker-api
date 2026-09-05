@@ -3,7 +3,8 @@ from sqlalchemy import text
 from app.core.database import engine
 
 async def main():
-    async with engine.begin() as conn:
+    async with engine.connect() as conn:
+        await conn.execution_options(isolation_level="AUTOCOMMIT")
         for stmt in [
             "ALTER TABLE dispatch_sessions ADD COLUMN IF NOT EXISTS search_radius_km FLOAT DEFAULT 10.0;",
             "ALTER TABLE dispatch_sessions ADD COLUMN IF NOT EXISTS max_search_radius_km FLOAT DEFAULT 30.0;",
@@ -15,6 +16,8 @@ async def main():
             "CREATE INDEX IF NOT EXISTS idx_task_locations_spatial ON task_locations USING GIST (geography_point);",
             "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'CUSTOMER_PAID';",
             "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'TRANSFER_INITIATED';",
+            "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'CASH_PAID';",
+            "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'PAYMENT_REQUESTED';",
             "ALTER TYPE payoutstatus ADD VALUE IF NOT EXISTS 'TRANSFER_INITIATED';",
             "ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS 'PAYMENT_REQUESTED';",
         ]:
@@ -24,5 +27,8 @@ async def main():
             except Exception as e:
                 print(f"Error executing {stmt}: {e}")
 
+    await engine.dispose()
+
 if __name__ == "__main__":
     asyncio.run(main())
+

@@ -8,6 +8,7 @@
         "amount": 165.00,
         "status": "success",
         "metadata": {
+          "type": "task_payment",
           "user_id": "user_customer_uuid",
           "task_id": "task_uuid",
           "bid_id": "bid_uuid"
@@ -24,6 +25,7 @@
         "amount": 165.00,
         "status": "failed",
         "metadata": {
+          "type": "task_payment",
           "user_id": "user_customer_uuid",
           "task_id": "task_uuid",
           "bid_id": "bid_uuid"

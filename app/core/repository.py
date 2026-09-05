@@ -29,7 +29,7 @@ class Repository(Generic[T]):
         """Fetch a single record by its primary key ID."""
         return await self.session.get(self.model, id)
 
-    async def get_all(self, options: Optional[QueryOptions] = None, use_unique=False) -> List[T]:
+    async def get_all(self, options: Optional[QueryOptions] = None, use_unique: bool = False) -> List[T]:
         """Fetch all records matching filters, order, and limit/offset bounds."""
         statement = select(self.model)
 

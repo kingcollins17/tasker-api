@@ -114,7 +114,8 @@ class PaymentService:
 
         # Check for existing payout queue entry
         payouts = await self.payout_queue_repo.get_all(
-            QueryOptions(filters={"task_id": task_id, "provider_id": provider_id})
+            QueryOptions(filters={"task_id": task_id, "provider_id": provider_id}),
+            use_unique=True,
         )
         payout_obj: Optional[PayoutQueue] = payouts[0] if payouts else None
 

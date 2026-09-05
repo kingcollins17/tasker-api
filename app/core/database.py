@@ -1,8 +1,10 @@
 from typing import AsyncGenerator
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+import app.core.models  # noqa: F401
 from app.core.config import settings
 
 # Create the async database engine
@@ -38,11 +40,6 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Initialize database tables defined in models on app startup."""
-    # Import models to register them on SQLModel.metadata
-    import app.core.models  # noqa: F401
-
-    from sqlalchemy import text
-
     async with engine.begin() as conn:
         # Create PostGIS extension if it doesn't exist (required for geometry types)
         try:
@@ -52,4 +49,6 @@ async def init_db() -> None:
             # Ignore exceptions (e.g. concurrent creation race conditions or pre-existing extension/column)
             pass
         await conn.run_sync(SQLModel.metadata.create_all)
+
+
 

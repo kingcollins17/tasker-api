@@ -409,6 +409,7 @@ class TransferWebhookProcessor:
         raw_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Route outgoing transfer event to the corresponding handler method."""
+        print(f"[TransferWebhookProcessor] Processing event={event}, reference={reference}, amount={amount}, task_id={task_id}, user_id={user_id}")
         try:
             timer = Timer()
             timer.start()
@@ -438,7 +439,9 @@ class TransferWebhookProcessor:
                 timer.stop(),
                 source="payments.webhook",
             )
+            print(f"[TransferWebhookProcessor] Completed processing event={event} for reference={reference}")
         except Exception as e:
+            print(f"[TransferWebhookProcessor] ERROR processing event={event} for reference={reference}: {e}")
             # Log error details and re-raise for upstream exception handling
             await self.system_logger.error(
                 f"Error processing transfer webhook ({event}): {str(e)}",
@@ -457,8 +460,10 @@ class TransferWebhookProcessor:
         raw_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Handle successful outgoing provider payout transfers."""
+        print(f"[TransferWebhookProcessor.handle_transfer_success] Starting for reference={reference}, task_id={task_id}, user_id={user_id}")
         # Ensure mandatory reference and recipient user_id are present
         if not reference or not user_id:
+            print("[TransferWebhookProcessor.handle_transfer_success] Missing reference or user_id. Aborting.")
             await self.system_logger.error(
                 "Missing required fields (reference or user_id) in transfer.success payload",
                 source="payments.webhook",
@@ -486,12 +491,14 @@ class TransferWebhookProcessor:
             )
             lock_res = await self.payout_repo.execute(lock_stmt)
             if lock_res.rowcount == 0:
+                print(f"[TransferWebhookProcessor.handle_transfer_success] Could not acquire lock on PayoutQueue {payout.id}. Skipping.")
                 await self.system_logger.info(
                     f"Optimistic lock on PayoutQueue {payout.id} (version {prev_version}) could not be acquired. Another execution has the lock. Skipping.",
                     source="payments.webhook",
                 )
                 return
             payout.lock_version = prev_version + 1
+            print(f"[TransferWebhookProcessor.handle_transfer_success] Acquired lock on PayoutQueue {payout.id}")
 
         # 1. Idempotency Check: skip processing if successful transfer transaction exists
         stmt = select(Transaction).where(
@@ -500,12 +507,14 @@ class TransferWebhookProcessor:
         )
         existing_tx_res = await self.transaction_repo.execute(stmt)
         if existing_tx_res.first():
+            print(f"[TransferWebhookProcessor.handle_transfer_success] Transaction for reference={reference} already exists. Skipping.")
             await self.system_logger.info(
                 f"Transfer success for reference {reference} already processed. Skipping.",
                 source="payments.webhook",
             )
             return
 
+        print(f"[TransferWebhookProcessor.handle_transfer_success] Idempotency check passed for reference={reference}")
         await self.system_logger.info(
             f"Processing successful transfer for reference: {reference}",
             source="payments.webhook",
@@ -526,22 +535,28 @@ class TransferWebhookProcessor:
         transfer = transfer_res.first()
 
         if transfer and transfer.status != TransferStatus.COMPLETED:
+            print(f"[TransferWebhookProcessor.handle_transfer_success] Marking Transfer {transfer.id} as COMPLETED")
             await self.transfer_service._mark_completed(
                 transfer, provider_transfer_id=reference
             )
         else:
+            print(f"[TransferWebhookProcessor.handle_transfer_success] No active Transfer record found. Using fallback raw update for PayoutQueue & Task.")
             # Fallback for PayoutQueue and Task records if Transfer record was not found
-            payouts = await self.payout_repo.get_all(
-                QueryOptions(filters={"reference": reference})
+            where_clause = (col(PayoutQueue.task_id) == task_id) if task_id else (col(PayoutQueue.reference) == reference)
+            res = await self.payout_repo.execute(
+                update(PayoutQueue)
+                .where(
+                    where_clause,
+                    col(PayoutQueue.status).in_([PayoutStatus.PENDING, PayoutStatus.CUSTOMER_PAID, PayoutStatus.TRANSFER_INITIATED]),
+                )
+                .values(status=PayoutStatus.COMPLETED)
             )
-            if payouts:
-                for p in payouts:
-                    if p.status in [PayoutStatus.PENDING, PayoutStatus.CUSTOMER_PAID, PayoutStatus.TRANSFER_INITIATED]:
-                        await self.payout_repo.update(p.id, {"status": PayoutStatus.COMPLETED})
+            print(f"[TransferWebhookProcessor.handle_transfer_success] Fallback raw update updated {res.rowcount} PayoutQueue row(s) to COMPLETED")
 
             if task_id:
                 task = await self.task_repo.get(task_id)
                 if task and task.payment_status != PaymentStatus.PAID:
+                    print(f"[TransferWebhookProcessor.handle_transfer_success] Fallback: updating Task {task.id} payment_status to PAID")
                     task.payment_status = PaymentStatus.PAID
                     await self.task_repo.add(task)
 
@@ -556,6 +571,7 @@ class TransferWebhookProcessor:
             metadata_info=raw_data or {},
         )
         await self.transaction_repo.add(transaction)
+        print(f"[TransferWebhookProcessor.handle_transfer_success] Created Transaction {transaction.id} for reference={reference}")
         await self.system_logger.info(
             f"Created transaction for transfer: {reference} with status: {TransactionStatus.SUCCESS}",
             source="payments.webhook",
@@ -570,11 +586,13 @@ class TransferWebhookProcessor:
                 type=NotificationType.PAYMENT_RECEIVED,
                 data={"reference": reference},
             )
+            print(f"[TransferWebhookProcessor.handle_transfer_success] Dispatched payout notification to user_id={user_id}")
             await self.system_logger.info(
                 f"Dispatched payout notification ({NotificationType.PAYMENT_RECEIVED}) to user: {user_id}",
                 source="payments.webhook",
             )
         except Exception as e:
+            print(f"[TransferWebhookProcessor.handle_transfer_success] Notification dispatch failed: {e}")
             await self.system_logger.error(
                 f"Failed to dispatch payout notification ({NotificationType.PAYMENT_RECEIVED}) to user {user_id}: {str(e)}",
                 source="payments.webhook",
@@ -666,13 +684,16 @@ class TransferWebhookProcessor:
             )
         else:
             # Fallback for PayoutQueue and Task records if Transfer record was not found
-            payouts = await self.payout_repo.get_all(
-                QueryOptions(filters={"reference": reference})
+            where_clause = (col(PayoutQueue.task_id) == task_id) if task_id else (col(PayoutQueue.reference) == reference)
+            res = await self.payout_repo.execute(
+                update(PayoutQueue)
+                .where(
+                    where_clause,
+                    col(PayoutQueue.status) != PayoutStatus.COMPLETED,
+                )
+                .values(status=PayoutStatus.CANCELLED)
             )
-            if payouts:
-                for p in payouts:
-                    if p.status != PayoutStatus.COMPLETED:
-                        await self.payout_repo.update(p.id, {"status": PayoutStatus.CANCELLED})
+            print(f"[TransferWebhookProcessor.handle_transfer_failed] Fallback raw update updated {res.rowcount} PayoutQueue row(s) to CANCELLED")
 
             if task_id:
                 task = await self.task_repo.get(task_id)

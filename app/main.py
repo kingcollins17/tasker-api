@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.core.config import settings
+from app.core.config import settings, IS_STAGING
 from app.core.database import init_db
 from app.core.services import (
     get_cache_service,
@@ -49,15 +49,11 @@ async def lifespan(app: FastAPI):
     # Start the Redis Pub/Sub listener for real-time in-app notifications
     await start_notification_listener()
 
-    # Start Celery worker as a background process
-    celery_process = multiprocessing.Process(target=run_celery_worker, daemon=True)
-    celery_process.start()
-    print("Celery worker process started.")
-
-    # Start Celery Beat scheduler as a background process
-    # celery_beat_process = multiprocessing.Process(target=run_celery_beat, daemon=True)
-    # celery_beat_process.start()
-    # print("Celery Beat process started.")
+    # Start Celery worker as a background process only in staging environment
+    if IS_STAGING:
+        celery_process = multiprocessing.Process(target=run_celery_worker, daemon=True)
+        celery_process.start()
+        print("Celery worker process started.")
 
     yield
     # Shutdown logic
