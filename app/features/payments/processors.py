@@ -110,8 +110,13 @@ class PaymentWebhookProcessor:
         raw_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Handle successful charge payments (task payments or provider debt settlements)."""
+        print(
+            f"[DEBUG handle_charge_success] START - reference={reference}, amount={amount}, "
+            f"user_id={user_id}, task_id={task_id}, event_type={event_type}, provider_id={provider_id}"
+        )
         # Validate that a non-empty transaction reference is provided
         if not reference or not reference.strip():
+            print(f"[DEBUG handle_charge_success] Missing or invalid reference: {reference}")
             await self.system_logger.error(
                 "Missing or invalid required reference in charge.success payload",
                 source="payments.webhook",
@@ -119,7 +124,10 @@ class PaymentWebhookProcessor:
             return
 
         is_task_payment = bool(event_type and event_type.lower() == "task_payment")
-        is_debt_settlement = bool(event_type and event_type.lower() == "debt_settlement")
+        is_debt_settlement = bool(
+            event_type and event_type.lower() == "debt_settlement"
+        )
+        print(f"[DEBUG handle_charge_success] Event type check: is_task_payment={is_task_payment}, is_debt_settlement={is_debt_settlement}")
 
         # Optimistic Concurrency Control: acquire lock on PayoutQueue (skip if debt_settlement)
         if not is_debt_settlement and task_id:
@@ -141,12 +149,14 @@ class PaymentWebhookProcessor:
                 )
                 lock_res = await self.payout_repo.execute(lock_stmt)
                 if lock_res.rowcount == 0:
+                    print(f"[DEBUG handle_charge_success] Optimistic lock on PayoutQueue {payout.id} (version {prev_version}) failed. Skipping.")
                     await self.system_logger.info(
                         f"Optimistic lock on PayoutQueue {payout.id} (version {prev_version}) could not be acquired. Another execution has the lock. Skipping.",
                         source="payments.webhook",
                     )
                     return
                 payout.lock_version = prev_version + 1
+                print(f"[DEBUG handle_charge_success] Acquired optimistic lock on PayoutQueue {payout.id} (new version: {payout.lock_version})")
 
         # 1. Idempotency Check: verify if a successful transaction with this reference exists
         stmt = select(Transaction).where(
@@ -155,6 +165,7 @@ class PaymentWebhookProcessor:
         )
         existing_tx_res = await self.transaction_repo.execute(stmt)
         if existing_tx_res.first():
+            print(f"[DEBUG handle_charge_success] Idempotency check hit: reference {reference} already processed. Skipping.")
             await self.system_logger.info(
                 f"Charge success webhook for reference {reference} already processed. Skipping.",
                 source="payments.webhook",
@@ -165,7 +176,9 @@ class PaymentWebhookProcessor:
         task: Optional[Task] = None
         if is_task_payment and task_id:
             task = await self.task_repo.get(task_id)
+            print(f"[DEBUG handle_charge_success] Fetched task: {task.id if task else None}")
             if not task:
+                print(f"[DEBUG handle_charge_success] Task {task_id} not found. Skipping.")
                 await self.system_logger.error(
                     f"Task {task_id} referenced in charge.success payload not found.",
                     source="payments.webhook",
@@ -174,7 +187,9 @@ class PaymentWebhookProcessor:
 
             # Verify that paid amount satisfies the expected task price
             if task.customer_total_price and task.customer_total_price > 0:
+                print(f"[DEBUG handle_charge_success] Validating amount ₦{amount:,.2f} vs task.customer_total_price ₦{task.customer_total_price:,.2f}")
                 if amount < task.customer_total_price:
+                    print(f"[DEBUG handle_charge_success] Insufficient payment amount: ₦{amount:,.2f} < ₦{task.customer_total_price:,.2f}. Skipping.")
                     await self.system_logger.error(
                         f"Payment amount ₦{amount:,.2f} is less than expected task price ₦{task.customer_total_price:,.2f} for task {task_id}.",
                         source="payments.webhook",
@@ -198,6 +213,7 @@ class PaymentWebhookProcessor:
             metadata_info=raw_data or {},
         )
         await self.transaction_repo.add(transaction)
+        print(f"[DEBUG handle_charge_success] Created transaction {transaction.id} with status SUCCESS for reference {reference}")
         await self.system_logger.info(
             f"Created transaction for charge: {reference} with status: {TransactionStatus.SUCCESS}",
             source="payments.webhook",
@@ -206,6 +222,7 @@ class PaymentWebhookProcessor:
         # 4. Handle Provider Debt Settlement payment recording
         if is_debt_settlement:
             debt_provider_id = provider_id or user_id
+            print(f"[DEBUG handle_charge_success] Handling debt settlement for provider {debt_provider_id}, amount: ₦{amount:,.2f}")
             if debt_provider_id:
                 await self.system_logger.info(
                     f"Recording debt settlement task for provider {debt_provider_id}, amount: ₦{amount:,.2f}",
@@ -218,10 +235,13 @@ class PaymentWebhookProcessor:
                     description=f"Online debt payment via reference {reference}",
                 )
                 await self.debt_repo.add(payment_entry)
+                print(f"[DEBUG handle_charge_success] Recorded ProviderDebt settlement entry for provider {debt_provider_id}")
+            print(f"[DEBUG handle_charge_success] END - Debt settlement complete")
             return
 
         # 5. Handle Online Task Payment state transitions
         if is_task_payment and task:
+            print(f"[DEBUG handle_charge_success] Handling online task payment transitions for task {task.id}, current payment_status={task.payment_status}")
             await self.system_logger.info(
                 f"Processing successful online payment for task {task.id}, reference: {reference}",
                 source="payments.webhook",
@@ -233,27 +253,38 @@ class PaymentWebhookProcessor:
                 PaymentStatus.PAYMENT_REQUESTED,
                 PaymentStatus.FAILED,
             ]
-            if task.payment_status in allowed_statuses:
+            print(f"[DEBUG handle_charge_success] Task payment_status = ({task.payment_status})")
+            if task.payment_status is None or task.payment_status in allowed_statuses:
+                print(f"[DEBUG handle_charge_success] Updating task payment status to CUSTOMER_PAID")
                 task.payment_status = PaymentStatus.CUSTOMER_PAID
                 await self.task_repo.add(task)
 
                 # Update PayoutQueue status to CUSTOMER_PAID
+                print(f"[DEBUG handle_charge_success] Updating PayoutQueue status to CUSTOMER_PAID for task {task.id}")
                 await self.payout_repo.execute(
                     update(PayoutQueue)
                     .where(
                         col(PayoutQueue.task_id) == task.id,
                         col(PayoutQueue.provider_id) == task.assigned_provider_id,
-                        col(PayoutQueue.status).in_([PayoutStatus.PENDING, PayoutStatus.CANCELLED]),
+                        col(PayoutQueue.status).in_(
+                            [PayoutStatus.PENDING, PayoutStatus.CANCELLED]
+                        ),
                     )
                     .values(status=PayoutStatus.CUSTOMER_PAID)
                 )
 
                 # Dispatch provider payout trigger if an assigned provider exists
-                if task.assigned_provider_id:
+                provider_id = task.assigned_provider_id or (task.assignment.provider_id if task.assignment else None)
+                print(f"[DEBUG handle_charge_success] Resolved provider_id for payout trigger: ({provider_id})")
+                if provider_id:
+                    print(f"[DEBUG handle_charge_success] Dispatching process_provider_payout for task {task.id}, provider {provider_id}")
                     await self.payment_service.process_provider_payout(
-                        task_id=task.id, provider_id=task.assigned_provider_id
+                        task_id=task.id,
+                        provider_id=provider_id,
                     )
+                    print(f"[DEBUG handle_charge_success] Finished process_provider_payout dispatch")
             else:
+                print(f"[DEBUG handle_charge_success] Task payment_status is already {task.payment_status}, skipping provider payout trigger.")
                 await self.system_logger.info(
                     f"Task {task.id} payment status is already {task.payment_status}, skipping provider payout trigger.",
                     source="payments.webhook",
@@ -261,6 +292,7 @@ class PaymentWebhookProcessor:
 
         # 6. Dispatch payment success push notification to user
         if user_id:
+            print(f"[DEBUG handle_charge_success] Dispatching payment success notification to user: {user_id}")
             try:
                 await self.notification_service.notify(
                     recepients=[user_id],
@@ -269,15 +301,19 @@ class PaymentWebhookProcessor:
                     type=NotificationType.PAYMENT_RECEIVED,
                     data={"transaction_id": transaction.id, "reference": reference},
                 )
+                print(f"[DEBUG handle_charge_success] Notification dispatched successfully to user: {user_id}")
                 await self.system_logger.info(
                     f"Dispatched payment success notification to user: {user_id}",
                     source="payments.webhook",
                 )
             except Exception as e:
+                print(f"[DEBUG handle_charge_success] Failed to dispatch notification: {str(e)}")
                 await self.system_logger.error(
                     f"Failed to dispatch payment success notification to user {user_id}: {str(e)}",
                     source="payments.webhook",
                 )
+
+        print(f"[DEBUG handle_charge_success] END - Completed handle_charge_success for reference {reference}")
 
     async def handle_charge_failed(
         self,
@@ -409,7 +445,9 @@ class TransferWebhookProcessor:
         raw_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Route outgoing transfer event to the corresponding handler method."""
-        print(f"[TransferWebhookProcessor] Processing event={event}, reference={reference}, amount={amount}, task_id={task_id}, user_id={user_id}")
+        print(
+            f"[TransferWebhookProcessor] Processing event={event}, reference={reference}, amount={amount}, task_id={task_id}, user_id={user_id}"
+        )
         try:
             timer = Timer()
             timer.start()
@@ -439,9 +477,13 @@ class TransferWebhookProcessor:
                 timer.stop(),
                 source="payments.webhook",
             )
-            print(f"[TransferWebhookProcessor] Completed processing event={event} for reference={reference}")
+            print(
+                f"[TransferWebhookProcessor] Completed processing event={event} for reference={reference}"
+            )
         except Exception as e:
-            print(f"[TransferWebhookProcessor] ERROR processing event={event} for reference={reference}: {e}")
+            print(
+                f"[TransferWebhookProcessor] ERROR processing event={event} for reference={reference}: {e}"
+            )
             # Log error details and re-raise for upstream exception handling
             await self.system_logger.error(
                 f"Error processing transfer webhook ({event}): {str(e)}",
@@ -460,10 +502,14 @@ class TransferWebhookProcessor:
         raw_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Handle successful outgoing provider payout transfers."""
-        print(f"[TransferWebhookProcessor.handle_transfer_success] Starting for reference={reference}, task_id={task_id}, user_id={user_id}")
+        print(
+            f"[TransferWebhookProcessor.handle_transfer_success] Starting for reference={reference}, task_id={task_id}, user_id={user_id}"
+        )
         # Ensure mandatory reference and recipient user_id are present
         if not reference or not user_id:
-            print("[TransferWebhookProcessor.handle_transfer_success] Missing reference or user_id. Aborting.")
+            print(
+                "[TransferWebhookProcessor.handle_transfer_success] Missing reference or user_id. Aborting."
+            )
             await self.system_logger.error(
                 "Missing required fields (reference or user_id) in transfer.success payload",
                 source="payments.webhook",
@@ -472,7 +518,8 @@ class TransferWebhookProcessor:
 
         # Optimistic Concurrency Control: acquire lock on PayoutQueue
         payout_stmt = select(PayoutQueue).where(
-            (col(PayoutQueue.reference) == reference) | (col(PayoutQueue.task_id) == task_id)
+            (col(PayoutQueue.reference) == reference)
+            | (col(PayoutQueue.task_id) == task_id)
         )
         payout_res = await self.payout_repo.execute(payout_stmt)
         payout = payout_res.first()
@@ -491,14 +538,18 @@ class TransferWebhookProcessor:
             )
             lock_res = await self.payout_repo.execute(lock_stmt)
             if lock_res.rowcount == 0:
-                print(f"[TransferWebhookProcessor.handle_transfer_success] Could not acquire lock on PayoutQueue {payout.id}. Skipping.")
+                print(
+                    f"[TransferWebhookProcessor.handle_transfer_success] Could not acquire lock on PayoutQueue {payout.id}. Skipping."
+                )
                 await self.system_logger.info(
                     f"Optimistic lock on PayoutQueue {payout.id} (version {prev_version}) could not be acquired. Another execution has the lock. Skipping.",
                     source="payments.webhook",
                 )
                 return
             payout.lock_version = prev_version + 1
-            print(f"[TransferWebhookProcessor.handle_transfer_success] Acquired lock on PayoutQueue {payout.id}")
+            print(
+                f"[TransferWebhookProcessor.handle_transfer_success] Acquired lock on PayoutQueue {payout.id}"
+            )
 
         # 1. Idempotency Check: skip processing if successful transfer transaction exists
         stmt = select(Transaction).where(
@@ -507,14 +558,18 @@ class TransferWebhookProcessor:
         )
         existing_tx_res = await self.transaction_repo.execute(stmt)
         if existing_tx_res.first():
-            print(f"[TransferWebhookProcessor.handle_transfer_success] Transaction for reference={reference} already exists. Skipping.")
+            print(
+                f"[TransferWebhookProcessor.handle_transfer_success] Transaction for reference={reference} already exists. Skipping."
+            )
             await self.system_logger.info(
                 f"Transfer success for reference {reference} already processed. Skipping.",
                 source="payments.webhook",
             )
             return
 
-        print(f"[TransferWebhookProcessor.handle_transfer_success] Idempotency check passed for reference={reference}")
+        print(
+            f"[TransferWebhookProcessor.handle_transfer_success] Idempotency check passed for reference={reference}"
+        )
         await self.system_logger.info(
             f"Processing successful transfer for reference: {reference}",
             source="payments.webhook",
@@ -535,28 +590,46 @@ class TransferWebhookProcessor:
         transfer = transfer_res.first()
 
         if transfer and transfer.status != TransferStatus.COMPLETED:
-            print(f"[TransferWebhookProcessor.handle_transfer_success] Marking Transfer {transfer.id} as COMPLETED")
+            print(
+                f"[TransferWebhookProcessor.handle_transfer_success] Marking Transfer {transfer.id} as COMPLETED"
+            )
             await self.transfer_service._mark_completed(
                 transfer, provider_transfer_id=reference
             )
         else:
-            print(f"[TransferWebhookProcessor.handle_transfer_success] No active Transfer record found. Using fallback raw update for PayoutQueue & Task.")
+            print(
+                f"[TransferWebhookProcessor.handle_transfer_success] No active Transfer record found. Using fallback raw update for PayoutQueue & Task."
+            )
             # Fallback for PayoutQueue and Task records if Transfer record was not found
-            where_clause = (col(PayoutQueue.task_id) == task_id) if task_id else (col(PayoutQueue.reference) == reference)
+            where_clause = (
+                (col(PayoutQueue.task_id) == task_id)
+                if task_id
+                else (col(PayoutQueue.reference) == reference)
+            )
             res = await self.payout_repo.execute(
                 update(PayoutQueue)
                 .where(
                     where_clause,
-                    col(PayoutQueue.status).in_([PayoutStatus.PENDING, PayoutStatus.CUSTOMER_PAID, PayoutStatus.TRANSFER_INITIATED]),
+                    col(PayoutQueue.status).in_(
+                        [
+                            PayoutStatus.PENDING,
+                            PayoutStatus.CUSTOMER_PAID,
+                            PayoutStatus.TRANSFER_INITIATED,
+                        ]
+                    ),
                 )
                 .values(status=PayoutStatus.COMPLETED)
             )
-            print(f"[TransferWebhookProcessor.handle_transfer_success] Fallback raw update updated {res.rowcount} PayoutQueue row(s) to COMPLETED")
+            print(
+                f"[TransferWebhookProcessor.handle_transfer_success] Fallback raw update updated {res.rowcount} PayoutQueue row(s) to COMPLETED"
+            )
 
             if task_id:
                 task = await self.task_repo.get(task_id)
                 if task and task.payment_status != PaymentStatus.PAID:
-                    print(f"[TransferWebhookProcessor.handle_transfer_success] Fallback: updating Task {task.id} payment_status to PAID")
+                    print(
+                        f"[TransferWebhookProcessor.handle_transfer_success] Fallback: updating Task {task.id} payment_status to PAID"
+                    )
                     task.payment_status = PaymentStatus.PAID
                     await self.task_repo.add(task)
 
@@ -571,7 +644,9 @@ class TransferWebhookProcessor:
             metadata_info=raw_data or {},
         )
         await self.transaction_repo.add(transaction)
-        print(f"[TransferWebhookProcessor.handle_transfer_success] Created Transaction {transaction.id} for reference={reference}")
+        print(
+            f"[TransferWebhookProcessor.handle_transfer_success] Created Transaction {transaction.id} for reference={reference}"
+        )
         await self.system_logger.info(
             f"Created transaction for transfer: {reference} with status: {TransactionStatus.SUCCESS}",
             source="payments.webhook",
@@ -586,13 +661,17 @@ class TransferWebhookProcessor:
                 type=NotificationType.PAYMENT_RECEIVED,
                 data={"reference": reference},
             )
-            print(f"[TransferWebhookProcessor.handle_transfer_success] Dispatched payout notification to user_id={user_id}")
+            print(
+                f"[TransferWebhookProcessor.handle_transfer_success] Dispatched payout notification to user_id={user_id}"
+            )
             await self.system_logger.info(
                 f"Dispatched payout notification ({NotificationType.PAYMENT_RECEIVED}) to user: {user_id}",
                 source="payments.webhook",
             )
         except Exception as e:
-            print(f"[TransferWebhookProcessor.handle_transfer_success] Notification dispatch failed: {e}")
+            print(
+                f"[TransferWebhookProcessor.handle_transfer_success] Notification dispatch failed: {e}"
+            )
             await self.system_logger.error(
                 f"Failed to dispatch payout notification ({NotificationType.PAYMENT_RECEIVED}) to user {user_id}: {str(e)}",
                 source="payments.webhook",
@@ -619,7 +698,8 @@ class TransferWebhookProcessor:
 
         # Optimistic Concurrency Control: acquire lock on PayoutQueue
         payout_stmt = select(PayoutQueue).where(
-            (col(PayoutQueue.reference) == reference) | (col(PayoutQueue.task_id) == task_id)
+            (col(PayoutQueue.reference) == reference)
+            | (col(PayoutQueue.task_id) == task_id)
         )
         payout_res = await self.payout_repo.execute(payout_stmt)
         payout = payout_res.first()
@@ -684,7 +764,11 @@ class TransferWebhookProcessor:
             )
         else:
             # Fallback for PayoutQueue and Task records if Transfer record was not found
-            where_clause = (col(PayoutQueue.task_id) == task_id) if task_id else (col(PayoutQueue.reference) == reference)
+            where_clause = (
+                (col(PayoutQueue.task_id) == task_id)
+                if task_id
+                else (col(PayoutQueue.reference) == reference)
+            )
             res = await self.payout_repo.execute(
                 update(PayoutQueue)
                 .where(
@@ -693,7 +777,9 @@ class TransferWebhookProcessor:
                 )
                 .values(status=PayoutStatus.CANCELLED)
             )
-            print(f"[TransferWebhookProcessor.handle_transfer_failed] Fallback raw update updated {res.rowcount} PayoutQueue row(s) to CANCELLED")
+            print(
+                f"[TransferWebhookProcessor.handle_transfer_failed] Fallback raw update updated {res.rowcount} PayoutQueue row(s) to CANCELLED"
+            )
 
             if task_id:
                 task = await self.task_repo.get(task_id)

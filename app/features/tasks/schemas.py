@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.models.tasks import LocationType, TaskAssignmentStatus, TaskStatus, DispatchAttemptStatus, CancelledBy
+from app.core.models.tasks import LocationType, PaymentStatus, TaskAssignmentStatus, TaskStatus, DispatchAttemptStatus, CancelledBy
 from app.core.schemas.users import MinimalCustomerResponse, MinimalProviderResponse
 from app.features.services.schemas import CategoryResponse
 
@@ -173,6 +173,7 @@ class TaskResponse(BaseModel):
     platform_fee: Optional[float] = None
     provider_payout: Optional[float] = None
     status: Optional[TaskStatus] = None
+    payment_status: Optional[PaymentStatus] = None
     created_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     scheduled_start_at: Optional[datetime] = None

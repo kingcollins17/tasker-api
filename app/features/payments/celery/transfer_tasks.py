@@ -99,7 +99,7 @@ async def _recover_stuck_transfers_async() -> None:
                 .where(
                     # PENDING transfers with no next_retry_at are new and should be processed
                     # RETRYING transfers should only be processed when next_retry_at <= now
-                    (Transfer.next_retry_at == None) | (col(Transfer.next_retry_at) <= now)  # noqa: E711
+                    (col(Transfer.next_retry_at) == None) | (col(Transfer.next_retry_at) <= now)  # noqa: E711
                 )
                 .limit(100)
             )

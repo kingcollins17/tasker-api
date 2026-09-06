@@ -249,10 +249,15 @@ class DispatchEventService:
 
         # Notify customer via in_app and push channels
         if task and task.customer_id:
+            provider_name = (
+                profile.first_name.strip()
+                if profile and profile.first_name and profile.first_name.strip()
+                else "A provider"
+            )
             await self.notification_service.notify(
                 recepients=[task.customer_id],
-                title="Provider Matched!",
-                body=f"Great news! A provider has accepted your task '{task.title}'.",
+                title="Matched!",
+                body=f"{provider_name} has accepted your task '{task.title}'.",
                 type=NotificationType.TASK_ACCEPTED,
                 channels=["PUSH", "IN_APP"],
                 data={

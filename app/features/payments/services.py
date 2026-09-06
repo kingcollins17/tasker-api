@@ -107,10 +107,12 @@ class PaymentService:
         5. Create a durable Transfer record for the net remaining payout.
         6. Enqueue the Transfer for background processing via Celery.
         """
+        print(f"[DEBUG process_provider_payout] START - task_id: {task_id}, provider_id: {provider_id}")
         from app.features.payments.celery.transfer_tasks import process_transfer_task
 
         # Fetch task details for payout calculation and customer ID
         task = await self.task_repo.get(task_id)
+        print(f"[DEBUG process_provider_payout] Fetched task: {task.id if task else None}")
 
         # Check for existing payout queue entry
         payouts = await self.payout_queue_repo.get_all(
@@ -118,28 +120,32 @@ class PaymentService:
             use_unique=True,
         )
         payout_obj: Optional[PayoutQueue] = payouts[0] if payouts else None
+        print(f"[DEBUG process_provider_payout] Found payout_obj: {payout_obj.id if payout_obj else None}, status: {payout_obj.status if payout_obj else None}")
 
         if not payout_obj:
+            msg = f"process_provider_payout: No PayoutQueue record found for task {task_id} and provider {provider_id}. Skipping payout."
+            print(f"[DEBUG process_provider_payout] {msg}")
             logger.warning(
-                f"process_provider_payout: No PayoutQueue record found for task {task_id} and provider {provider_id}. Skipping payout."
-            )
+               msg)
             return
 
         if payout_obj.status != PayoutStatus.CUSTOMER_PAID:
-            logger.warning(
-                f"process_provider_payout: PayoutQueue {payout_obj.id} status is {payout_obj.status.value}, expected CUSTOMER_PAID. Skipping payout."
-            )
+            msg = f"process_provider_payout: PayoutQueue {payout_obj.id} status is {payout_obj.status.value}, expected CUSTOMER_PAID. Skipping payout."
+            print(f"[DEBUG process_provider_payout] {msg}")
+            logger.warning(msg)
             return
 
         resolved_payout_amount = payout_obj.payout_amount or (
             task.provider_payout if task and task.provider_payout else 0.0
         )
+        print(f"[DEBUG process_provider_payout] resolved_payout_amount: {resolved_payout_amount}")
 
         # 1. Calculate net debt balance using SUM(amount) from append-only ledger
         stmt = select(func.coalesce(func.sum(ProviderDebt.amount), 0.0)).where(
             ProviderDebt.provider_id == provider_id
         )
         total_debt = float((await self.debt_repo.execute(stmt)).one_or_none() or 0.0)
+        print(f"[DEBUG process_provider_payout] total_debt: {total_debt}")
 
         remaining_payout = resolved_payout_amount
         debt_offset = 0.0
@@ -147,6 +153,7 @@ class PaymentService:
         if total_debt > 0.0:
             debt_offset = min(resolved_payout_amount, total_debt)
             remaining_payout = resolved_payout_amount - debt_offset
+            print(f"[DEBUG process_provider_payout] Offsetting debt. debt_offset: {debt_offset}, remaining_payout: {remaining_payout}")
 
             # Append negative (-) debt ledger entry for payout offset
             offset_entry = ProviderDebt(
@@ -157,6 +164,7 @@ class PaymentService:
                 description=f"Automated debt offset from online task payout #{task_id}",
             )
             await self.debt_repo.add(offset_entry)
+            print(f"[DEBUG process_provider_payout] Added offset ProviderDebt entry")
 
             # Log debt settlement transaction for revenue audit
             debt_settle_tx = Transaction(
@@ -171,21 +179,27 @@ class PaymentService:
                 },
             )
             await self.transaction_repo.add(debt_settle_tx)
+            print(f"[DEBUG process_provider_payout] Added debt settlement Transaction")
 
         # 2. Create durable Transfer record for net remaining payout
         if remaining_payout > 0 and payout_obj:
+            print(f"[DEBUG process_provider_payout] Creating transfer for remaining_payout: {remaining_payout}")
             transfer = await self.transfer_service.create_transfer(
                 payment_id=payout_obj.id,
                 task_id=task_id,
                 provider_id=provider_id,
                 amount=remaining_payout,
             )
+            print(f"[DEBUG process_provider_payout] Created transfer: {transfer.id if transfer else None}. Enqueuing process_transfer_task Celery task...")
             # Enqueue for background processing
             # pyrefly: ignore [not-callable]
             process_transfer_task.delay(transfer.id)
+        else:
+            print(f"[DEBUG process_provider_payout] Skipping transfer creation (remaining_payout={remaining_payout})")
 
         # 3. Update payout queue status
         if payout_obj:
+            print(f"[DEBUG process_provider_payout] Updating PayoutQueue status to TRANSFER_INITIATED")
             await self.payout_queue_repo.update(
                 payout_obj.id,
                 {
@@ -196,9 +210,11 @@ class PaymentService:
 
         # 4. Update task payment status
         if task:
+            print(f"[DEBUG process_provider_payout] Updating Task payment_status to TRANSFER_INITIATED")
             task.payment_status = PaymentStatus.TRANSFER_INITIATED
             await self.task_repo.add(task)
 
+        print(f"[DEBUG process_provider_payout] END - Payout processed for provider {provider_id} on task {task_id}")
         logger.info(
             f"Processed payout for provider {provider_id} on task {task_id}: gross=₦{resolved_payout_amount:,.2f}, "
             f"debt_offset=₦{debt_offset:,.2f}, net_transfer=₦{remaining_payout:,.2f}"
