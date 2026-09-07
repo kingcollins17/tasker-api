@@ -18,7 +18,7 @@ from app.features.services.routers import router as services_router
 from app.features.notifications.router import router as notifications_router
 from app.features.tasks.router import router as tasks_router
 from app.features.payments.routers import router as payments_router
-from app.features.reviews.router import router as reviews_router
+from app.features.reviews.routers import router as reviews_router
 from app.features.system.router import router as system_router
 from app.features.vetting.router import router as vetting_router
 

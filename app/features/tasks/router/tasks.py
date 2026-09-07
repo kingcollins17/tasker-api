@@ -33,8 +33,10 @@ from app.features.tasks.schemas import (
     TaskUpdate,
     TaskCancellationRequest,
     TaskRedispatchRequest,
-    TaskResponse,
     TaskLocationUpdate,
+)
+from app.core.schemas.tasks import (
+    TaskResponse,
     TaskLocationResponse,
     TaskAttachmentResponse,
     TaskListResponse,

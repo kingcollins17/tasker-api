@@ -24,7 +24,7 @@ from app.core.models.tasks import (
 )
 from app.core.repository import GetRepository, Repository
 from app.core.utils.datetime_helper import lagos_now
-from app.features.tasks.schemas import (
+from app.core.schemas.tasks import (
     TaskAssignmentResponse,
     TaskAssignmentWithTaskResponse,
     TaskMinimalResponse,

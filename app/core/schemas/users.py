@@ -69,6 +69,27 @@ class MinimalCustomerResponse(BaseModel):
     credibility_score: Optional[float] = None
     gender: Optional[str] = None
 
+    @classmethod
+    def from_user(cls, user: Any) -> Optional["MinimalCustomerResponse"]:
+        if not user:
+            return None
+        fullname = None
+        if getattr(user, "customer_profile", None):
+            first_name = user.customer_profile.first_name or ""
+            last_name = user.customer_profile.last_name or ""
+            fullname = f"{first_name} {last_name}".strip() or None
+
+        return cls(
+            id=user.id,
+            email=user.email,
+            phone_number=user.phone_number,
+            fullname=fullname,
+            average_ratings=user.average_ratings,
+            credibility_score=user.credibility_score,
+            gender=None,
+        )
+
+
 
 class BankResponse(BaseModel):
     id: Optional[str] = None
