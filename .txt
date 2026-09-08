@@ -33,7 +33,7 @@ internal database url=postgresql://tasker:fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa@dpg-d
 external db url=postgresql://tasker:fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa@dpg-d8kp6e3eo5us73env830-a.oregon-postgres.render.com/tasker_g3j2
 
 psql command = PGPASSWORD=fAMo2mNTwRbzyAud8mPJH3rxfo2gh6fa psql -h dpg-d8kp6e3eo5us73env830-a.oregon-postgres.render.com -U tasker tasker_g3j2
-
+enugu region id=8a1cda28-f1ac-469b-b27a-514197170a41
 
 // create task example 
 {
@@ -62,3 +62,66 @@ JWT TOKENS
 baker@yopmail.com - eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA4Y2Q2NmZlLTQ0NjEtNDI3OC05NmYzLTZhMTZmOTk3ZTE0MyIsImVtYWlsIjoiYmFrZXJAeW9wbWFpbC5jb20iLCJpc19hY3RpdmUiOnRydWUsImV4cCI6MTc5MDI1ODAyOH0.BL3sUHKVZa_D9jAXYJRxx4NmTXMiOk2q6xkrtcYbUUo
 
 //
+{
+  "data": [
+    {
+      "id": "s202b222-1111-2222-3333-444444444201",
+      "name": "Standard Home Cleaning",
+      "image_url": null,
+      "take_rate": 0.15,
+      "is_active": true,
+      "category_id": "c101a111-2222-3333-4444-555555555502",
+      "category": {
+        "id": "c101a111-2222-3333-4444-555555555502",
+        "name": "Cleaning & Housekeeping",
+        "description": "Professional residential, commercial, and deep cleaning services.",
+        "image_url": null,
+        "is_active": true,
+        "created_at": "2026-08-17T09:50:19.977697",
+        "updated_at": "2026-08-17T09:50:19.977697"
+      },
+      "created_at": "2026-08-17T09:50:19.977697",
+      "updated_at": "2026-08-17T09:50:19.977697"
+    },
+    {
+      "id": "s202b222-1111-2222-3333-444444444203",
+      "name": "Office & Commercial Cleaning",
+      "image_url": null,
+      "take_rate": 0.15,
+      "is_active": true,
+      "category_id": "c101a111-2222-3333-4444-555555555502",
+      "category": {
+        "id": "c101a111-2222-3333-4444-555555555502",
+        "name": "Cleaning & Housekeeping",
+        "description": "Professional residential, commercial, and deep cleaning services.",
+        "image_url": null,
+        "is_active": true,
+        "created_at": "2026-08-17T09:50:19.977697",
+        "updated_at": "2026-08-17T09:50:19.977697"
+      },
+      "created_at": "2026-08-17T09:50:19.977697",
+      "updated_at": "2026-08-17T09:50:19.977697"
+    },
+    {
+      "id": "s202b222-1111-2222-3333-444444444204",
+      "name": "Carpet & Upholstery Cleaning",
+      "image_url": null,
+      "take_rate": 0.15,
+      "is_active": true,
+      "category_id": "c101a111-2222-3333-4444-555555555502",
+      "category": {
+        "id": "c101a111-2222-3333-4444-555555555502",
+        "name": "Cleaning & Housekeeping",
+        "description": "Professional residential, commercial, and deep cleaning services.",
+        "image_url": null,
+        "is_active": true,
+        "created_at": "2026-08-17T09:50:19.977697",
+        "updated_at": "2026-08-17T09:50:19.977697"
+      },
+      "created_at": "2026-08-17T09:50:19.977697",
+      "updated_at": "2026-08-17T09:50:19.977697"
+    }
+  ],
+  "detail": "Top services retrieved successfully.",
+  "status_code": 200
+}

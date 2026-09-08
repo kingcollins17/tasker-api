@@ -33,3 +33,8 @@ class ServiceAvailabilityResponse(BaseModel):
     is_available: bool
 
 
+class BulkServiceAvailabilityItem(BaseModel):
+    service_id: Optional[str] = None
+    service_name: Optional[str] = None
+    is_available: Optional[bool] = None
+    provider_count: Optional[int] = None

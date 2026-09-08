@@ -11,6 +11,7 @@ from app.core.error_handler import AppErrorHandler
 from app.features.services.schemas import (
     ServiceResponse,
     ServiceAvailabilityResponse,
+    BulkServiceAvailabilityItem,
     CategoryResponse,
 )
 from app.core.schemas.users import MinimalProviderResponse
@@ -202,6 +203,105 @@ async def get_services(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while retrieving services.",
+        )
+
+
+@router.get(
+    "/available/bulk",
+    response_model=BaseAPIResponse[List[BulkServiceAvailabilityItem]],
+    status_code=status.HTTP_200_OK,
+)
+async def bulk_check_service_availability(
+    service_ids: List[str] = Query(..., description="List of service IDs to check"),
+    region_id: str = Query(..., description="Region ID to check availability in"),
+    latitude: float = Query(..., description="Center latitude for radius search"),
+    longitude: float = Query(..., description="Center longitude for radius search"),
+    radius_km: float = Query(10.0, ge=0.1, le=100.0, description="Search radius in kilometers"),
+    service_repo: Repository[Service] = Depends(GetRepository(Service)),
+    cache_service: CacheService = Depends(get_cache_service),
+):
+    """Check availability of multiple services within a km radius in a region.
+    
+    Returns a list indicating whether each service has active providers
+    within the specified radius of the given coordinates.
+    """
+    try:
+        sorted_ids = sorted(service_ids)
+        cache_key = (
+            f"services::bulk_availability:region:{region_id}"
+            f":lat:{latitude}:lng:{longitude}:r:{radius_km}"
+            f":ids:{','.join(sorted_ids)}"
+        )
+        cached_data = await cache_service.get_json(cache_key)
+
+        if cached_data:
+            return BaseAPIResponse[List[BulkServiceAvailabilityItem]](
+                data=[BulkServiceAvailabilityItem(**item) for item in cached_data],
+                detail="Bulk service availability retrieved successfully from cache.",
+                status_code=status.HTTP_200_OK,
+            )
+
+        statement = ServicesQueries.bulk_check_services_availability_query(
+            service_ids=service_ids,
+            region_id=region_id,
+            latitude=latitude,
+            longitude=longitude,
+            radius_km=radius_km,
+        )
+
+        result = await service_repo.execute(statement)
+        rows = result.all()
+
+        available_map = {
+            row.service_id: (row.service_name, row.provider_count)
+            for row in rows
+        }
+
+        # Fetch names for services that had 0 providers (not in query results)
+        missing_ids = [sid for sid in service_ids if sid not in available_map]
+        service_name_map: dict[str, str] = {}
+        if missing_ids:
+            name_statement = (
+                select(Service.id, Service.name)
+                .where(col(Service.id).in_(missing_ids))
+            )
+            name_result = await service_repo.execute(name_statement)
+            for row in name_result.all():
+                service_name_map[row.id] = row.name
+
+        items = []
+        for sid in service_ids:
+            if sid in available_map:
+                name, count = available_map[sid]
+                items.append(BulkServiceAvailabilityItem(
+                    service_id=sid,
+                    service_name=name,
+                    is_available=count > 0,
+                    provider_count=count,
+                ))
+            else:
+                items.append(BulkServiceAvailabilityItem(
+                    service_id=sid,
+                    service_name=service_name_map.get(sid),
+                    is_available=False,
+                    provider_count=0,
+                ))
+
+        data_dump = [item.model_dump(mode="json") for item in items]
+        await cache_service.set_json(cache_key, data_dump, expire=300 *2)
+
+        return BaseAPIResponse[List[BulkServiceAvailabilityItem]](
+            data=items,
+            detail="Bulk service availability retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while checking bulk service availability.",
         )
 
 
