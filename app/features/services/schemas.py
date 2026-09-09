@@ -38,3 +38,20 @@ class BulkServiceAvailabilityItem(BaseModel):
     service_name: Optional[str] = None
     is_available: Optional[bool] = None
     provider_count: Optional[int] = None
+
+
+class AvailableServiceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    service_id: Optional[str] = None
+    service_name: Optional[str] = None
+    image_url: Optional[str] = None
+    take_rate: Optional[float] = None
+    is_active: Optional[bool] = None
+    category_id: Optional[str] = None
+    category: Optional[CategoryResponse] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    is_available: Optional[bool] = None
+    provider_count: Optional[int] = None
+

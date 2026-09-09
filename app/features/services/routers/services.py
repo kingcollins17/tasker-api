@@ -2,16 +2,19 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlmodel import select, func, asc, desc, col
 from sqlalchemy.orm import selectinload
+from sqlalchemy import cast
+from geoalchemy2 import Geography
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.repository import GetRepository, Repository
 from app.core.models.services import Service, ProviderServiceLink, ServiceCategory
 from app.core.models.tasks import Task
-from app.core.models.users import User
+from app.core.models.users import User, UserLocation
 from app.core.error_handler import AppErrorHandler
 from app.features.services.schemas import (
     ServiceResponse,
     ServiceAvailabilityResponse,
     BulkServiceAvailabilityItem,
+    AvailableServiceResponse,
     CategoryResponse,
 )
 from app.core.schemas.users import MinimalProviderResponse
@@ -203,6 +206,146 @@ async def get_services(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while retrieving services.",
+        )
+
+
+@router.get(
+    "/available",
+    response_model=BaseAPIResponse[PaginatedData[AvailableServiceResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_available_services(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    latitude: float = Query(..., description="Center latitude for radius search"),
+    longitude: float = Query(..., description="Center longitude for radius search"),
+    radius_km: float = Query(10.0, ge=0.1, le=100.0, description="Search radius in kilometers"),
+    category_id: Optional[str] = Query(None, description="Filter by category ID"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
+    service_repo: Repository[Service] = Depends(GetRepository(Service)),
+    cache_service: CacheService = Depends(get_cache_service),
+):
+    """Retrieve services that have available providers within a specified radius."""
+    try:
+        cache_key = (
+            f"services::available:category:{category_id}"
+            f":region:{region_id}:lat:{latitude}:lng:{longitude}:r:{radius_km}"
+            f":page:{page}:per_page:{per_page}"
+        )
+        cached_data = await cache_service.get_json(cache_key)
+
+        if cached_data:
+            return BaseAPIResponse[PaginatedData[AvailableServiceResponse]](
+                data=PaginatedData[AvailableServiceResponse](**cached_data),
+                detail="Available services retrieved successfully from cache.",
+                status_code=status.HTTP_200_OK,
+            )
+
+        target_point = func.ST_SetSRID(
+            func.ST_MakePoint(longitude, latitude), 4326
+        )
+        spatial_filter = func.ST_DWithin(
+            cast(col(UserLocation.last_known_location), Geography),
+            cast(target_point, Geography),
+            radius_km * 1000.0,
+        )
+
+        count_statement = (
+            select(func.count(col(Service.id).distinct()))
+            .select_from(Service)
+            .join(ProviderServiceLink, col(Service.id) == col(ProviderServiceLink.service_id))
+            .join(User, col(ProviderServiceLink.provider_id) == col(User.id))
+            .join(UserLocation, col(User.id) == col(UserLocation.user_id))
+            .where(col(User.is_active) == True)
+            .where(col(Service.is_active) == True)
+            .where(spatial_filter)
+        )
+
+        if category_id:
+            count_statement = count_statement.where(col(Service.category_id) == category_id)
+
+        if region_id:
+            count_statement = count_statement.where(col(UserLocation.region_id) == region_id)
+
+        total_result = await service_repo.execute(count_statement)
+        total = total_result.first() or 0
+
+        statement = (
+            select(
+                Service,
+                func.count(col(User.id).distinct()).label("provider_count"),
+            )
+            .select_from(Service)
+            .join(ProviderServiceLink, col(Service.id) == col(ProviderServiceLink.service_id))
+            .join(User, col(ProviderServiceLink.provider_id) == col(User.id))
+            .join(UserLocation, col(User.id) == col(UserLocation.user_id))
+            .where(col(User.is_active) == True)
+            .where(col(Service.is_active) == True)
+            .where(spatial_filter)
+        )
+
+        if category_id:
+            statement = statement.where(col(Service.category_id) == category_id)
+
+        if region_id:
+            statement = statement.where(col(UserLocation.region_id) == region_id)
+
+        statement = (
+            statement.group_by(col(Service.id))
+            .options(selectinload(Service.category))  # type: ignore
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )
+
+        result = await service_repo.execute(statement)
+        rows = result.all()
+
+        items = []
+        for service, count in rows:
+            category_resp = (
+                CategoryResponse.model_validate(service.category)
+                if service.category
+                else None
+            )
+            items.append(
+                AvailableServiceResponse(
+                    service_id=service.id,
+                    service_name=service.name,
+                    image_url=service.image_url,
+                    take_rate=service.take_rate,
+                    is_active=service.is_active,
+                    category_id=service.category_id,
+                    category=category_resp,
+                    created_at=service.created_at,
+                    updated_at=service.updated_at,
+                    is_available=count > 0,
+                    provider_count=count,
+                )
+            )
+
+        data = PaginatedData[AvailableServiceResponse](
+            items=items,
+            total=total,
+            page=page,
+            per_page=per_page,
+        )
+
+        await cache_service.set_json(
+            cache_key, data.model_dump(mode="json"), expire=300
+        )
+
+        return BaseAPIResponse[PaginatedData[AvailableServiceResponse]](
+            data=data,
+            detail="Available services retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving available services.",
         )
 
 
