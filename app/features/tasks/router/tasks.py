@@ -46,10 +46,16 @@ from app.core.schemas.tasks import (
 )
 from app.features.services.pricing_engine import PricingBreakdown
 
-from app.core.models.tasks import TaskAttachment, Task
+from sqlmodel import select, col, desc
+from app.core.models.tasks import (
+    TaskAttachment,
+    Task,
+    TaskPriceAdjustment,
+    TaskStatus,
+    PriceAdjustmentStatus,
+)
 from app.features.tasks.services import TaskService, get_task_service
 from app.core.error_handler import AppErrorHandler
-from app.core.models.tasks import TaskStatus
 from app.core.queries.task_queries import TaskQueries
 from app.core.repository import Repository, GetRepository
 
@@ -354,6 +360,78 @@ async def list_active_tasks(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while fetching active tasks.",
+        )
+
+
+@router.get(
+    "/price-adjustments/recent",
+    response_model=BaseAPIResponse[Optional[TaskPriceAdjustmentResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_recent_pending_price_adjustment_request(
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_email_verified=True,
+            required_type=UserType.CUSTOMER,
+        )
+    ),
+    adjustment_repo: Repository[TaskPriceAdjustment] = Depends(
+        GetRepository(TaskPriceAdjustment)
+    ),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Customer fetches the most recent task price adjustment request on any active tasks (assigned or in progress)."""
+    try:
+        timer = Timer()
+        timer.start()
+
+        statement = (
+            select(TaskPriceAdjustment)
+            .join(Task, col(TaskPriceAdjustment.task_id) == Task.id)
+            .where(col(Task.customer_id) == current_user.id)
+            .where(col(Task.status).in_([TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]))
+            .where(col(TaskPriceAdjustment.status) == PriceAdjustmentStatus.PENDING)
+            .order_by(desc(TaskPriceAdjustment.created_at))
+            .limit(1)
+        )
+
+        result = await adjustment_repo.execute(statement)
+        adjustment = result.first()
+
+        await system_logger.metric(
+            "get_recent_pending_price_adjustment_request",
+            timer.stop(),
+            source="tasks.get_recent_pending_price_adjustment_request",
+        )
+
+        if not adjustment:
+            return BaseAPIResponse[Optional[TaskPriceAdjustmentResponse]](
+                data=None,
+                detail="No price adjustment request found for active tasks.",
+                status_code=status.HTTP_200_OK,
+            )
+
+        return BaseAPIResponse[Optional[TaskPriceAdjustmentResponse]](
+            data=TaskPriceAdjustmentResponse.model_validate(adjustment),
+            detail="Most recent price adjustment request retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn(
+            "get_recent_price_adjustment_request failed",
+            source="tasks.get_recent_price_adjustment_request",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
+        raise
+    except Exception as e:
+        await system_logger.error(
+            f"get_recent_price_adjustment_request error: {str(e)}",
+            source="tasks.get_recent_price_adjustment_request",
+        )
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching the recent price adjustment request.",
         )
 
 
@@ -975,7 +1053,7 @@ async def respond_to_price_adjustment(
         await system_logger.warn(
             "respond_to_price_adjustment failed",
             source="tasks.respond_to_price_adjustment",
-            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+            metadata={"detail": e.detail},
         )
         raise
     except Exception as e:
