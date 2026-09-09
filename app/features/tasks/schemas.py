@@ -2,7 +2,15 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.models.tasks import LocationType, PaymentStatus, TaskAssignmentStatus, TaskStatus, DispatchAttemptStatus, CancelledBy
+from app.core.models.tasks import (
+    LocationType,
+    PaymentStatus,
+    TaskAssignmentStatus,
+    TaskStatus,
+    DispatchAttemptStatus,
+    CancelledBy,
+    PriceAdjustmentStatus,
+)
 from app.core.schemas.users import MinimalCustomerResponse, MinimalProviderResponse
 from app.features.services.schemas import CategoryResponse
 
@@ -59,6 +67,28 @@ class TaskLocationUpdate(BaseModel):
     city: Optional[str] = Field(default=None)
     state: Optional[str] = Field(default=None)
     country: Optional[str] = Field(default=None)
+
+
+class PriceAdjustmentCreate(BaseModel):
+    amount: float = Field(..., gt=0, description="Additional price amount requested")
+    description: Optional[str] = Field(default=None, description="Explanation for price adjustment")
+
+
+class PriceAdjustmentRespond(BaseModel):
+    approved: bool = Field(..., description="True to accept/approve, False to decline/reject")
+
+
+class TaskPriceAdjustmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    task_id: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    requested_by: Optional[str] = None
+    status: Optional[PriceAdjustmentStatus] = None
+    created_at: Optional[datetime] = None
+
 
 
 

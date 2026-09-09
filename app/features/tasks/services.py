@@ -28,6 +28,8 @@ from app.core.models.tasks import (
     TaskEventHistory,
     TaskLocation,
     TaskStatus,
+    TaskPriceAdjustment,
+    PriceAdjustmentStatus,
 )
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
 from app.core.models.users import ProviderProfile, User, UserLocation, UserType
@@ -51,7 +53,13 @@ from app.features.services.pricing_engine import (
     PricingEngine,
     get_pricing_engine,
 )
-from app.features.tasks.schemas import TaskCreate, TaskUpdate, TaskPriceEstimateRequest
+from app.features.tasks.schemas import (
+    TaskCreate,
+    TaskUpdate,
+    TaskPriceEstimateRequest,
+    PriceAdjustmentCreate,
+    PriceAdjustmentRespond,
+)
 
 
 class TaskService:
@@ -69,6 +77,7 @@ class TaskService:
         payment_gateway: PaymentGateway,
         notification_service: NotificationService,
         pricing_engine: PricingEngine,
+        price_adjustment_repo: Repository[TaskPriceAdjustment],
     ):
         self.task_repo = task_repo
         self.location_repo = location_repo
@@ -82,6 +91,7 @@ class TaskService:
         self.payment_gateway = payment_gateway
         self.notification_service = notification_service
         self.pricing_engine = pricing_engine
+        self.price_adjustment_repo = price_adjustment_repo
 
     def _generate_pin(self) -> str:
         return f"{random.randint(0, 9999):04d}"
@@ -889,6 +899,154 @@ class TaskService:
         res = await self.user_repo.execute(stmt)
         return list(res.all())
 
+    async def request_price_adjustment(
+        self,
+        task_id: str,
+        provider_id: str,
+        schema: PriceAdjustmentCreate,
+    ) -> TaskPriceAdjustment:
+        task = await self.task_repo.get(task_id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Task not found",
+            )
+
+        if task.assigned_provider_id != provider_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the assigned provider can request a price adjustment for this task",
+            )
+
+        if task.status not in (TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Price adjustments can only be requested for active tasks",
+            )
+
+        stmt = select(TaskPriceAdjustment).where(
+            TaskPriceAdjustment.task_id == task_id,
+            TaskPriceAdjustment.status == PriceAdjustmentStatus.PENDING,
+        )
+        res = await self.price_adjustment_repo.execute(stmt)
+        existing = res.first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A price adjustment request is already pending for this task",
+            )
+
+        adjustment = TaskPriceAdjustment(
+            task_id=task_id,
+            amount=schema.amount,
+            description=schema.description,
+            requested_by=provider_id,
+            status=PriceAdjustmentStatus.PENDING,
+        )
+        adjustment = await self.price_adjustment_repo.add(adjustment)
+
+        await self.log_task_event(
+            task_id,
+            event="PRICE_ADJUSTMENT_REQUESTED",
+            reason=schema.description,
+            adjustment_id=adjustment.id,
+            amount=schema.amount,
+            requested_by=provider_id,
+        )
+
+        if task.customer_id:
+            await self.notification_service.notify(
+                recepients=[task.customer_id],
+                title="Price Adjustment Requested",
+                body=f"Provider requested a price adjustment of ₦{schema.amount:,.2f} for task: {task.title}",
+                type=NotificationType.SYSTEM_ALERT,
+                data={
+                    "task_id": task_id,
+                    "adjustment_id": adjustment.id,
+                    "amount": schema.amount,
+                    "description": schema.description,
+                },
+            )
+
+        return adjustment
+
+    async def respond_to_price_adjustment(
+        self,
+        task_id: str,
+        adjustment_id: str,
+        customer_id: str,
+        schema: PriceAdjustmentRespond,
+    ) -> TaskPriceAdjustment:
+        task = await self.task_repo.get(task_id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Task not found",
+            )
+
+        if task.customer_id != customer_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the task customer can respond to price adjustments",
+            )
+
+        adjustment = await self.price_adjustment_repo.get(adjustment_id)
+        if not adjustment or adjustment.task_id != task_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Price adjustment request not found",
+            )
+
+        if adjustment.status != PriceAdjustmentStatus.PENDING:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This price adjustment request has already been processed",
+            )
+
+        if schema.approved:
+            adjustment.status = PriceAdjustmentStatus.APPROVED
+            task.customer_total_price = (task.customer_total_price or 0.0) + (adjustment.amount or 0.0)
+            task.provider_payout = (task.provider_payout or 0.0) + (adjustment.amount or 0.0)
+            await self.task_repo.add(task)
+
+            event_name = "PRICE_ADJUSTMENT_APPROVED"
+            notif_title = "Price Adjustment Approved"
+            notif_body = f"Customer approved your price adjustment request of ₦{(adjustment.amount or 0.0):,.2f} for task: {task.title}"
+            notif_type = NotificationType.SYSTEM_ALERT
+        else:
+            adjustment.status = PriceAdjustmentStatus.REJECTED
+            event_name = "PRICE_ADJUSTMENT_REJECTED"
+            notif_title = "Price Adjustment Declined"
+            notif_body = f"Customer declined your price adjustment request of ₦{(adjustment.amount or 0.0):,.2f} for task: {task.title}"
+            notif_type = NotificationType.SYSTEM_ALERT
+
+        adjustment = await self.price_adjustment_repo.add(adjustment)
+
+        await self.log_task_event(
+            task_id,
+            event=event_name,
+            reason=adjustment.description,
+            adjustment_id=adjustment.id,
+            amount=adjustment.amount,
+            customer_id=customer_id,
+        )
+
+        if task.assigned_provider_id:
+            await self.notification_service.notify(
+                recepients=[task.assigned_provider_id],
+                title=notif_title,
+                body=notif_body,
+                type=notif_type,
+                data={
+                    "task_id": task_id,
+                    "adjustment_id": adjustment.id,
+                    "status": adjustment.status,
+                    "amount": adjustment.amount,
+                },
+            )
+
+        return adjustment
+
 
 def get_task_service(
     task_repo: Repository[Task] = Depends(GetRepository(Task)),
@@ -911,6 +1069,9 @@ def get_task_service(
     payment_gateway: PaymentGateway = Depends(get_paystack_gateway),
     notification_service: NotificationService = Depends(get_notification_service),
     pricing_engine: PricingEngine = Depends(get_pricing_engine),
+    price_adjustment_repo: Repository[TaskPriceAdjustment] = Depends(
+        GetRepository(TaskPriceAdjustment)
+    ),
 ) -> TaskService:
     return TaskService(
         task_repo=task_repo,
@@ -925,4 +1086,5 @@ def get_task_service(
         payment_gateway=payment_gateway,
         notification_service=notification_service,
         pricing_engine=pricing_engine,
+        price_adjustment_repo=price_adjustment_repo,
     )

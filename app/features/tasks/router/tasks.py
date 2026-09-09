@@ -34,6 +34,9 @@ from app.features.tasks.schemas import (
     TaskCancellationRequest,
     TaskRedispatchRequest,
     TaskLocationUpdate,
+    PriceAdjustmentCreate,
+    PriceAdjustmentRespond,
+    TaskPriceAdjustmentResponse,
 )
 from app.core.schemas.tasks import (
     TaskResponse,
@@ -869,4 +872,119 @@ async def get_nearby_providers(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while fetching nearby providers.",
+        )
+
+
+@router.post(
+    "/{task_id}/price-adjustments",
+    response_model=BaseAPIResponse[TaskPriceAdjustmentResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def request_price_adjustment(
+    task_id: str,
+    schema: PriceAdjustmentCreate,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_email_verified=True,
+            required_type=UserType.PROVIDER,
+        )
+    ),
+    task_service: TaskService = Depends(get_task_service),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Assigned provider requests a price adjustment for a task."""
+    try:
+        timer = Timer()
+        timer.start()
+        adjustment = await task_service.request_price_adjustment(
+            task_id=task_id,
+            provider_id=current_user.id,
+            schema=schema,
+        )
+
+        await system_logger.metric(
+            "request_price_adjustment",
+            timer.stop(),
+            source="tasks.request_price_adjustment",
+        )
+        return BaseAPIResponse[TaskPriceAdjustmentResponse](
+            data=TaskPriceAdjustmentResponse.model_validate(adjustment),
+            detail="Price adjustment request submitted successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+    except HTTPException as e:
+        await system_logger.warn(
+            "request_price_adjustment failed",
+            source="tasks.request_price_adjustment",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
+        raise
+    except Exception as e:
+        await system_logger.error(
+            f"request_price_adjustment error: {str(e)}",
+            source="tasks.request_price_adjustment",
+        )
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while requesting price adjustment.",
+        )
+
+
+@router.post(
+    "/{task_id}/price-adjustments/{adjustment_id}/respond",
+    response_model=BaseAPIResponse[TaskPriceAdjustmentResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def respond_to_price_adjustment(
+    task_id: str,
+    adjustment_id: str,
+    schema: PriceAdjustmentRespond,
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_email_verified=True,
+            required_type=UserType.CUSTOMER,
+        )
+    ),
+    task_service: TaskService = Depends(get_task_service),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Customer accepts or declines a price adjustment request."""
+    try:
+        timer = Timer()
+        timer.start()
+        adjustment = await task_service.respond_to_price_adjustment(
+            task_id=task_id,
+            adjustment_id=adjustment_id,
+            customer_id=current_user.id,
+            schema=schema,
+        )
+
+        await system_logger.metric(
+            "respond_to_price_adjustment",
+            timer.stop(),
+            source="tasks.respond_to_price_adjustment",
+        )
+        status_msg = "approved" if schema.approved else "declined"
+        return BaseAPIResponse[TaskPriceAdjustmentResponse](
+            data=TaskPriceAdjustmentResponse.model_validate(adjustment),
+            detail=f"Price adjustment request {status_msg} successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn(
+            "respond_to_price_adjustment failed",
+            source="tasks.respond_to_price_adjustment",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
+        raise
+    except Exception as e:
+        await system_logger.error(
+            f"respond_to_price_adjustment error: {str(e)}",
+            source="tasks.respond_to_price_adjustment",
+        )
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while responding to price adjustment.",
         )

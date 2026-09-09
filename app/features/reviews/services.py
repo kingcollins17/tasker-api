@@ -48,13 +48,13 @@ class ReviewService:
                 detail="Reviews can only be submitted for completed tasks",
             )
 
-        # Enforce review window
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=_REVIEW_WINDOW_HOURS)
-        if task.updated_at and task.updated_at.replace(tzinfo=timezone.utc) < cutoff:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Review window of {_REVIEW_WINDOW_HOURS} hours has expired",
-            )
+        # # Enforce review window
+        # cutoff = datetime.now(timezone.utc) - timedelta(hours=_REVIEW_WINDOW_HOURS)
+        # if task.updated_at and task.updated_at.replace(tzinfo=timezone.utc) < cutoff:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail=f"Review window of {_REVIEW_WINDOW_HOURS} hours has expired",
+        #     )
 
         # Determine reviewee_id: reviewer is customer → reviewee is provider, and vice versa
         reviewer = await self.user_repo.get(reviewer_id)

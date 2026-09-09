@@ -115,7 +115,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(tasks_router, prefix=f"{API_V1_PREFIX}")
     app.include_router(payments_router, prefix=f"{API_V1_PREFIX}")
-    app.include_router(reviews_router, prefix=f"{API_V1_PREFIX}", tags=["Reviews & Credibility"])
+    app.include_router(reviews_router, prefix=f"{API_V1_PREFIX}")
     app.include_router(system_router, prefix=f"{API_V1_PREFIX}/system", tags=["System"])
     app.include_router(vetting_router, prefix=f"{API_V1_PREFIX}/vetting")
 

@@ -1,14 +1,42 @@
-from typing import Optional, Dict, Any, List
-from sqlalchemy import select, func, desc
-from sqlmodel.ext.asyncio.session import AsyncSession
+import sys
+from typing import Any, AsyncGenerator, Dict, List, Optional
 from fastapi import Depends
-from app.core.models.system_logs import SystemLog, LogLevel
-from app.core.repository import Repository, QueryOptions, GetRepository
+from sqlalchemy import desc, func, select
+from sqlmodel import col
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.core.models.system_logs import LogLevel, SystemLog
+from app.core.repository import GetRepository, QueryOptions, Repository
+
+# External in-memory buffer shared across instances
+_LOG_BUFFER: List[SystemLog] = []
+DEFAULT_MAX_BUFFER_SIZE: int = 50
+
 
 class LoggerService:
-    def __init__(self, repository: Repository[SystemLog]):
+    def __init__(self, repository: Repository[SystemLog], max_buffer_size: int = DEFAULT_MAX_BUFFER_SIZE):
         self.repository = repository
         self.session: AsyncSession = repository.session
+        self.max_buffer_size = max_buffer_size
+
+    async def flush(self) -> None:
+        """Flush all buffered log entries to the database using repository.bulk_add."""
+        global _LOG_BUFFER
+        if not _LOG_BUFFER:
+            return
+        logs_to_flush = list(_LOG_BUFFER)
+        _LOG_BUFFER.clear()
+        try:
+            await self.repository.bulk_add(logs_to_flush)
+        except Exception as log_exc:
+            print(
+                f"[LoggerService] Failed to flush bulk logs ({len(logs_to_flush)} entries): {log_exc}",
+                file=sys.stderr,
+            )
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
     async def _log(
         self,
@@ -25,35 +53,24 @@ class LoggerService:
             duration_ms=duration_ms,
             metadata_=metadata,
         )
-        try:
-            return await self.repository.add(log_entry)
-        except Exception as log_exc:
-            # Logger should never crash the application — fallback to stderr
-            import sys
-            print(
-                f"[LoggerService] Failed to persist log ({level.value}): {message} | "
-                f"source={source} | error={log_exc}",
-                file=sys.stderr,
-            )
-            try:
-                await self.session.rollback()
-            except Exception:
-                pass
-            return None
+        _LOG_BUFFER.append(log_entry)
+        if len(_LOG_BUFFER) >= self.max_buffer_size:
+            await self.flush()
+        return log_entry
 
-    async def info(self, message: str, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> SystemLog:
+    async def info(self, message: str, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[SystemLog]:
         return await self._log(LogLevel.INFO, message, source, metadata=metadata)
 
-    async def warn(self, message: str, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> SystemLog:
+    async def warn(self, message: str, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[SystemLog]:
         return await self._log(LogLevel.WARN, message, source, metadata=metadata)
 
-    async def error(self, message: str, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> SystemLog:
+    async def error(self, message: str, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[SystemLog]:
         return await self._log(LogLevel.ERROR, message, source, metadata=metadata)
         
-    async def debug(self, message: str, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> SystemLog:
+    async def debug(self, message: str, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[SystemLog]:
         return await self._log(LogLevel.DEBUG, message, source, metadata=metadata)
 
-    async def metric(self, message: str, duration_ms: int, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> SystemLog:
+    async def metric(self, message: str, duration_ms: int, source: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[SystemLog]:
         return await self._log(LogLevel.METRIC, message, source, duration_ms=duration_ms, metadata=metadata)
 
     async def get_logs(
@@ -74,7 +91,7 @@ class LoggerService:
         return await self.repository.get_all(options)
 
     async def get_stats(self) -> Dict[str, int]:
-        statement = select(SystemLog.level, func.count(SystemLog.id)).group_by(SystemLog.level)
+        statement = select(col(SystemLog.level), func.count(col(SystemLog.id))).group_by(col(SystemLog.level))
         result = await self.repository.execute(statement)
         stats = {row[0].value: row[1] for row in result.all()}
         return stats
@@ -82,14 +99,14 @@ class LoggerService:
     async def get_metrics_summary(self) -> List[Dict[str, Any]]:
         statement = (
             select(
-                SystemLog.source,
-                func.count(SystemLog.id).label("count"),
-                func.avg(SystemLog.duration_ms).label("avg_duration"),
-                func.max(SystemLog.duration_ms).label("max_duration"),
-                func.min(SystemLog.duration_ms).label("min_duration")
+                col(SystemLog.source),
+                func.count(col(SystemLog.id)).label("count"),
+                func.avg(col(SystemLog.duration_ms)).label("avg_duration"),
+                func.max(col(SystemLog.duration_ms)).label("max_duration"),
+                func.min(col(SystemLog.duration_ms)).label("min_duration")
             )
-            .where(SystemLog.level == LogLevel.METRIC)
-            .group_by(SystemLog.source)
+            .where(col(SystemLog.level) == LogLevel.METRIC)
+            .group_by(col(SystemLog.source))
         )
         result = await self.repository.execute(statement)
         
@@ -104,16 +121,21 @@ class LoggerService:
             })
         return summary
 
-SystemLogger=LoggerService
 
-from typing import AsyncGenerator
+SystemLogger = LoggerService
+
 
 async def get_logger_service() -> AsyncGenerator[LoggerService, None]:
     """FastAPI dependency for LoggerService with an independent database session."""
     from app.core.database import async_session_maker
     async with async_session_maker() as session:
         repository = Repository(SystemLog, session)
-        yield LoggerService(repository)
+        service = LoggerService(repository)
+        try:
+            yield service
+        finally:
+            await service.flush()
+
 
 def get_logger_service_manual(session: AsyncSession) -> LoggerService:
     """Manually creates a LoggerService instance for contexts without FastAPI Depends (e.g., Celery)."""
