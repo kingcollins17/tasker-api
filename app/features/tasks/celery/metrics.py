@@ -6,7 +6,7 @@ from typing import Optional
 from celery import shared_task
 from sqlmodel import select
 
-from app.core.database import async_session_maker
+from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
 from app.core.models.services import Service, ServiceCategory
 from app.core.models.tasks import (
@@ -45,7 +45,7 @@ def sync_service_metrics(
 
 
 async def _sync_provider_metrics_async(provider_id: str):
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
         timer.start()
@@ -192,7 +192,7 @@ async def _sync_single_category_duration(
 async def _sync_service_metrics_async(
     service_id: Optional[str] = None, category_id: Optional[str] = None
 ):
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
         timer.start()

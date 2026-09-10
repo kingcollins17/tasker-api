@@ -1,7 +1,7 @@
 from celery import shared_task
 from sqlmodel import select, col
 
-from app.core.database import async_session_maker
+from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
 from app.core.models.transfers import Transfer, TransferStatus
 from app.core.services.logger_service import get_logger_service_manual
@@ -26,7 +26,7 @@ def process_transfer_task(transfer_id: str):
 
 
 async def _process_transfer_async(transfer_id: str) -> None:
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
         timer.start()
@@ -80,7 +80,7 @@ def recover_stuck_transfers_task():
 
 
 async def _recover_stuck_transfers_async() -> None:
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
         timer.start()
@@ -147,7 +147,7 @@ def reconcile_processing_transfers_task():
 async def _reconcile_processing_transfers_async() -> None:
     from datetime import timedelta
 
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
         timer.start()

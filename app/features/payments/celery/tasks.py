@@ -3,7 +3,7 @@ from app.core.services.logger_service import get_logger_service_manual
 
 from celery import shared_task
 
-from app.core.database import async_session_maker
+from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
 from app.core.utils.celery import run_async
 from app.features.payments.services import get_payment_service_manual
@@ -41,7 +41,7 @@ def process_debt_settlement(provider_id: str, amount_paid: float, reference: str
 async def _process_task_payment_async(
     task_id: str, provider_id: str, payment_mode: str
 ) -> None:
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
         timer.start()
@@ -63,7 +63,7 @@ async def _process_task_payment_async(
 
 
 async def _process_provider_payout_async(task_id: str, provider_id: str) -> None:
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
         timer.start()
@@ -89,7 +89,7 @@ async def _process_debt_settlement_async(
     amount_paid: float,
     reference: str,
 ) -> None:
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
         timer.start()

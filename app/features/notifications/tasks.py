@@ -26,7 +26,7 @@ from typing import Dict, List
 from celery import shared_task
 from sqlmodel import col, select
 
-from app.core.database import async_session_maker
+from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
 from app.core.models.notifications import (
     DeliveryStatus,
@@ -66,7 +66,7 @@ class NotificationPipeline:
         This method NEVER sends an email. It only fans out work.
         For 2M recipients → 2,000 batch tasks (1,000 recipients each).
         """
-        async with async_session_maker() as session:
+        async with celery_session_factory() as session:
             system_logger = get_logger_service_manual(session)
             timer = Timer()
             timer.start()
@@ -123,7 +123,7 @@ class NotificationPipeline:
 
         Receives up to 1,000 recipient IDs per invocation.
         """
-        async with async_session_maker() as session:
+        async with celery_session_factory() as session:
             system_logger = get_logger_service_manual(session)
             timer = Timer()
             timer.start()
@@ -233,7 +233,7 @@ class NotificationPipeline:
     @staticmethod
     async def send_email_batch(notification_id: str, delivery_ids: List[str]) -> None:
         """Send emails for a batch of deliveries with concurrent sends and idempotent retries."""
-        async with async_session_maker() as session:
+        async with celery_session_factory() as session:
             system_logger = get_logger_service_manual(session)
             timer = Timer()
             timer.start()
@@ -330,7 +330,7 @@ class NotificationPipeline:
     @staticmethod
     async def send_sms_batch(notification_id: str, delivery_ids: List[str]) -> None:
         """Send SMS messages for a batch of deliveries with concurrent sends and idempotent retries."""
-        async with async_session_maker() as session:
+        async with celery_session_factory() as session:
             system_logger = get_logger_service_manual(session)
             timer = Timer()
             timer.start()
@@ -435,7 +435,7 @@ class NotificationPipeline:
         """Send push notifications for a batch of deliveries with concurrent sends and idempotent retries."""
         push_svc = MockCloudMessagingService()
 
-        async with async_session_maker() as session:
+        async with celery_session_factory() as session:
             system_logger = get_logger_service_manual(session)
             timer = Timer()
             timer.start()
@@ -558,7 +558,7 @@ class NotificationPipeline:
     @staticmethod
     async def send_whatsapp_batch(notification_id: str, delivery_ids: List[str]) -> None:
         """Send WhatsApp messages for a batch of deliveries with concurrent sends and idempotent retries."""
-        async with async_session_maker() as session:
+        async with celery_session_factory() as session:
             system_logger = get_logger_service_manual(session)
             timer = Timer()
             timer.start()

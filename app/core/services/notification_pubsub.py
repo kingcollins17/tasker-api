@@ -51,16 +51,16 @@ async def _listen() -> None:
                 # Use get_message with a timeout so we can periodically ping
                 # the connection to keep it alive on Serverless Redis (Upstash)
                 message = await _pubsub.get_message(
-                    ignore_subscribe_messages=False, timeout=60.0
+                    ignore_subscribe_messages=True, timeout=60.0
                 )
                 if message is None:
                     await _pubsub.ping()
                     continue
 
-                logger.warning(f"[PubSub] Message received {message}")
-
                 if message["type"] != "message":
                     continue
+
+                logger.debug(f"[PubSub] Message received {message}")
 
                 try:
                     logger.info(f"[PubSub] Received raw message: {message['data']}")

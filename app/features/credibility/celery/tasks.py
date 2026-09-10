@@ -5,7 +5,7 @@ from typing import Optional
 from celery import shared_task
 from sqlmodel import func, select
 
-from app.core.database import async_session_maker
+from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
 from app.core.models.credibility import CredibilityLedgerEntry
 from app.core.models.users import User
@@ -25,7 +25,7 @@ def sync_user_credibility_score(user_id: str):
 
 
 async def _sync_user_credibility_score_async(user_id: str) -> None:
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         timer = Timer()
         timer.start()

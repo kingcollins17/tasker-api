@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from celery import shared_task
 
-from app.core.database import async_session_maker
+from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
 from app.core.models.notifications import NotificationPriority, NotificationType
 from app.core.models.services import ProviderServiceLink
@@ -71,16 +71,16 @@ from app.features.payments.celery.tasks import process_task_payment
 
 
 def _calculate_dynamic_ping_duration(candidate_count: int) -> int:
-    """Returns ping window in seconds, clamped to [30, 300].
+    """Returns ping window in seconds, clamped to [390, 660].
 
-    Formula: 300 - (N - 1) * 30
-    - N=1  → 300 s (5 min)
-    - N=5  → 180 s (3 min)
-    - N≥10 → 30 s
+    Formula: 660 - (N - 1) * 30
+    - N=1  → 660 s (11 min)
+    - N=5  → 540 s (9 min)
+    - N≥10 → 390 s (6.5 min)
     """
     if candidate_count <= 1:
-        return 300
-    return max(30, min(300, 300 - (candidate_count - 1) * 30))
+        return 660
+    return max(390, min(660, 660 - (candidate_count - 1) * 30))
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ async def _start_dispatch_session_async(
     auto_expand_radius: Optional[bool] = True,
 ) -> Optional[str]:
     """Creates a stateful DispatchSession in DB for a task and triggers the MatchingEngine Celery task."""
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         task_repo = Repository(Task, session)
         session_repo = Repository(DispatchSession, session)
 
@@ -199,7 +199,7 @@ async def _execute_matching_engine_async(
     excluded_provider_ids: Optional[List[str]] = None,
 ) -> bool:
     """Instantiates an ephemeral MatchingEngine for session_id and executes one dispatch step."""
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         engine = MatchingEngine(
             session_id=session_id,
             db_session=session,

@@ -10,16 +10,16 @@ from app.core.config import settings
 # Create the async database engine
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=False,  # Can be set to True for debugging SQL queries
-    future=True,
+    echo=False,
+    # future=True,
     pool_size=settings.POOL_SIZE,
-    max_overflow=3,
-    pool_pre_ping=True,  # Checks if the connection is alive before using it
+    max_overflow=1,
+    pool_pre_ping=True,
 )
 
-# Create an async session maker configured to produce AsyncSession instances
-async_session_maker = async_sessionmaker(
-    bind=engine,
+# Create an async session factory configured to produce AsyncSession instances
+async_session_factory = async_sessionmaker(
+    engine,
     class_=AsyncSession,
     expire_on_commit=False,
 )
@@ -36,7 +36,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     Yields:
         AsyncSession: A database session context managed for a single request.
     """
-    async with async_session_maker() as session:
+    async with async_session_factory() as session:
         yield session
 
 

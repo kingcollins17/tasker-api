@@ -6,7 +6,7 @@ from sqlalchemy import func, update
 from celery import shared_task
 from sqlmodel import select, col
 
-from app.core.database import async_session_maker
+from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
 from app.core.models.credibility import CredibilityReason
 from app.core.models.tasks import (
@@ -49,7 +49,7 @@ async def _complete_task_assignment_async(
     Returns:
         Tuple of (service_id, category_id) if task exists, else (None, None).
     """
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
         cred_service = get_credibility_service_manual(session)
         timer = Timer()

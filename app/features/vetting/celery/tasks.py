@@ -1,6 +1,6 @@
 from celery import shared_task
 from app.core.utils.celery import run_async
-from app.core.database import async_session_maker
+from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
 from app.core.services.logger_service import get_logger_service_manual
 from app.core.models.users import User, ProviderProfile
@@ -46,7 +46,7 @@ def sync_provider_tier(user_id: str):
     return run_async(_sync_provider_tier_async(user_id))
 
 async def _sync_provider_tier_async(user_id: str):
-    async with async_session_maker() as session:
+    async with celery_session_factory() as session:
         user_repo = Repository(User, session)
         provider_repo = Repository(ProviderProfile, session)
         notification_service = get_notification_service_manual(session)

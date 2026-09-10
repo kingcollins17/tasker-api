@@ -127,8 +127,8 @@ SystemLogger = LoggerService
 
 async def get_logger_service() -> AsyncGenerator[LoggerService, None]:
     """FastAPI dependency for LoggerService with an independent database session."""
-    from app.core.database import async_session_maker
-    async with async_session_maker() as session:
+    from app.core.database import async_session_factory
+    async with async_session_factory() as session:
         repository = Repository(SystemLog, session)
         service = LoggerService(repository)
         try:
