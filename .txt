@@ -11,7 +11,7 @@ REDIS_URL="rediss://default:gQAAAAAAAjx2AAIgcDJkNTIxZGU5Y2MwYjk0YmM3OWRhYzc1MmQ4
 from upstash_redis import Redis
 
 redis = Redis(url="https://suitable-reindeer-146550.upstash.io", token="gQAAAAAAAjx2AAIgcDJkNTIxZGU5Y2MwYjk0YmM3OWRhYzc1MmQ4MTdlNzVhNw")
-
+railway base url=stellar-prosperity-production.up.railway.app
 redis.set("foo", "bar")
 value = redis.get("foo")
 
