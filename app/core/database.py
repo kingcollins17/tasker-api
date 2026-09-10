@@ -12,6 +12,8 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,  # Can be set to True for debugging SQL queries
     future=True,
+    pool_size=settings.POOL_SIZE,
+    max_overflow=3,
     pool_pre_ping=True,  # Checks if the connection is alive before using it
 )
 

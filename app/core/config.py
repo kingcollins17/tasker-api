@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     
     # Database Settings
     DATABASE_URL: str 
+
+    POOL_SIZE: int
     # Redis / Celery Settings
     REDIS_URL: str 
 
