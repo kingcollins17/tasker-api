@@ -13,6 +13,7 @@ from app.core.repository import GetRepository, QueryOptions, Repository
 from app.core.services.logger_service import LoggerService, get_logger_service
 from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.timer import Timer
+from app.core.utils.currency import to_naira
 from app.features.notifications.services import (
     NotificationService,
     get_notification_service,
@@ -187,11 +188,11 @@ class PaymentWebhookProcessor:
 
             # Verify that paid amount satisfies the expected task price
             if task.customer_total_price and task.customer_total_price > 0:
-                print(f"[DEBUG handle_charge_success] Validating amount ₦{amount:,.2f} vs task.customer_total_price ₦{task.customer_total_price:,.2f}")
+                print(f"[DEBUG handle_charge_success] Validating amount {to_naira(amount)} vs task.customer_total_price {to_naira(task.customer_total_price)}")
                 if amount < task.customer_total_price:
-                    print(f"[DEBUG handle_charge_success] Insufficient payment amount: ₦{amount:,.2f} < ₦{task.customer_total_price:,.2f}. Skipping.")
+                    print(f"[DEBUG handle_charge_success] Insufficient payment amount: {to_naira(amount)} < {to_naira(task.customer_total_price)}. Skipping.")
                     await self.system_logger.error(
-                        f"Payment amount ₦{amount:,.2f} is less than expected task price ₦{task.customer_total_price:,.2f} for task {task_id}.",
+                        f"Payment amount {to_naira(amount)} is less than expected task price {to_naira(task.customer_total_price)} for task {task_id}.",
                         source="payments.webhook",
                     )
                     return
@@ -222,10 +223,10 @@ class PaymentWebhookProcessor:
         # 4. Handle Provider Debt Settlement payment recording
         if is_debt_settlement:
             debt_provider_id = provider_id or user_id
-            print(f"[DEBUG handle_charge_success] Handling debt settlement for provider {debt_provider_id}, amount: ₦{amount:,.2f}")
+            print(f"[DEBUG handle_charge_success] Handling debt settlement for provider {debt_provider_id}, amount: {to_naira(amount)}")
             if debt_provider_id:
                 await self.system_logger.info(
-                    f"Recording debt settlement task for provider {debt_provider_id}, amount: ₦{amount:,.2f}",
+                    f"Recording debt settlement task for provider {debt_provider_id}, amount: {to_naira(amount)}",
                     source="payments.webhook",
                 )
                 payment_entry = ProviderDebt(
@@ -297,7 +298,7 @@ class PaymentWebhookProcessor:
                 await self.notification_service.notify(
                     recepients=[user_id],
                     title="Payment Successful",
-                    body=f"Your payment of {amount} has been received successfully.",
+                    body=f"Your payment of {to_naira(amount)} has been received successfully.",
                     type=NotificationType.PAYMENT_RECEIVED,
                     data={"transaction_id": transaction.id, "reference": reference},
                 )
@@ -399,7 +400,7 @@ class PaymentWebhookProcessor:
             await self.notification_service.notify(
                 recepients=[user_id],
                 title="Payment Failed",
-                body=f"Your payment of {amount} could not be processed. Please try again.",
+                body=f"Your payment of {to_naira(amount)} could not be processed. Please try again.",
                 type=NotificationType.PAYMENT_FAILED,
                 data={"reference": reference},
             )
@@ -657,7 +658,7 @@ class TransferWebhookProcessor:
             await self.notification_service.notify(
                 recepients=[user_id],
                 title="Payout Successful",
-                body=f"Your payout of {amount} has been processed successfully.",
+                body=f"Your payout of {to_naira(amount)} has been processed successfully.",
                 type=NotificationType.PAYMENT_RECEIVED,
                 data={"reference": reference},
             )

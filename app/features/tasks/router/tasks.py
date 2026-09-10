@@ -60,6 +60,8 @@ from app.core.queries.task_queries import TaskQueries
 from app.core.repository import Repository, GetRepository
 
 from app.features.tasks.celery.dispatch import start_dispatch_session_task
+from app.core.models.payments import PayoutQueue
+from app.features.payments.schemas import PayoutQueueResponse
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -477,6 +479,18 @@ async def get_task(
                     credibility_score=customer_user.credibility_score,
                     gender=gender,
                 )
+
+        # Stitch in the payout object
+        if task_service.payout_repo:
+            payout_stmt = (
+                select(PayoutQueue)
+                .where(col(PayoutQueue.task_id) == task_id)
+                .order_by(desc(col(PayoutQueue.created_at)))
+            )
+            payout_res = await task_service.payout_repo.execute(payout_stmt)
+            payout_obj = payout_res.first()
+            if payout_obj:
+                task_data.payout = PayoutQueueResponse.model_validate(payout_obj)
 
         await system_logger.metric("get_task", timer.stop(), source="tasks.get_task")
         return BaseAPIResponse[TaskResponse](
@@ -950,6 +964,100 @@ async def get_nearby_providers(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while fetching nearby providers.",
+        )
+
+
+@router.get(
+    "/{task_id}/price-adjustments",
+    response_model=BaseAPIResponse[List[TaskPriceAdjustmentResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_task_price_adjustments(
+    task_id: str,
+    status_filter: Optional[List[PriceAdjustmentStatus]] = Query(None, alias="status"),
+    requested_by: Optional[str] = Query(None),
+    sort_desc: bool = Query(True),
+    current_user: Union[UserResponse, AdminUser, None] = Depends(
+        GetCurrentUserOrAdminOptional
+    ),
+    task_service: TaskService = Depends(get_task_service),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Fetch price adjustments for a specific task with optional filters."""
+    try:
+        timer = Timer()
+        timer.start()
+        if not current_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
+            )
+
+        task = await task_service.get_task(task_id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
+            )
+
+        if isinstance(current_user, UserResponse):
+            if (
+                task.customer_id != current_user.id
+                and task.assigned_provider_id != current_user.id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized to view price adjustments for this task",
+                )
+
+        statement = select(TaskPriceAdjustment).where(
+            col(TaskPriceAdjustment.task_id) == task_id
+        )
+
+        if status_filter:
+            statement = statement.where(
+                col(TaskPriceAdjustment.status).in_(status_filter)
+            )
+
+        if requested_by:
+            statement = statement.where(
+                col(TaskPriceAdjustment.requested_by) == requested_by
+            )
+
+        if sort_desc:
+            statement = statement.order_by(desc(col(TaskPriceAdjustment.created_at)))
+        else:
+            statement = statement.order_by(col(TaskPriceAdjustment.created_at))
+
+        result = await task_service.price_adjustment_repo.execute(statement)
+        adjustments = list(result.all())
+
+        data = [TaskPriceAdjustmentResponse.model_validate(a) for a in adjustments]
+
+        await system_logger.metric(
+            "get_task_price_adjustments",
+            timer.stop(),
+            source="tasks.get_task_price_adjustments",
+        )
+        return BaseAPIResponse[List[TaskPriceAdjustmentResponse]](
+            data=data,
+            detail="Task price adjustments retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn(
+            "get_task_price_adjustments failed",
+            source="tasks.get_task_price_adjustments",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
+        raise
+    except Exception as e:
+        await system_logger.error(
+            f"get_task_price_adjustments error: {str(e)}",
+            source="tasks.get_task_price_adjustments",
+        )
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching price adjustments.",
         )
 
 

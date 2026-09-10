@@ -341,6 +341,7 @@ async def list_customer_payouts(
     status_code=status.HTTP_200_OK,
 )
 async def get_latest_pending_customer_payout(
+    task_id: Optional[str] = Query(None, description="Optional task ID to filter by"),
     current_user: UserResponse = Depends(
         GetCurrentUser(
             required_type=UserType.CUSTOMER,
@@ -358,11 +359,15 @@ async def get_latest_pending_customer_payout(
 
         stmt = (
             select(PayoutQueue)
-            .where(PayoutQueue.customer_id == current_user.id)
-            .where(PayoutQueue.status == PayoutStatus.PENDING)
-            .order_by(desc(PayoutQueue.created_at))
-            .limit(1)
+            .where(col(PayoutQueue.customer_id) == current_user.id)
+            .where(col(PayoutQueue.status) == PayoutStatus.PENDING)
         )
+
+        if task_id:
+            stmt = stmt.where(col(PayoutQueue.task_id) == task_id)
+
+        stmt = stmt.order_by(desc(col(PayoutQueue.created_at))).limit(1)
+
         res = await payout_repo.execute(stmt)
         payout: Optional[PayoutQueue] = res.unique().one_or_none()
 

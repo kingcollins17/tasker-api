@@ -32,6 +32,7 @@ from app.core.models.tasks import (
     PriceAdjustmentStatus,
 )
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
+from app.core.models.payments import PayoutQueue
 from app.core.models.users import ProviderProfile, User, UserLocation, UserType
 from app.core.queries.task_queries import TaskQueries
 from app.core.repository import GetRepository, QueryOptions, Repository
@@ -42,6 +43,7 @@ from app.core.services.payment import (
 )
 from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.geo import calculate_locations_distance
+from app.core.utils.currency import to_naira
 from app.features.notifications.schemas import CreateNotification
 from app.features.notifications.services import (
     NotificationService,
@@ -78,6 +80,7 @@ class TaskService:
         notification_service: NotificationService,
         pricing_engine: PricingEngine,
         price_adjustment_repo: Repository[TaskPriceAdjustment],
+        payout_repo: Optional[Repository[PayoutQueue]] = None,
     ):
         self.task_repo = task_repo
         self.location_repo = location_repo
@@ -92,6 +95,7 @@ class TaskService:
         self.notification_service = notification_service
         self.pricing_engine = pricing_engine
         self.price_adjustment_repo = price_adjustment_repo
+        self.payout_repo = payout_repo
 
     def _generate_pin(self) -> str:
         return f"{random.randint(0, 9999):04d}"
@@ -958,7 +962,7 @@ class TaskService:
             await self.notification_service.notify(
                 recepients=[task.customer_id],
                 title="Price Adjustment Requested",
-                body=f"Provider requested a price adjustment of ₦{schema.amount:,.2f} for task: {task.title}",
+                body=f"Provider requested a price adjustment of {to_naira(schema.amount)} for task: {task.title}",
                 type=NotificationType.SYSTEM_ALERT,
                 data={
                     "task_id": task_id,
@@ -1011,13 +1015,13 @@ class TaskService:
 
             event_name = "PRICE_ADJUSTMENT_APPROVED"
             notif_title = "Price Adjustment Approved"
-            notif_body = f"Customer approved your price adjustment request of ₦{(adjustment.amount or 0.0):,.2f} for task: {task.title}"
+            notif_body = f"Customer approved your price adjustment request of {to_naira(adjustment.amount)} for task: {task.title}"
             notif_type = NotificationType.SYSTEM_ALERT
         else:
             adjustment.status = PriceAdjustmentStatus.REJECTED
             event_name = "PRICE_ADJUSTMENT_REJECTED"
             notif_title = "Price Adjustment Declined"
-            notif_body = f"Customer declined your price adjustment request of ₦{(adjustment.amount or 0.0):,.2f} for task: {task.title}"
+            notif_body = f"Customer declined your price adjustment request of {to_naira(adjustment.amount)} for task: {task.title}"
             notif_type = NotificationType.SYSTEM_ALERT
 
         adjustment = await self.price_adjustment_repo.add(adjustment)
@@ -1072,6 +1076,7 @@ def get_task_service(
     price_adjustment_repo: Repository[TaskPriceAdjustment] = Depends(
         GetRepository(TaskPriceAdjustment)
     ),
+    payout_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
 ) -> TaskService:
     return TaskService(
         task_repo=task_repo,
@@ -1087,4 +1092,5 @@ def get_task_service(
         notification_service=notification_service,
         pricing_engine=pricing_engine,
         price_adjustment_repo=price_adjustment_repo,
+        payout_repo=payout_repo,
     )

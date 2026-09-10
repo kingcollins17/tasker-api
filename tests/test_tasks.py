@@ -133,6 +133,12 @@ def mock_pricing_engine():
     return engine
 
 @pytest.fixture
+def mock_price_adjustment_repo():
+    repo = MagicMock(spec=Repository)
+    return repo
+
+
+@pytest.fixture
 def task_service(
     mock_task_repo,
     mock_location_repo,
@@ -146,6 +152,7 @@ def task_service(
     mock_payment_gateway,
     mock_notification_service,
     mock_pricing_engine,
+    mock_price_adjustment_repo,
 ):
     return TaskService(
         task_repo=mock_task_repo,
@@ -160,6 +167,7 @@ def task_service(
         payment_gateway=mock_payment_gateway,
         notification_service=mock_notification_service,
         pricing_engine=mock_pricing_engine,
+        price_adjustment_repo=mock_price_adjustment_repo,
     )
 
 
@@ -169,7 +177,7 @@ def client(task_service, monkeypatch):
     from app.core.deps.auth import GetCurrentUser
     
     app.dependency_overrides[get_task_service] = lambda: task_service
-    monkeypatch.setattr("app.features.tasks.router.tasks.start_dispatch_workflow", MagicMock())
+    monkeypatch.setattr("app.features.tasks.router.tasks.start_dispatch_session_task", MagicMock())
     
     original_call = GetCurrentUser.__call__
     @functools.wraps(original_call)
@@ -701,6 +709,88 @@ async def test_service_estimate_task_price(task_service):
 
     assert breakdown.customer_total_price == 500.0
     mock_engine.calculate_price.assert_called_once()
+
+
+def test_api_get_task_price_adjustments(client, task_service):
+    from app.core.models.tasks import Task, TaskPriceAdjustment, PriceAdjustmentStatus
+    from app.core.deps import GetCurrentUserOrAdminOptional
+
+    mock_task = Task(
+        id="task-100",
+        title="Fix Pipe",
+        customer_id="customer-1",
+        assigned_provider_id="provider-1",
+    )
+    task_service.get_task = AsyncMock(return_value=mock_task)
+
+    adj = TaskPriceAdjustment(
+        id="adj-1",
+        task_id="task-100",
+        amount=1500.0,
+        description="Extra materials",
+        requested_by="provider-1",
+        status=PriceAdjustmentStatus.PENDING,
+    )
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = [adj]
+    task_service.price_adjustment_repo.execute = AsyncMock(return_value=mock_result)
+
+    app.dependency_overrides[GetCurrentUserOrAdminOptional] = lambda: MOCK_CUSTOMER
+
+    response = client.get("/api/v1/tasks/task-100/price-adjustments?status=PENDING")
+
+    assert response.status_code == status.HTTP_200_OK
+    json_data = response.json()
+    assert json_data["status_code"] == 200
+    assert len(json_data["data"]) == 1
+    assert json_data["data"][0]["id"] == "adj-1"
+    assert json_data["data"][0]["amount"] == 1500.0
+    assert json_data["data"][0]["status"] == "PENDING"
+
+    app.dependency_overrides.clear()
+
+
+def test_api_get_task_with_payout(client, task_service):
+    from app.core.models.tasks import Task
+    from app.core.models.payments import PayoutQueue, PayoutStatus
+
+    mock_task = Task(
+        id="task-200",
+        title="House Cleaning",
+        customer_id="customer-1",
+        assigned_provider_id="provider-1",
+    )
+    task_service.get_task = AsyncMock(return_value=mock_task)
+    task_service.user_repo.get = AsyncMock(return_value=None)
+
+    payout = PayoutQueue(
+        id="payout-1",
+        task_id="task-200",
+        provider_id="provider-1",
+        customer_id="customer-1",
+        payout_amount=4500.0,
+        status=PayoutStatus.PENDING,
+    )
+
+    mock_payout_repo = MagicMock()
+    mock_res = MagicMock()
+    mock_res.first.return_value = payout
+    mock_payout_repo.execute = AsyncMock(return_value=mock_res)
+    task_service.payout_repo = mock_payout_repo
+
+    response = client.get("/api/v1/tasks/task-200")
+
+    assert response.status_code == status.HTTP_200_OK
+    json_data = response.json()
+    assert json_data["status_code"] == 200
+    assert json_data["data"]["id"] == "task-200"
+    assert json_data["data"]["payout"]["id"] == "payout-1"
+    assert json_data["data"]["payout"]["payout_amount"] == 4500.0
+    assert json_data["data"]["payout"]["status"] == "PENDING"
+
+    app.dependency_overrides.clear()
+
 
 
 

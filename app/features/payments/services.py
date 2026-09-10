@@ -12,6 +12,7 @@ from app.core.models.users import User
 from app.core.repository import GetRepository, Repository, QueryOptions
 from app.core.services.payment import get_paystack_gateway, PaystackPaymentGateway
 from app.core.utils.datetime_helper import lagos_now, now
+from app.core.utils.currency import to_naira
 from app.features.notifications.services import (
     NotificationService,
     get_notification_service,
@@ -216,8 +217,8 @@ class PaymentService:
 
         print(f"[DEBUG process_provider_payout] END - Payout processed for provider {provider_id} on task {task_id}")
         logger.info(
-            f"Processed payout for provider {provider_id} on task {task_id}: gross=₦{resolved_payout_amount:,.2f}, "
-            f"debt_offset=₦{debt_offset:,.2f}, net_transfer=₦{remaining_payout:,.2f}"
+            f"Processed payout for provider {provider_id} on task {task_id}: gross={to_naira(resolved_payout_amount)}, "
+            f"debt_offset={to_naira(debt_offset)}, net_transfer={to_naira(remaining_payout)}"
         )
 
 
@@ -239,7 +240,7 @@ class PaymentService:
             )
             await self.debt_repo.add(provider_debt)
             logger.info(
-                f"Recorded cash debt entry (+₦{platform_fee:,.2f}) for provider {provider_id} on task {task.id}"
+                f"Recorded cash debt entry (+{to_naira(platform_fee)}) for provider {provider_id} on task {task.id}"
             )
 
         if task.provider_payout and task.provider_payout > 0:
@@ -257,7 +258,7 @@ class PaymentService:
         # Notify customer that provider has been paid in cash for the completed task
         if task.customer_id:
             amt_fmt = (
-                f"₦{task.customer_total_price:,.2f}"
+                to_naira(task.customer_total_price)
                 if task.customer_total_price
                 else ""
             )
@@ -315,7 +316,7 @@ class PaymentService:
         if task.customer_id:
             purl = payment_resp.checkout_url or ""
             amt_fmt = (
-                f"₦{task.customer_total_price:,.2f}"
+                to_naira(task.customer_total_price)
                 if task.customer_total_price
                 else ""
             )
@@ -417,7 +418,7 @@ class PaymentService:
             if request_amount > total_owed:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Settlement amount (₦{request_amount:,.2f}) cannot exceed total debt owed (₦{total_owed:,.2f}).",
+                    detail=f"Settlement amount ({to_naira(request_amount)}) cannot exceed total debt owed ({to_naira(total_owed)}).",
                 )
             amount_to_pay = request_amount
         else:

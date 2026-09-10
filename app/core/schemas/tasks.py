@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.models.tasks import PaymentStatus, TaskAssignmentStatus, TaskStatus, DispatchAttemptStatus, CancelledBy
 from app.core.schemas.users import MinimalCustomerResponse, MinimalProviderResponse
 from app.features.services.schemas import CategoryResponse
+from app.features.payments.schemas import PayoutQueueResponse
 
 class TaskLocationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -155,6 +156,7 @@ class TaskResponse(BaseModel):
     assignment: Optional[TaskAssignmentResponse] = None
     attachments: Optional[List[TaskAttachmentResponse]] = None
     customer: Optional[MinimalCustomerResponse] = None
+    payout: Optional[PayoutQueueResponse] = None
 
 
 class TaskDispatchAttemptResponse(BaseModel):

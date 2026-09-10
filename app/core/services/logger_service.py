@@ -10,7 +10,7 @@ from app.core.repository import GetRepository, QueryOptions, Repository
 
 # External in-memory buffer shared across instances
 _LOG_BUFFER: List[SystemLog] = []
-DEFAULT_MAX_BUFFER_SIZE: int = 50
+DEFAULT_MAX_BUFFER_SIZE: int = 100
 
 
 class LoggerService:

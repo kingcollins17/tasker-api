@@ -521,6 +521,46 @@ async def test_payout_queue_optimistic_locking_conflict(mock_payment_deps):
     transaction_repo.add.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_get_latest_pending_customer_payout_query():
+    from app.features.payments.routers.payments import get_latest_pending_customer_payout
+    from app.features.users.schemas import UserResponse
+    from app.core.models.users import UserType
+    from datetime import datetime, timezone
+
+    user = UserResponse(
+        id="cust-1",
+        email="cust@example.com",
+        type=UserType.CUSTOMER,
+        is_active=True,
+        email_verified=True,
+        phone_verified=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    mock_payout_repo = MagicMock()
+    mock_res = MagicMock()
+    payout = PayoutQueue(id="po-1", task_id="t-100", customer_id="cust-1", payout_amount=2000.0)
+    mock_res.unique().one_or_none.return_value = payout
+    mock_payout_repo.execute = AsyncMock(return_value=mock_res)
+    mock_logger = AsyncMock()
+
+    resp = await get_latest_pending_customer_payout(
+        task_id="t-100",
+        current_user=user,
+        payout_repo=mock_payout_repo,
+        system_logger=mock_logger,
+    )
+
+    assert resp.status_code == 200
+    assert resp.data is not None
+    assert resp.data.id == "po-1"
+    assert resp.data.task_id == "t-100"
+    mock_payout_repo.execute.assert_called_once()
+
+
+
 
 
 

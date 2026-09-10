@@ -27,6 +27,7 @@ from app.core.models.users import (
     User,
     UserLocation,
 )
+from app.core.utils.currency import to_naira
 from app.core.repository import QueryOptions, Repository
 from app.core.services.availability_service import (
     AvailabilityService,
@@ -408,7 +409,7 @@ class MatchingEngine:
     ) -> None:
         """Sends a single notification to all candidate providers in the batch at once."""
         payout_fmt = (
-            f"₦{offered_payout:,.2f}" if offered_payout > 0 else "offered price"
+            to_naira(offered_payout) if offered_payout > 0 else "offered price"
         )
         if self.ping_duration >= 60 and self.ping_duration % 60 == 0:
             mins = self.ping_duration // 60
