@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.models.tasks import PaymentStatus, TaskAssignmentStatus, TaskStatus, DispatchAttemptStatus, CancelledBy
+from app.core.models.tasks import PaymentStatus, TaskAssignmentStatus, TaskStatus, TaskDispatchStatus, DispatchAttemptStatus, CancelledBy
 from app.core.schemas.users import MinimalCustomerResponse, MinimalProviderResponse
 from app.features.services.schemas import CategoryResponse
 from app.features.payments.schemas import PayoutQueueResponse
@@ -46,11 +46,10 @@ class TaskAssignmentResponse(BaseModel):
     task_id: Optional[str] = None
     provider_id: Optional[str] = None
     accepted_dispatch_attempt_id: Optional[str] = None
-    accepted_price: Optional[float] = None
     assigned_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    pin: Optional[str] = None
+    identity_pin: Optional[str] = None
     cancellation_pin: Optional[str] = None
     status: Optional[TaskAssignmentStatus] = None
 
@@ -143,6 +142,10 @@ class TaskResponse(BaseModel):
     platform_fee: Optional[float] = None
     provider_payout: Optional[float] = None
     status: Optional[TaskStatus] = None
+    dispatch_status: Optional[TaskDispatchStatus] = None
+    next_dispatch_at: Optional[datetime] = None
+    auto_dispatch_count: Optional[int] = None
+    manual_dispatch_count: Optional[int] = None
     payment_status: Optional[PaymentStatus] = None
     created_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from sqlalchemy import Column, Index, JSON, null
+from sqlalchemy import Column, Index, JSON, UniqueConstraint, null
 from sqlalchemy.orm import query_expression
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -33,6 +33,21 @@ class TaskStatus(str, enum.Enum):
     CANCELLED = "cancelled"
     EXPIRED = "expired"
 
+class TaskDispatchStatus(str, enum.Enum):
+    """Workflow states of task dispatch retry engine."""
+    READY = "READY"
+    DISPATCHING = "DISPATCHING"
+    RETRY_SCHEDULED = "RETRY_SCHEDULED"
+    MATCHED = "MATCHED"
+    AUTO_EXHAUSTED = "AUTO_EXHAUSTED"
+    CANCELLED = "CANCELLED"
+
+class DispatchSessionTrigger(str, enum.Enum):
+    """Trigger source for a task dispatch session."""
+    INITIAL = "INITIAL"
+    AUTO_RETRY = "AUTO_RETRY"
+    MANUAL = "MANUAL"
+
 class PaymentMode(str, enum.Enum):
     """Supported payment settlement modes."""
     CASH = "cash"
@@ -55,13 +70,16 @@ class DispatchAttemptStatus(str, enum.Enum):
     ACCEPTED = "ACCEPTED"
     DECLINED = "DECLINED"
     TIMEOUT = "TIMEOUT"
-    CANCELED = "CANCELED"
+    CANCELLED = "CANCELLED"
+
 
 class DispatchSessionStatus(str, enum.Enum):
     """Workflow state of a task dispatch session."""
-    SEARCHING = "SEARCHING"
+    RUNNING = "RUNNING"
     ASSIGNED = "ASSIGNED"
+    FAILED = "FAILED"
     EXPIRED = "EXPIRED"
+    EXHAUSTED = "EXHAUSTED"
     CANCELLED = "CANCELLED"
 
 
@@ -86,6 +104,9 @@ class CancelledBy(str, enum.Enum):
 class Task(SQLModel, table=True):
     """Primary task entity storing request details, location, upfront pricing breakdowns, and dispatch status."""
     __tablename__ = "tasks"  # type: ignore
+    __table_args__ = (
+        Index("ix_task_due_dispatch", "next_dispatch_at", postgresql_where=Column("dispatch_status") == "RETRY_SCHEDULED"),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique primary identifier for the task")
     customer_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, ondelete="SET NULL", nullable=True, description="Foreign key reference to customer user ID")
@@ -109,6 +130,11 @@ class Task(SQLModel, table=True):
     # Dispatch & Assignment State
     assigned_provider_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, ondelete="SET NULL", nullable=True, description="Foreign key of provider accepted and assigned to task")
     status: TaskStatus = Field(default=TaskStatus.OPEN, index=True, description="Current lifecycle status of the task")
+    dispatch_status: Optional[TaskDispatchStatus] = Field(default=TaskDispatchStatus.READY, index=True, nullable=True, description="Current dispatch lifecycle status")
+    next_dispatch_at: Optional[datetime] = Field(default=None, index=True, nullable=True, description="Timestamp for scheduled retry dispatch")
+    dispatch_claimed_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when celery worker claimed task for dispatch")
+    auto_dispatch_count: Optional[int] = Field(default=0, nullable=True, description="Counter for automatic retry dispatch cycles executed")
+    manual_dispatch_count: Optional[int] = Field(default=0, nullable=True, description="Counter for customer manual redispatch attempts executed")
     dispatch_started_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when cascading dispatch loop was initiated")
     current_attempt_sequence: Optional[int] = Field(default=0, nullable=True, description="Current attempt number in candidate dispatch queue")
     
@@ -168,48 +194,7 @@ class Task(SQLModel, table=True):
                 if getattr(loc, "distance_km", None) is not None:
                     return loc.distance_km
         return None
-
-class DispatchSession(SQLModel, table=True):
-    """Tracks a stateful multi-step matching engine dispatch session for a task."""
-    __tablename__ = "dispatch_sessions"  # type: ignore
-
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique dispatch session ID")
-    task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE", description="Foreign key reference to task being dispatched")
-    status: DispatchSessionStatus = Field(default=DispatchSessionStatus.SEARCHING, index=True, description="Current workflow state of the dispatch session")
-    batch_size: int = Field(default=5, description="Number of candidate pings to process per step")
-    lock_version: int = Field(
-        default=1,
-        description="Optimistic-concurrency version counter. Incremented exactly once per `run()` step, by run() only. Never read or written by pagination logic.",
-    )
-    search_radius_km: Optional[float] = Field(
-        default=10.0,
-        nullable=True,
-        description="Current search radius in kilometers for provider candidate matching",
-    )
-    max_search_radius_km: Optional[float] = Field(
-        default=30.0,
-        nullable=True,
-        description="Maximum search radius limit in kilometers for expanding provider search",
-    )
-    auto_expand_radius: Optional[bool] = Field(
-        default=True,
-        nullable=True,
-        description="Tracks whether this dispatch session should keep increasing search radius up to max_search_radius_km if previous PostGIS searches do not return candidates",
-    )
-    is_redispatch: Optional[bool] = Field(default=False, nullable=True, description="Tracks whether the dispatch was automatically started by the system (False) or is a redispatch by the customer (True)")
-    redispatch_reason: Optional[str] = Field(default=None, nullable=True, description="Optional rationale or customer feedback for requesting a task redispatch")
-    excluded_provider_ids: Optional[List[str]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True), description="Optional list of provider IDs to exclude from candidate matching during this dispatch session"
-    )
-    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
-    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
-
-    task: Task = Relationship()
-    dispatch_attempts: List["TaskDispatchAttempt"] = Relationship(
-        back_populates="dispatch_session",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
-    )
-
+        
 class TaskLocation(SQLModel, table=True):
     """Geographical address and PostGIS coordinate point associated with a task."""
     __tablename__ = "task_locations"  # type: ignore
@@ -234,6 +219,46 @@ class TaskLocation(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
 
     task: Task = Relationship(back_populates="locations")
+
+class DispatchSession(SQLModel, table=True):
+    """Tracks a stateful multi-step matching engine dispatch session for a task."""
+    __tablename__ = "dispatch_sessions"  # type: ignore
+    __table_args__ = (
+        UniqueConstraint("task_id", "sequence", name="uq_dispatch_session_task_sequence"),
+        Index("idx_dispatch_sessions_task_id", "task_id"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique dispatch session ID")
+    task_id: str = Field(foreign_key="tasks.id", index=True, ondelete="CASCADE", description="Foreign key reference to task being dispatched")
+    trigger: DispatchSessionTrigger = Field(default=DispatchSessionTrigger.INITIAL, index=True, description="Trigger source for dispatch session")
+    status: DispatchSessionStatus = Field(default=DispatchSessionStatus.RUNNING, index=True, description="Current workflow state of the dispatch session")
+    sequence: int = Field(default=1, nullable=False, description="Sequence counter of dispatch session for this task")
+    started_at: datetime = Field(default_factory=lagos_now, description="Session started timestamp")
+    completed_at: Optional[datetime] = Field(default=None, nullable=True, description="Session completion timestamp")
+    reason: Optional[str] = Field(default=None, nullable=True, description="Outcome reason for session")
+    session_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column("metadata", JSON, nullable=True), description="Structured session payload metadata")
+    batch_size: int = Field(default=5, description="Number of candidate pings to process per step")
+    lock_version: int = Field(
+        default=1,
+        description="Optimistic-concurrency version counter. Incremented exactly once per `run()` step, by run() only. Never read or written by pagination logic.",
+    )
+    search_radius_km: Optional[float] = Field(
+        default=10.0,
+        nullable=True,
+        description="Search radius in kilometers for provider candidate matching",
+    )
+    excluded_provider_ids: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True), description="Optional list of provider IDs to exclude from candidate matching during this dispatch session"
+    )
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
+
+    task: Task = Relationship()
+    dispatch_attempts: List["TaskDispatchAttempt"] = Relationship(
+        back_populates="dispatch_session",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"},
+    )
+
 
 class TaskDispatchAttempt(SQLModel, table=True):
     """Logs individual 30-second dispatch pings sent to candidate providers during cascading dispatch."""
@@ -273,6 +298,7 @@ class TaskPriceAdjustment(SQLModel, table=True):
     requested_by: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True, description="Foreign key of user requesting adjustment")
     status: Optional[PriceAdjustmentStatus] = Field(default=PriceAdjustmentStatus.PENDING, index=True, nullable=True, description="Customer approval status of price adjustment")
     created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record update timestamp")
 
     task: Task = Relationship(back_populates="price_adjustments")
 
@@ -286,11 +312,10 @@ class TaskAssignment(SQLModel, table=True):
     accepted_dispatch_attempt_id: Optional[str] = Field(
         default=None, foreign_key="task_dispatch_attempts.id", nullable=True, description="Foreign key of accepted dispatch attempt ping"
     )
-    accepted_price: Optional[float] = Field(default=None, nullable=True, description="Agreed upfront provider payout price")
     assigned_at: datetime = Field(default_factory=lagos_now, description="Timestamp when provider accepted assignment")
     started_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when provider initiated work on-site")
     completed_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp when task work was finished and verified")
-    pin: Optional[str] = Field(default_factory=generate_4digit_pin, nullable=True, description="Secure 4-digit verification PIN generated for the assignment")
+    identity_pin: Optional[str] = Field(default_factory=generate_4digit_pin, nullable=True, description="Secure 4-digit verification PIN generated for the assignment")
     cancellation_pin: Optional[str] = Field(default_factory=generate_4digit_pin, nullable=True, description="Secure 4-digit PIN for customer to cancel task with agreement from provider")
     status: TaskAssignmentStatus = Field(default=TaskAssignmentStatus.ASSIGNED, description="Assignment status")
     created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")

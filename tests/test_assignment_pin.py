@@ -21,7 +21,7 @@ async def test_verify_provider_pin_success():
         id="assign-1",
         task_id="task-1",
         provider_id="prov-456",
-        pin="4321",
+        identity_pin="4321",
         status=TaskAssignmentStatus.ASSIGNED,
     )
 
@@ -80,7 +80,7 @@ async def test_verify_provider_pin_mismatch():
         id="assign-1",
         task_id="task-1",
         provider_id="prov-456",
-        pin="4321",
+        identity_pin="4321",
         status=TaskAssignmentStatus.ASSIGNED,
     )
 

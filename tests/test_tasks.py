@@ -219,7 +219,7 @@ async def test_service_create_task(task_service, mock_task_repo, mock_location_r
 
     # Assert
     assert task.title == "Fix Plumber"
-    assert task.status == TaskStatus.OPEN
+    assert task.status == TaskStatus.DRAFT
     mock_task_repo.add.assert_called_once()
     mock_location_repo.add.assert_called_once()
     mock_history_repo.add.assert_called_once()
@@ -396,6 +396,10 @@ async def test_get_current_assignment_returns_latest_active_assignment_for_provi
     mock_exec_res.first.return_value = (assignment_inst, task_inst)
     mock_assignment_repo.execute.return_value = mock_exec_res
 
+    from app.core.models.users import User
+    mock_user_repo = AsyncMock()
+    mock_user_repo.get.return_value = User(id="provider-1", email="p@e.com", phone_number="123")
+
     resp = await get_current_assignment(
         current_user=MOCK_PROVIDER,
         assignment_repo=mock_assignment_repo,
@@ -549,24 +553,24 @@ def test_complete_task_assignment_reruns_metrics(monkeypatch):
     mock_sync_provider = MagicMock()
     mock_sync_service = MagicMock()
     monkeypatch.setattr(
-        "app.features.tasks.celery.dispatch._complete_task_assignment_async",
+        "app.features.tasks.celery.completion._complete_task_assignment_async",
         mock_complete_async,
     )
     mock_process_payment = MagicMock()
     monkeypatch.setattr(
-        "app.features.tasks.celery.dispatch.process_task_payment",
+        "app.features.tasks.celery.completion.process_task_payment",
         mock_process_payment,
     )
     monkeypatch.setattr(
-        "app.features.tasks.celery.dispatch.sync_provider_metrics",
+        "app.features.tasks.celery.completion.sync_provider_metrics",
         mock_sync_provider,
     )
     monkeypatch.setattr(
-        "app.features.tasks.celery.dispatch.sync_service_metrics",
+        "app.features.tasks.celery.completion.sync_service_metrics",
         mock_sync_service,
     )
 
-    from app.features.tasks.celery.dispatch import complete_task_assignment
+    from app.features.tasks.celery.completion import complete_task_assignment
 
     complete_task_assignment("task-123", "provider-456")
 
@@ -599,7 +603,7 @@ async def test_sync_single_service_duration():
 
     service = Service(id="srv-1", name="Plumbing", default_duration_min=60)
     mock_srv_result = MagicMock()
-    mock_srv_result.scalar_one_or_none.return_value = service
+    mock_srv_result.one_or_none.return_value = service
     mock_service_repo.execute.return_value = mock_srv_result
     mock_service_repo.add = AsyncMock(side_effect=lambda x: x)
 
@@ -633,7 +637,7 @@ async def test_sync_single_category_duration():
 
     category = ServiceCategory(id="cat-1", name="Home Repairs", default_duration_min=60)
     mock_cat_result = MagicMock()
-    mock_cat_result.scalar_one_or_none.return_value = category
+    mock_cat_result.one_or_none.return_value = category
     mock_category_repo.execute.return_value = mock_cat_result
     mock_category_repo.add = AsyncMock(side_effect=lambda x: x)
 

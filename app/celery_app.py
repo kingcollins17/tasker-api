@@ -60,6 +60,9 @@ celery_app.conf.update(
         "tasks.sync_provider_metrics": {"queue": "tasks"},
         "tasks.sync_service_duration_metrics": {"queue": "tasks"},
         "tasks.start_dispatch_session_task": {"queue": "tasks"},
+        "tasks.process_auto_retry_task": {"queue": "tasks"},
+        "tasks.process_due_dispatches": {"queue": "tasks"},
+        "tasks.recover_stale_dispatches": {"queue": "tasks"},
         "tasks.execute_matching_engine_task": {"queue": "tasks"},
         "tasks.complete_task_assignment": {"queue": "tasks"},
         "reviews.sync_user_ratings": {"queue": "tasks"},
@@ -74,6 +77,14 @@ celery_app.conf.update(
 
     # ── Celery Beat schedule ──────────────────────────────────────────────
     beat_schedule={
+        "process-due-dispatches": {
+            "task": "tasks.process_due_dispatches",
+            "schedule": 10.0,  # every 10 seconds
+        },
+        "recover-stale-dispatches": {
+            "task": "tasks.recover_stale_dispatches",
+            "schedule": crontab(minute="*/2"),  # every 2 minutes
+        },
         "recover-stuck-transfers": {
             "task": "transfers.recover_stuck_transfers",
             "schedule": crontab(minute="*/5"),  # every 5 minutes

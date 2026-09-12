@@ -389,182 +389,25 @@ class TaskService:
         current_user_id: str,
         feedback: Optional[str] = None,
     ) -> Task:
-        """Redispatch an ASSIGNED task to find a different provider.
-        
-        Flow:
-        1. Validates task is ASSIGNED (customer has not started work yet)
-        2. Gets currently assigned provider
-        3. Cancels current assignment
-        4. Clears task.assigned_provider_id
-        5. Creates a fake CANCELLED dispatch attempt for old provider (to exclude them)
-        6. Closes old dispatch session
-        7. Moves task back to OPEN status
-        8. Triggers new dispatch session to find replacement provider
-        9. Notifies old provider of redispatch
-        
-        This ensures the matching engine will not ping the old provider again,
-        but will consider all other providers (including those who declined before).
-        """
-        from app.core.models.tasks import CancelledBy, DispatchSessionStatus
-        
-        task = await self.task_repo.get(task_id)
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
-            )
-        
-        # Authorization: only customer who created task can redispatch
-        if task.customer_id != current_user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to redispatch this task",
-            )
-        
-        # Only ASSIGNED tasks can be redispatched (not yet started)
-        if task.status != TaskStatus.ASSIGNED:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot redispatch task with status {task.status.value}. Only ASSIGNED tasks can be redispatched.",
-            )
-        
-        # Check maximum allowed redispatches limit
-        max_allowed = (
-            task.max_customer_redispatches
-            if task.max_customer_redispatches is not None
-            else 3
+        """Redispatch a task via DispatchService manual_redispatch flow."""
+        from app.features.tasks.dispatch_service import DispatchService
+        dispatch_service = DispatchService(
+            session=self.session,
+            task_repo=self.task_repo,
+            session_repo=Repository(DispatchSession, self.session),
+            attempt_repo=self.attempt_repo,
+            assignment_repo=self.assignment_repo,
+            provider_profile_repo=Repository(ProviderProfile, self.session),
+            system_logger=self.system_logger,
+            notification_service=self.notification_service,
+            credibility_service=self.credibility_service,
+            task_service=self,
         )
-        stmt_redispatch_count = select(func.count(col(DispatchSession.id))).where(
-            col(DispatchSession.task_id) == task_id,
-            col(DispatchSession.is_redispatch) == True,  # noqa: E712
-        )
-        res_count = await self.task_repo.execute(stmt_redispatch_count)
-        redispatch_count = res_count.first() or 0
-
-        if redispatch_count >= max_allowed:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Maximum allowed redispatches ({max_allowed}) reached for this task.",
-            )
-        
-        # Get assignment details
-        assignment = task.assignment
-        if not assignment:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No assignment found for this task",
-            )
-        
-        old_provider_id = assignment.provider_id
-        old_assignment_id = assignment.id
-        
-        # Step 1: Cancel the current assignment
-        assignment_updates = {
-            "status": TaskAssignmentStatus.CANCELLED,
-            "updated_at": lagos_now(),
-        }
-        await self.assignment_repo.update(old_assignment_id, assignment_updates)
-
-        # Mark old provider duty status back to ONLINE_AVAILABLE if currently ON_TASK or ON_DISPATCH
-        stmt_reset_provider = (
-            update(ProviderProfile)
-            .where(
-                col(ProviderProfile.user_id) == old_provider_id,
-                col(ProviderProfile.duty_status).in_([DutyStatus.ON_TASK, DutyStatus.ON_DISPATCH]),
-            )
-            .values(duty_status=DutyStatus.ONLINE_AVAILABLE)
-        )
-        await self.task_repo.execute(stmt_reset_provider)
-        
-        # Step 2: Cancel ALL active/open dispatch sessions for this task
-        stmt_cancel_sessions = (
-            update(DispatchSession)
-            .where(
-                col(DispatchSession.task_id) == task_id,
-                col(DispatchSession.status).in_([
-                    DispatchSessionStatus.SEARCHING,
-                    DispatchSessionStatus.ASSIGNED,
-                ]),
-            )
-            .values(
-                status=DispatchSessionStatus.CANCELLED,
-                updated_at=lagos_now(),
-            )
-        )
-        await self.task_repo.execute(stmt_cancel_sessions)
-
-        # Step 3: Cancel ALL pending and accepted dispatch attempts for this task
-        stmt_cancel_attempts = (
-            update(TaskDispatchAttempt)
-            .where(
-                col(TaskDispatchAttempt.task_id) == task_id,
-                col(TaskDispatchAttempt.status).in_([
-                    DispatchAttemptStatus.PENDING,
-                    DispatchAttemptStatus.ACCEPTED,
-                ]),
-            )
-            .values(
-                status=DispatchAttemptStatus.CANCELED,
-                responded_at=lagos_now(),
-            )
-        )
-        await self.attempt_repo.execute(stmt_cancel_attempts)
-        
-        # Step 4: Move task back to OPEN and clear assigned provider
-        old_status = task.status
-        task_updates = {
-            "status": TaskStatus.OPEN,
-            "assigned_provider_id": None,
-            "updated_at": lagos_now(),
-        }
-        await self.task_repo.update(task_id, task_updates)
-        
-        # Step 5: Log the redispatch event
-        await self.log_task_event(
-            task_id=task.id,
-            event="task_redispatched",
-            reason=feedback or "Customer requested redispatch to different provider",
-            from_status=old_status.value,
-            to_status=TaskStatus.OPEN.value,
-            customer_id=current_user_id,
-            old_provider_id=old_provider_id,
+        return await dispatch_service.manual_redispatch(
+            task_id=task_id,
+            current_user_id=current_user_id,
             feedback=feedback,
         )
-        
-        # Step 6: Notify old provider of redispatch
-        old_provider = await self.user_repo.get(old_provider_id)
-        if old_provider:
-            notification_body = f"The customer has requested a different provider for the task '{task.title}'."
-            if feedback:
-                notification_body += f" Reason: {feedback}"
-            
-            await self.notification_service.notify(
-                recepients=[old_provider_id],
-                title="Task Redispatched",
-                body=notification_body,
-                type=NotificationType.SYSTEM_ALERT,
-                data={
-                    "task_id": task.id,
-                    "task_title": task.title,
-                    "feedback": feedback,
-                },
-                channels=["push"],
-                expires_at=None,
-            )
-        
-        # Step 7: Trigger new dispatch session
-        from app.features.tasks.celery.dispatch import start_dispatch_session_task
-        # pyrefly: ignore [not-callable]
-        start_dispatch_session_task.delay(
-            task.id,
-            is_redispatch=True,
-            redispatch_reason=feedback,
-            exclude_previous_sessions=False,
-            excluded_provider_ids=[old_provider_id],
-        )  # type: ignore
-        
-        # Refresh and return updated task
-        await self.task_repo.refresh(task)
-        return task
 
     async def estimate_task_price(
         self,

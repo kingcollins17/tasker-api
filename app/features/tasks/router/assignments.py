@@ -755,7 +755,7 @@ async def verify_provider_pin(
                 detail="No assigned provider found for this task.",
             )
 
-        if not assignment.pin or assignment.pin != body.pin:
+        if not assignment.identity_pin or assignment.identity_pin != body.pin:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Verification failed: We do not know who this person is and the PIN does not match. Do not allow them entry or contact them, as they may be an imposter.",

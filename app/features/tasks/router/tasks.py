@@ -67,6 +67,48 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 
 @router.post(
+    "/price-breakdown",
+    response_model=BaseAPIResponse[PricingBreakdown],
+    status_code=status.HTTP_200_OK,
+)
+async def get_task_price_breakdown(
+    schema: TaskPriceEstimateRequest,
+    current_user: UserResponse = Depends(GetCurrentUser()),
+    task_service: TaskService = Depends(get_task_service),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Estimate upfront task price breakdown."""
+    try:
+        timer = Timer()
+        timer.start()
+        breakdown = await task_service.estimate_task_price(schema, current_user.id)
+        await system_logger.metric(
+            "get_task_price_breakdown", timer.stop(), source="tasks.get_task_price_breakdown"
+        )
+        return BaseAPIResponse[PricingBreakdown](
+            data=breakdown,
+            detail="Price breakdown calculated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn(
+            "get_task_price_breakdown failed",
+            source="tasks.get_task_price_breakdown",
+            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
+        )
+        raise
+    except Exception as e:
+        await system_logger.error(
+            f"get_task_price_breakdown error: {str(e)}", source="tasks.get_task_price_breakdown"
+        )
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while calculating price breakdown.",
+        )
+
+
+@router.post(
     "",
     response_model=BaseAPIResponse[TaskResponse],
     status_code=status.HTTP_201_CREATED,
@@ -626,6 +668,11 @@ async def cancel_task(
         )
 
 
+@router.post(
+    "/{task_id}/redispatch",
+    response_model=BaseAPIResponse[TaskResponse],
+    status_code=status.HTTP_200_OK,
+)
 @router.put(
     "/{task_id}/redispatch",
     response_model=BaseAPIResponse[TaskResponse],
@@ -638,14 +685,9 @@ async def redispatch_task(
     task_service: TaskService = Depends(get_task_service),
     system_logger: LoggerService = Depends(get_logger_service),
 ):
-    """Redispatch an ASSIGNED task to find a different provider.
+    """Redispatch a task to find a different provider.
     
-    Only works for ASSIGNED tasks (provider hasn't started work yet).
-    The current assignment is cancelled and a new dispatch session begins,
-    automatically excluding the previous provider from being pinged again.
-    
-    Other providers (including those who declined previously) are eligible
-    to receive new dispatch pings.
+    Cancels current assignment if assigned and initiates a new manual dispatch session.
     """
     try:
         timer = Timer()

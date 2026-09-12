@@ -1,196 +1,148 @@
-from app.core.utils.timer import Timer
-from app.core.services.logger_service import get_logger_service_manual
-
 """Celery dispatch tasks.
 
-This module owns all dispatch business logic. ``DispatchEventService``
-(in dispatch_service.py) is a stateless proxy that forwards calls here
-via ``.delay()``.  Nothing outside this module should instantiate
-``DispatchEventService`` for DB work.
+This module owns background dispatch execution tasks, Celery Beat task claim schedulers,
+and stale dispatch claim recovery jobs.
 """
 
-import random
-from typing import Any, List, Optional
-from pydantic import BaseModel
+from app.core.models import ProviderProfile
+from app.core.models import TaskAssignment
+from datetime import timedelta
+from typing import List, Optional
 
 from celery import shared_task
+from sqlalchemy import update
+from sqlmodel import col, select
 
 from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
-from app.core.models.notifications import NotificationPriority, NotificationType
-from app.core.models.services import ProviderServiceLink
-from app.core.models.payments import DebtReason, ProviderDebt
 from app.core.models.tasks import (
-    DispatchAttemptStatus,
     DispatchSession,
     DispatchSessionStatus,
-    PaymentMode,
-    PaymentStatus,
     Task,
-    TaskAssignment,
-    TaskAssignmentStatus,
     TaskDispatchAttempt,
-    TaskLocation,
+    TaskDispatchStatus,
     TaskStatus,
 )
-from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
-from app.core.services.payment import get_paystack_gateway
-from app.core.models.users import (
-    DutyStatus,
-    KYCStatus,
-    ProviderProfile,
-    User,
-    UserLocation,
-)
 from app.core.repository import Repository
-from app.core.services import PostGISProviderLocationService, get_cache_service
 from app.core.services.matching_engine import MatchingEngine
-from app.core.services.provider_location import NearbyProviderResult
 from app.core.utils.celery import run_async
 from app.core.utils.datetime_helper import lagos_now
-from app.features.notifications.schemas import CreateNotification
-from sqlalchemy import func, update
-from sqlmodel import col, select
-
+from app.features.credibility.services import get_credibility_service_manual
 from app.features.notifications.services import get_notification_service_manual
-from app.core.services.availability_service import get_availability_service_manual
-from app.features.tasks.celery.metrics import (
-    sync_provider_metrics,
-    sync_service_metrics,
-)
-from app.core.models.credibility import CredibilityLedgerEntry, CredibilityReason
-from app.features.credibility.services import (
-    CredibilityService,
-    get_credibility_service_manual,
-)
-from app.features.payments.celery.tasks import process_task_payment
-
-# ---------------------------------------------------------------------------
-# Pure helpers
-# ---------------------------------------------------------------------------
+from app.features.tasks.dispatch_service import DispatchService
 
 
-def _calculate_dynamic_ping_duration(candidate_count: int) -> int:
-    """Returns ping window in seconds, clamped to [390, 660].
-
-    Formula: 660 - (N - 1) * 30
-    - N=1  → 660 s (11 min)
-    - N=5  → 540 s (9 min)
-    - N≥10 → 390 s (6.5 min)
-    """
-    if candidate_count <= 1:
-        return 660
-    return max(390, min(660, 660 - (candidate_count - 1) * 30))
-
-
-# ---------------------------------------------------------------------------
-# Shared session-builder helper
-# ---------------------------------------------------------------------------
-
-
-async def _make_dispatch_deps(session):
-    """Build the repository + service objects needed by all dispatch tasks."""
-    geo_service = PostGISProviderLocationService(
-        location_repo=Repository(UserLocation, session),
-        provider_profile_repo=Repository(ProviderProfile, session),
-    )
-    notification_service = get_notification_service_manual(session)
-    availability_service = get_availability_service_manual(session)
-    return (
-        Repository(Task, session),
-        Repository(TaskLocation, session),
-        Repository(TaskDispatchAttempt, session),
-        Repository(TaskAssignment, session),
-        Repository(ProviderProfile, session),
-        Repository(User, session),
-        Repository(ProviderServiceLink, session),
-        geo_service,
-        notification_service,
-        availability_service,
-    )
+async def _start_dispatch_session_async(task_id: str) -> Optional[str]:
+    """Executes initial dispatch using DispatchService."""
+    async with celery_session_factory() as session:
+        dispatch_service = DispatchService(
+            session=session,
+            task_repo=Repository(Task, session),
+            session_repo=Repository(DispatchSession, session),
+            attempt_repo=Repository(TaskDispatchAttempt, session),
+            assignment_repo=Repository(TaskAssignment, session),  # dummy binding if needed
+            provider_profile_repo=Repository(ProviderProfile, session),
+            system_logger=None,  # type: ignore
+            notification_service=get_notification_service_manual(session),
+            credibility_service=get_credibility_service_manual(session),
+            task_service=None,  # type: ignore
+        )
+        ds = await dispatch_service.start_initial_dispatch(task_id)
+        return ds.id if ds else None
 
 
-async def _start_dispatch_session_async(
-    task_id: str,
-    batch_size: int = 1,
-    exclude_previous_sessions: bool = True,
-    excluded_provider_ids: Optional[List[str]] = None,
-    is_redispatch: bool = False,
-    redispatch_reason: Optional[str] = None,
-    search_radius_km: Optional[float] = 10.0,
-    max_search_radius_km: Optional[float] = 30.0,
-    auto_expand_radius: Optional[bool] = True,
-) -> Optional[str]:
-    """Creates a stateful DispatchSession in DB for a task and triggers the MatchingEngine Celery task."""
+async def _process_auto_retry_async(task_id: str) -> Optional[str]:
+    """Executes auto retry cycle for task_id using DispatchService."""
+    async with celery_session_factory() as session:
+        dispatch_service = DispatchService(
+            session=session,
+            task_repo=Repository(Task, session),
+            session_repo=Repository(DispatchSession, session),
+            attempt_repo=Repository(TaskDispatchAttempt, session),
+            assignment_repo=Repository(TaskAssignment, session),
+            provider_profile_repo=Repository(ProviderProfile, session),
+            system_logger=None,  # type: ignore
+            notification_service=get_notification_service_manual(session),
+            credibility_service=get_credibility_service_manual(session),
+            task_service=None,  # type: ignore
+        )
+        ds = await dispatch_service.process_auto_retry(task_id)
+        return ds.id if ds else None
+
+
+async def _process_due_dispatches_async(batch_size: int = 500, max_batches: int = 20) -> int:
+    """Claims due retry tasks using FOR UPDATE SKIP LOCKED and queues worker execution tasks."""
+    total_processed = 0
+    now = lagos_now()
+
+    for _ in range(max_batches):
+        async with celery_session_factory() as session:
+            task_repo = Repository(Task, session)
+
+            stmt_due = (
+                select(Task.id)
+                .where(
+                    Task.dispatch_status == TaskDispatchStatus.RETRY_SCHEDULED,
+                    col(Task.next_dispatch_at) <= now,
+                )
+                .order_by(col(Task.next_dispatch_at))
+                .limit(batch_size)
+                .with_for_update(skip_locked=True)
+            )
+            res_due = await task_repo.execute(stmt_due)
+            raw_ids = res_due.all()
+            due_task_ids = [
+                (row[0] if isinstance(row, (tuple, list)) else row)
+                for row in raw_ids
+                if (row[0] if isinstance(row, (tuple, list)) else row) is not None
+            ]
+
+            if not due_task_ids:
+                break
+
+            stmt_claim = (
+                update(Task)
+                .where(col(Task.id).in_(due_task_ids))
+                .values(
+                    dispatch_status=TaskDispatchStatus.DISPATCHING,
+                    dispatch_claimed_at=now,
+                )
+            )
+            await task_repo.execute(stmt_claim)
+            await session.commit()
+
+            for tid in due_task_ids:
+                # pyrefly: ignore [not-callable]
+                process_auto_retry_task.delay(tid)
+
+            total_processed += len(due_task_ids)
+
+            if len(due_task_ids) < batch_size:
+                break
+
+    return total_processed
+
+
+async def _recover_stale_dispatches_async(timeout_seconds: int = 300) -> int:
+    """Recovers tasks stuck in DISPATCHING status longer than timeout_seconds."""
     async with celery_session_factory() as session:
         task_repo = Repository(Task, session)
-        session_repo = Repository(DispatchSession, session)
+        stale_threshold = lagos_now() - timedelta(seconds=timeout_seconds)
 
-        task = await task_repo.get(task_id)
-        if not task:
-            logger.warning(f"_start_dispatch_session_async: Task {task_id} not found")
-            return None
-
-        if task.status != TaskStatus.SEARCHING:
-            task.status = TaskStatus.SEARCHING
-            task.dispatch_started_at = task.dispatch_started_at or lagos_now()
-            await task_repo.add(task)
-
-        stmt_existing = select(DispatchSession).where(
-            DispatchSession.task_id == task_id,
-            DispatchSession.status == DispatchSessionStatus.SEARCHING,
-        )
-        res_existing = await session_repo.execute(stmt_existing)
-        # Do not call scalar, result is already a scalar from repo.execute method
-        dispatch_session: Optional[DispatchSession] = res_existing.one_or_none()
-
-        if not dispatch_session:
-            now = lagos_now()
-            dispatch_session = DispatchSession(
-                task_id=task_id,
-                status=DispatchSessionStatus.SEARCHING,
-                batch_size=batch_size,
-                search_radius_km=search_radius_km,
-                max_search_radius_km=max_search_radius_km,
-                auto_expand_radius=auto_expand_radius,
-                is_redispatch=is_redispatch,
-                redispatch_reason=redispatch_reason,
-                excluded_provider_ids=excluded_provider_ids,
-                created_at=now,
-                updated_at=now,
+        stmt_stale = (
+            update(Task)
+            .where(
+                col(Task.dispatch_status) == TaskDispatchStatus.DISPATCHING,
+                col(Task.dispatch_claimed_at) <= stale_threshold,
             )
-            dispatch_session = await session_repo.add(dispatch_session)
-        else:
-            updated = False
-            if excluded_provider_ids is not None:
-                dispatch_session.excluded_provider_ids = excluded_provider_ids
-                updated = True
-            if is_redispatch:
-                dispatch_session.is_redispatch = is_redispatch
-                updated = True
-            if redispatch_reason is not None:
-                dispatch_session.redispatch_reason = redispatch_reason
-                updated = True
-            if search_radius_km is not None:
-                dispatch_session.search_radius_km = search_radius_km
-                updated = True
-            if max_search_radius_km is not None:
-                dispatch_session.max_search_radius_km = max_search_radius_km
-                updated = True
-            if auto_expand_radius is not None:
-                dispatch_session.auto_expand_radius = auto_expand_radius
-                updated = True
-            if updated:
-                dispatch_session.updated_at = lagos_now()
-                await session_repo.add(dispatch_session)
-
-        # pyrefly: ignore [not-callable]
-        execute_matching_engine_task.delay(
-            session_id=dispatch_session.id,
-            exclude_previous_sessions=exclude_previous_sessions,
-            excluded_provider_ids=excluded_provider_ids,
+            .values(
+                dispatch_status=TaskDispatchStatus.RETRY_SCHEDULED,
+                next_dispatch_at=lagos_now(),
+            )
         )
-        return dispatch_session.id
+        res = await task_repo.execute(stmt_stale)
+        await session.commit()
+        return res.rowcount or 0
 
 
 async def _execute_matching_engine_async(
@@ -198,7 +150,7 @@ async def _execute_matching_engine_async(
     exclude_previous_sessions: bool = True,
     excluded_provider_ids: Optional[List[str]] = None,
 ) -> bool:
-    """Instantiates an ephemeral MatchingEngine for session_id and executes one dispatch step."""
+    """Runs a single step of ephemeral MatchingEngine for session_id."""
     async with celery_session_factory() as session:
         engine = MatchingEngine(
             session_id=session_id,
@@ -206,7 +158,8 @@ async def _execute_matching_engine_async(
             exclude_previous_sessions=exclude_previous_sessions,
             excluded_provider_ids=excluded_provider_ids,
         )
-        return await engine.run()
+        result = await engine.run()
+        return result.matched
 
 
 # ---------------------------------------------------------------------------
@@ -215,32 +168,29 @@ async def _execute_matching_engine_async(
 
 
 @shared_task(name="tasks.start_dispatch_session_task")
-def start_dispatch_session_task(
-    task_id: str,
-    batch_size: int = 5,
-    exclude_previous_sessions: bool = True,
-    excluded_provider_ids: Optional[List[str]] = None,
-    is_redispatch: bool = False,
-    redispatch_reason: Optional[str] = None,
-    search_radius_km: Optional[float] = 10.0,
-    max_search_radius_km: Optional[float] = 30.0,
-    auto_expand_radius: Optional[bool] = True,
-):
-    """Celery task entrypoint to initialize a DispatchSession and trigger matching."""
+def start_dispatch_session_task(task_id: str, **kwargs):
+    """Celery worker entrypoint to trigger initial task dispatch session."""
     logger.info(f"start_dispatch_session_task: starting for task {task_id}")
-    return run_async(
-        _start_dispatch_session_async(
-            task_id=task_id,
-            batch_size=batch_size,
-            exclude_previous_sessions=exclude_previous_sessions,
-            excluded_provider_ids=excluded_provider_ids,
-            is_redispatch=is_redispatch,
-            redispatch_reason=redispatch_reason,
-            search_radius_km=search_radius_km,
-            max_search_radius_km=max_search_radius_km,
-            auto_expand_radius=auto_expand_radius,
-        )
-    )
+    return run_async(_start_dispatch_session_async(task_id=task_id))
+
+
+@shared_task(name="tasks.process_auto_retry_task")
+def process_auto_retry_task(task_id: str):
+    """Celery worker entrypoint to process an automatic task dispatch retry."""
+    logger.info(f"process_auto_retry_task: processing retry for task {task_id}")
+    return run_async(_process_auto_retry_async(task_id=task_id))
+
+
+@shared_task(name="tasks.process_due_dispatches")
+def process_due_dispatches():
+    """Celery Beat periodic task to claim due retry tasks in batches."""
+    return run_async(_process_due_dispatches_async())
+
+
+@shared_task(name="tasks.recover_stale_dispatches")
+def recover_stale_dispatches():
+    """Celery Beat periodic task to recover stuck stale dispatch claims."""
+    return run_async(_recover_stale_dispatches_async())
 
 
 @shared_task(name="tasks.execute_matching_engine_task")
@@ -249,7 +199,7 @@ def execute_matching_engine_task(
     exclude_previous_sessions: bool = True,
     excluded_provider_ids: Optional[List[str]] = None,
 ):
-    """Celery task entrypoint to run one step of ephemeral MatchingEngine."""
+    """Celery worker entrypoint to run one step of ephemeral MatchingEngine."""
     logger.info(f"execute_matching_engine_task: running for session {session_id}")
     return run_async(
         _execute_matching_engine_async(
