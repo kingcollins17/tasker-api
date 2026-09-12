@@ -14,7 +14,8 @@ from app.core.error_handler import AppErrorHandler
 from app.core.models.reviews import TaskReview
 from app.core.models.tasks import PaymentStatus, Task, TaskStatus
 from app.core.models.users import User
-from app.core.repository import GetRepository, Repository
+from sqlmodel.ext.asyncio.session import AsyncSession
+from app.core.database import get_session
 from app.features.reviews.celery.tasks import sync_user_ratings
 from app.features.reviews.schemas import (
     CreateReviewRequest,
@@ -22,7 +23,7 @@ from app.features.reviews.schemas import (
     ReviewResponse,
 )
 
-from app.features.reviews.services import ReviewService, get_review_service
+from app.features.reviews.review_service import ReviewService, get_review_service
 
 router = APIRouter(prefix="/reviews", tags=["Reviews & Credibility"])
 
@@ -108,7 +109,7 @@ async def get_pending_customer_reviews(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(GetCurrentUser()),
-    task_repo: Repository[Task] = Depends(GetRepository(Task)),
+    session: AsyncSession = Depends(get_session),
 ):
     """Fetch completed and paid tasks that the customer hasn't reviewed."""
     try:
@@ -127,18 +128,20 @@ async def get_pending_customer_reviews(
         ]
 
         count_stmt = select(func.count(col(Task.id))).where(*base_where)
-        total = (await task_repo.execute(count_stmt)).one_or_none() or 0
+        total = (await session.exec(count_stmt)).one_or_none() or 0
 
         stmt = (
             select(Task, User)
             .outerjoin(User, col(Task.assigned_provider_id) == col(User.id))
             .where(*base_where)
+            # pyrefly: ignore [bad-argument-type]
             .options(selectinload(User.provider_profile))
             .order_by(col(Task.created_at).desc())
             .offset(offset)
             .limit(per_page)
         )
-        results = (await task_repo.execute(stmt)).unique().all()
+        # pyrefly: ignore [missing-attribute]
+        results = (await session.exec(stmt)).unique().all()
         
         data = []
         for task, provider in results:
@@ -168,7 +171,7 @@ async def get_pending_provider_reviews(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(GetCurrentUser()),
-    task_repo: Repository[Task] = Depends(GetRepository(Task)),
+    session: AsyncSession = Depends(get_session),
 ):
     """Fetch completed and paid tasks that the provider hasn't reviewed."""
     try:
@@ -187,18 +190,20 @@ async def get_pending_provider_reviews(
         ]
 
         count_stmt = select(func.count(col(Task.id))).where(*base_where)
-        total = (await task_repo.execute(count_stmt)).one_or_none() or 0
+        total = (await session.exec(count_stmt)).one_or_none() or 0
 
         stmt = (
             select(Task, User)
             .outerjoin(User, col(Task.customer_id) == col(User.id))
             .where(*base_where)
+            # pyrefly: ignore [bad-argument-type]
             .options(selectinload(User.customer_profile))
             .order_by(col(Task.created_at).desc())
             .offset(offset)
             .limit(per_page)
         )
-        results = (await task_repo.execute(stmt)).unique().all()
+        # pyrefly: ignore [missing-attribute]
+        results = (await session.exec(stmt)).unique().all()
         
         data = []
         for task, customer in results:

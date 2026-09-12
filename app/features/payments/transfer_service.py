@@ -3,7 +3,7 @@ from datetime import timedelta
 from typing import Optional
 
 from fastapi import Depends
-from sqlmodel import select
+from sqlmodel import select, col
 
 from app.core.logging import logger
 from app.core.models.payments import PayoutQueue, PayoutStatus
@@ -64,30 +64,30 @@ class TransferService:
     async def create_transfer(
         self,
         *,
-        payment_id: str,
+        payout_id: str,
         task_id: str,
-        provider_id: str,
+        user_id: str,
         amount: float,
         currency: str = "NGN",
     ) -> Transfer:
         """Create a new Transfer record in PENDING status.
 
         Idempotent — returns the existing Transfer if one already exists
-        for the given payment_id (unique constraint on payment_id).
+        for the given payout_id (unique constraint on payout_id).
         """
-        # Check for existing transfer (idempotency via unique payment_id)
-        existing_stmt = select(Transfer).where(Transfer.payment_id == payment_id)
+        # Check for existing transfer (idempotency via unique payout_id)
+        existing_stmt = select(Transfer).where(col(Transfer.payout_id) == payout_id)
         existing = (await self.transfer_repo.execute(existing_stmt)).first()
         if existing:
             logger.info(
-                f"Transfer already exists for payment_id={payment_id}: transfer_id={existing.id}"
+                f"Transfer already exists for payout_id={payout_id}: transfer_id={existing.id}"
             )
             return existing
 
         transfer = Transfer(
             task_id=task_id,
-            payment_id=payment_id,
-            provider_id=provider_id,
+            payout_id=payout_id,
+            user_id=user_id,
             amount=amount,
             currency=currency,
             status=TransferStatus.PENDING,
@@ -98,8 +98,8 @@ class TransferService:
 
         transfer = await self.transfer_repo.add(transfer)
         logger.info(
-            f"Created transfer {transfer.id} for payment_id={payment_id}, "
-            f"provider={provider_id}, amount={amount} {currency}"
+            f"Created transfer {transfer.id} for payout_id={payout_id}, "
+            f"provider={user_id}, amount={amount} {currency}"
         )
         return transfer
 
@@ -149,12 +149,12 @@ class TransferService:
         await self.transfer_repo.commit()
 
         # ── 4. Resolve provider recipient code ───────────────────────────
-        destination = await self._resolve_destination(transfer.provider_id)
+        destination = await self._resolve_destination(transfer.user_id)
         if not destination:
             await self._mark_failed(
                 transfer,
                 code="NO_PAYMENT_ACCOUNT",
-                reason=f"No active payment account found for provider {transfer.provider_id}",
+                reason=f"No active payment account found for provider {transfer.user_id}",
             )
             await self._record_attempt(
                 transfer,
@@ -172,9 +172,9 @@ class TransferService:
                 destination=destination,
                 idempotency_key=transfer.idempotency_key,
                 reference=f"payout_{transfer.task_id}_{transfer.id[:8]}",
-                user_id=transfer.provider_id,
+                user_id=transfer.user_id,
                 task_id=transfer.task_id,
-                payment_id=transfer.payment_id,
+                payout_id=transfer.payout_id,
             )
 
             # ── Success ──────────────────────────────────────────────
@@ -293,8 +293,8 @@ class TransferService:
         await self.transfer_repo.commit()
 
         # Update associated PayoutQueue entry to COMPLETED
-        if transfer.payment_id and self.payout_queue_repo:
-            payout = await self.payout_queue_repo.get(transfer.payment_id)
+        if transfer.payout_id and self.payout_queue_repo:
+            payout = await self.payout_queue_repo.get(transfer.payout_id)
             if payout:
                 payout.status = PayoutStatus.COMPLETED
                 if provider_transfer_id:
@@ -345,8 +345,8 @@ class TransferService:
         await self.transfer_repo.commit()
 
         # Update associated PayoutQueue entry to CANCELLED if not already COMPLETED
-        if transfer.payment_id and self.payout_queue_repo:
-            payout = await self.payout_queue_repo.get(transfer.payment_id)
+        if transfer.payout_id and self.payout_queue_repo:
+            payout = await self.payout_queue_repo.get(transfer.payout_id)
             if payout and payout.status != PayoutStatus.COMPLETED:
                 payout.status = PayoutStatus.CANCELLED
                 await self.payout_queue_repo.add(payout)
@@ -360,12 +360,12 @@ class TransferService:
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
-    async def _resolve_destination(self, provider_id: Optional[str]) -> Optional[str]:
+    async def _resolve_destination(self, user_id: Optional[str]) -> Optional[str]:
         """Look up the provider's Paystack recipient code from PaymentAccount."""
-        if not provider_id:
+        if not user_id:
             return None
         stmt = select(PaymentAccount).where(
-            PaymentAccount.user_id == provider_id,
+            PaymentAccount.user_id == user_id,
             PaymentAccount.is_active == True,
         )
         account = (await self.payment_account_repo.execute(stmt)).first()

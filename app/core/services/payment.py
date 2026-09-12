@@ -135,7 +135,7 @@ class PaymentGateway(ABC):
         reference: Optional[str] = None,
         user_id: Optional[str] = None,
         task_id: Optional[str] = None,
-        payment_id: Optional[str] = None,
+        payout_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> TransferResult:
         """Initiate a transfer to a destination (provider recipient code).
@@ -252,7 +252,7 @@ class PaystackPaymentGateway(PaymentGateway):
         reference: Optional[str] = None,
         user_id: Optional[str] = None,
         task_id: Optional[str] = None,
-        payment_id: Optional[str] = None,
+        payout_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> TransferResult:
         """Initiate a Paystack transfer to a recipient code.
@@ -266,8 +266,8 @@ class PaystackPaymentGateway(PaymentGateway):
                 transfer_meta["user_id"] = user_id
             if task_id:
                 transfer_meta["task_id"] = task_id
-            if payment_id:
-                transfer_meta["payment_id"] = payment_id
+            if payout_id:
+                transfer_meta["payout_id"] = payout_id
             transfer_meta["idempotency_key"] = idempotency_key
 
             response = await self.send_payment(

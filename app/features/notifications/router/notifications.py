@@ -22,7 +22,7 @@ from app.features.notifications.schemas import (
     NotificationCountsResponse,
     UserNotificationResponse,
 )
-from app.features.notifications.services import (
+from app.features.notifications.notification_service import (
     NotificationService,
     get_notification_service,
 )

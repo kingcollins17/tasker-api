@@ -68,17 +68,6 @@ async def _process_transfer_async(transfer_id: str) -> None:
 # ── Recovery worker: find stuck/missed transfers ──────────────────────────────
 
 
-@shared_task(name="transfers.recover_stuck_transfers")
-def recover_stuck_transfers_task():
-    """Celery Beat task: find PENDING/RETRYING transfers whose retry time has passed.
-
-    Runs every 60 seconds. Enqueues each eligible transfer for processing.
-    This protects against Celery jobs disappearing (worker crash, Redis flush, etc.).
-    """
-    logger.info("recover_stuck_transfers_task: scanning for eligible transfers")
-    return run_async(_recover_stuck_transfers_async())
-
-
 async def _recover_stuck_transfers_async() -> None:
     async with celery_session_factory() as session:
         system_logger = get_logger_service_manual(session)
@@ -128,20 +117,14 @@ async def _recover_stuck_transfers_async() -> None:
             raise e
 
 
+@shared_task(name="transfers.recover_stuck_transfers_task")
+def recover_stuck_transfers_task():
+    """Celery worker task: find PENDING/RETRYING transfers whose retry time has passed."""
+    logger.info("recover_stuck_transfers_task: scanning for eligible transfers")
+    return run_async(_recover_stuck_transfers_async())
+
+
 # ── Reconciliation worker: resolve ambiguous PROCESSING transfers ─────────────
-
-
-@shared_task(name="transfers.reconcile_processing_transfers")
-def reconcile_processing_transfers_task():
-    """Celery Beat task: resolve transfers stuck in PROCESSING for >10 minutes.
-
-    Runs every 10 minutes. Queries the provider for each stuck transfer
-    to determine the actual outcome (completed, failed, or unknown).
-    This handles the case where a transfer was sent to the provider but
-    the response was lost (timeout, crash, network failure).
-    """
-    logger.info("reconcile_processing_transfers_task: scanning for stale transfers")
-    return run_async(_reconcile_processing_transfers_async())
 
 
 async def _reconcile_processing_transfers_async() -> None:
@@ -185,3 +168,11 @@ async def _reconcile_processing_transfers_async() -> None:
                 source="celery.transfers.reconcile_processing_transfers",
             )
             raise e
+
+
+@shared_task(name="transfers.reconcile_processing_transfers_task")
+def reconcile_processing_transfers_task():
+    """Celery worker task: resolve transfers stuck in PROCESSING for >10 minutes."""
+    logger.info("reconcile_processing_transfers_task: scanning for stale transfers")
+    return run_async(_reconcile_processing_transfers_async())
+

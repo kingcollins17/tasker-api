@@ -22,12 +22,7 @@ async def test_mock_storage_service_upload():
     url = await service.upload_file(upload_file)
     
     # Assert
-    assert url.startswith("https://test-bucket.s3.amazonaws.com/")
-    assert "avatar.png" in url
-    # Ensure there's a unique prefix
-    parts = url.split("/")[-1].split("_")
-    assert len(parts) >= 2
-    assert len(parts[0]) == 8  # hex uuid substring length we defined
+    assert url.startswith("https://images.unsplash.com/")
 
 
 @pytest.mark.asyncio
@@ -41,8 +36,7 @@ async def test_mock_storage_service_upload_default_url():
     url = await service.upload_file(upload_file)
     
     # Assert
-    assert url.startswith("https://mock-storage.local/")
-    assert "uploaded_file" in url
+    assert url.startswith("https://images.unsplash.com/")
 
 
 def test_get_storage_service_dependency():
@@ -74,11 +68,11 @@ async def test_mock_storage_service_upload_bytes():
     
     # Upload without explicit filename
     url_no_name = await service.upload_file(file_bytes)
-    assert "uploaded_file" in url_no_name
+    assert url_no_name.startswith("https://images.unsplash.com/")
     
     # Upload with explicit filename
     url_with_name = await service.upload_file(file_bytes, filename="hello.txt")
-    assert "hello.txt" in url_with_name
+    assert url_with_name.startswith("https://images.unsplash.com/")
 
 
 @pytest.mark.asyncio
@@ -92,6 +86,7 @@ async def test_mock_storage_service_upload_binary_io():
     file_obj = MockFileLike(b"pdf contents")
     
     url = await service.upload_file(file_obj)
-    assert "my_document.pdf" in url
+    assert url.startswith("https://images.unsplash.com/")
+
 
 

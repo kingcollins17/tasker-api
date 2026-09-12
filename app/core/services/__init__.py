@@ -27,12 +27,14 @@ from .payment import (
     TransferResult,
     get_paystack_gateway,
 )
-from .provider_location import (
+from .geo_service import (
+    GeoService,
     LocationPoint,
     NearbyProviderResult,
     PostGISProviderLocationService,
     ProviderLocationPing,
     ProviderLocationService,
+    get_geo_service,
     get_provider_location_service,
 )
 from .sms import SMSService
@@ -87,6 +89,7 @@ __all__ = [
     "PricingCalculationRequest",
     "PricingBreakdown",
     "MatchingEngine",
+    "GeoService",
     "ProviderLocationService",
     "PostGISProviderLocationService",
     "LocationPoint",
@@ -98,6 +101,7 @@ __all__ = [
     "get_cache_service",
     "get_paystack_gateway",
     "get_otp_service",
+    "get_geo_service",
     "get_provider_location_service",
     "get_storage_service",
     "get_cloud_messaging_service",

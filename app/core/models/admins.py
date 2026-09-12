@@ -6,9 +6,9 @@ from sqlmodel import Field, SQLModel
 from app.core.utils.datetime_helper import lagos_now
 
 class AdminRole(str, enum.Enum):
-    SUPER_ADMIN = "super_admin"
-    COMPLIANCE_OFFICER = "compliance_officer"
-    SUPPORT_AGENT = "support_agent"
+    SUPER_ADMIN = "SUPER_ADMIN"
+    COMPLIANCE_OFFICER = "COMPLIANCE_OFFICER"
+    SUPPORT_AGENT = "SUPPORT_AGENT"
 
 class AdminUser(SQLModel, table=True):
     __tablename__ = "admin_users"  # type: ignore
@@ -16,7 +16,7 @@ class AdminUser(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     email: str = Field(unique=True, index=True)
     hashed_password: str
-    full_name: Optional[str] = None
+    fullname: Optional[str] = None
     role: AdminRole
     is_active: bool = Field(default=True)
     region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True)

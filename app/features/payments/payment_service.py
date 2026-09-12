@@ -13,7 +13,7 @@ from app.core.repository import GetRepository, Repository, QueryOptions
 from app.core.services.payment import get_paystack_gateway, PaystackPaymentGateway
 from app.core.utils.datetime_helper import lagos_now, now
 from app.core.utils.currency import to_naira
-from app.features.notifications.services import (
+from app.features.notifications.notification_service import (
     NotificationService,
     get_notification_service,
 )
@@ -186,9 +186,9 @@ class PaymentService:
         if remaining_payout > 0 and payout_obj:
             print(f"[DEBUG process_provider_payout] Creating transfer for remaining_payout: {remaining_payout}")
             transfer = await self.transfer_service.create_transfer(
-                payment_id=payout_obj.id,
+                payout_id=payout_obj.id,
                 task_id=task_id,
-                provider_id=provider_id,
+                user_id=provider_id,
                 amount=remaining_payout,
             )
             print(f"[DEBUG process_provider_payout] Created transfer: {transfer.id if transfer else None}. Enqueuing process_transfer_task Celery task...")
@@ -266,7 +266,7 @@ class PaymentService:
                 recepients=[task.customer_id],
                 title="Task Completed — Paid in Cash",
                 body=f"Your task '{task.title}' is completed. Payment of {amt_fmt} was settled in cash.",
-                type=NotificationType.PAYMENT_RECEIVED,
+                type=NotificationType.SYSTEM_ALERT,
                 channels=["IN_APP", "PUSH"],
                 data={
                     "task_id": task.id,
@@ -324,7 +324,7 @@ class PaymentService:
                 recepients=[task.customer_id],
                 title="Payment Requested for Completed Task",
                 body=f"Your task '{task.title}' is completed. Tap to pay {amt_fmt} online.",
-                type=NotificationType.PAYMENT_REQUESTED,
+                type=NotificationType.SYSTEM_ALERT,
                 channels=["IN_APP", "PUSH", "EMAIL"],
                 data={
                     "task_id": task.id,
@@ -635,7 +635,7 @@ def get_payment_service(
 
 def get_payment_service_manual(session) -> PaymentService:
     """Factory for constructing PaymentService outside of FastAPI dependency injection (e.g. Celery tasks)."""
-    from app.features.notifications.services import get_notification_service_manual
+    from app.features.notifications.notification_service import get_notification_service_manual
 
     return PaymentService(
         task_repo=Repository(Task, session),

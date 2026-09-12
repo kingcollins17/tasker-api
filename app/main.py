@@ -20,6 +20,7 @@ from app.features.payments.routers import router as payments_router
 from app.features.reviews.routers import router as reviews_router
 from app.features.system.router import router as system_router
 from app.features.vetting.router import router as vetting_router
+from app.features.support.router import router as support_router
 
 
 @asynccontextmanager
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
     app.include_router(reviews_router, prefix=f"{API_V1_PREFIX}")
     app.include_router(system_router, prefix=f"{API_V1_PREFIX}/system", tags=["System"])
     app.include_router(vetting_router, prefix=f"{API_V1_PREFIX}/vetting")
+    app.include_router(support_router, prefix=f"{API_V1_PREFIX}")
 
     @app.get("/")
     async def read_root():

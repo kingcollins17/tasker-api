@@ -6,7 +6,7 @@ from app.core.services.logger_service import get_logger_service_manual
 from app.core.models.users import User, ProviderProfile
 from app.core.repository import Repository
 from app.features.notifications.schemas import CreateNotification
-from app.features.notifications.services import get_notification_service_manual
+from app.features.notifications.notification_service import get_notification_service_manual
 from app.core.models.notifications import NotificationPriority, NotificationType
 
 # Configurable tier rules

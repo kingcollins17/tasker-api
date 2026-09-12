@@ -6,13 +6,12 @@ from app.core.models.notifications import (
     Notification,
     NotificationRecipient,
     NotificationChannel,
-    NotificationPreference,
     NotificationDelivery,
     NotificationType,
     NotificationPriority,
     RecipientStatus,
 )
-from app.features.notifications.services import NotificationService
+from app.features.notifications.notification_service import NotificationService
 from app.features.notifications.schemas import CreateNotification
 from app.features.notifications.tasks import NotificationPipeline
 from app.core.repository import Repository
@@ -44,13 +43,6 @@ def mock_delivery_repo():
 
 
 @pytest.fixture
-def mock_preference_repo():
-    repo = MagicMock(spec=Repository)
-    repo.execute = MagicMock()
-    return repo
-
-
-@pytest.fixture
 def mock_user_repo():
     repo = MagicMock(spec=Repository)
     return repo
@@ -61,14 +53,12 @@ def notification_service(
     mock_notification_repo,
     mock_recipient_repo,
     mock_delivery_repo,
-    mock_preference_repo,
     mock_user_repo,
 ):
     return NotificationService(
         notification_repo=mock_notification_repo,
         recipient_repo=mock_recipient_repo,
         delivery_repo=mock_delivery_repo,
-        preference_repo=mock_preference_repo,
         user_repo=mock_user_repo,
     )
 
@@ -83,7 +73,7 @@ async def test_create_notification_with_channels(
 ):
     # Arrange
     schema = CreateNotification(
-        type=NotificationType.TASK_COMPLETED,
+        type=NotificationType.SYSTEM_ALERT,
         title="Completed",
         body="Task is completed",
         recipient_ids=["user-1", "user-2"],
@@ -96,7 +86,7 @@ async def test_create_notification_with_channels(
     )
 
     # Assert
-    assert notification.channels == ["email", "push"]
+    assert notification.channels == ["EMAIL", "PUSH"]
     assert mock_notification_repo.add.call_count == 1
     assert mock_recipient_repo.add.call_count == 2
     mock_delay.assert_called_once_with(notification.id)
@@ -106,7 +96,7 @@ async def test_create_notification_with_channels(
 @patch("app.features.notifications.tasks.send_email_batch.delay")
 @patch("app.features.notifications.tasks.send_push_batch.delay")
 @patch("app.features.notifications.tasks.send_sms_batch.delay")
-@patch("app.core.database.async_session_maker")
+@patch("app.features.notifications.tasks.celery_session_factory")
 async def test_process_batch_filtering_channels(
     mock_session_maker,
     mock_sms_delay,
@@ -119,10 +109,10 @@ async def test_process_batch_filtering_channels(
 
     notification = Notification(
         id="notif-123",
-        type=NotificationType.TASK_COMPLETED,
+        type=NotificationType.SYSTEM_ALERT,
         title="Completed",
         body="Task completed",
-        channels=["email", "push"],  # Restrict to email and push
+        channels=["EMAIL", "PUSH"],  # Restrict to email and push
     )
 
     recipient = NotificationRecipient(
@@ -136,8 +126,6 @@ async def test_process_batch_filtering_channels(
     mock_notification_repo.get = AsyncMock(return_value=notification)
 
     mock_recipient_repo = MagicMock()
-    # The refactored code uses bulk execute (WHERE id IN (...)) instead of
-    # individual .get() calls, so mock .execute to return a result with .all()
     mock_recipient_result = MagicMock()
     mock_recipient_result.all = MagicMock(return_value=[recipient])
     mock_recipient_repo.execute = AsyncMock(return_value=mock_recipient_result)
@@ -145,16 +133,6 @@ async def test_process_batch_filtering_channels(
 
     mock_delivery_repo = MagicMock()
     mock_delivery_repo.bulk_add = AsyncMock()
-
-    mock_preference_repo = MagicMock()
-    # Mock preference query results (user has email, push, and sms preferences)
-    mock_pref_result = MagicMock()
-    mock_pref_result.all = MagicMock(return_value=[
-        NotificationPreference(user_id="user-123", notification_type=NotificationType.TASK_COMPLETED, channel=NotificationChannel.EMAIL, enabled=True),
-        NotificationPreference(user_id="user-123", notification_type=NotificationType.TASK_COMPLETED, channel=NotificationChannel.SMS, enabled=True),
-        NotificationPreference(user_id="user-123", notification_type=NotificationType.TASK_COMPLETED, channel=NotificationChannel.PUSH, enabled=True),
-    ])
-    mock_preference_repo.execute = AsyncMock(return_value=mock_pref_result)
 
     # Side effects to return mock repos
     def get_repo_side_effect(model, session):
@@ -164,8 +142,6 @@ async def test_process_batch_filtering_channels(
             return mock_recipient_repo
         elif model == NotificationDelivery:
             return mock_delivery_repo
-        elif model == NotificationPreference:
-            return mock_preference_repo
         return MagicMock()
 
     with patch("app.features.notifications.tasks.Repository", side_effect=get_repo_side_effect):
@@ -173,7 +149,6 @@ async def test_process_batch_filtering_channels(
         await NotificationPipeline.process_batch("notif-123", ["recip-1"])
 
         # Assert
-        # Check bulk_add gets called with deliveries. Only email and push should be present, SMS should be filtered out
         assert mock_delivery_repo.bulk_add.call_count == 1
         deliveries = mock_delivery_repo.bulk_add.call_args[0][0]
         
@@ -206,4 +181,5 @@ async def test_get_notification_counts(
     # Assert
     assert counts == {"read": 10, "unread": 5}
     assert mock_recipient_repo.execute.call_count == 2
+
 

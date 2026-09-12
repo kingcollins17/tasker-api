@@ -12,21 +12,21 @@ from app.core.utils.datetime_helper import lagos_now
 class CredibilityReason(str, enum.Enum):
     """Categorises the event that caused a credibility score change."""
     # Positive events
-    TASK_COMPLETED = "task_completed"
-    FIVE_STAR_REVIEW = "five_star_review"
-    FOUR_STAR_REVIEW = "four_star_review"
-    ACCOUNT_VERIFIED = "account_verified"
-    PROFILE_COMPLETED = "profile_completed"
+    TASK_COMPLETED = "TASK_COMPLETED"
+    FIVE_STAR_REVIEW = "FIVE_STAR_REVIEW"
+    FOUR_STAR_REVIEW = "FOUR_STAR_REVIEW"
+    ACCOUNT_VERIFIED = "ACCOUNT_VERIFIED"
+    PROFILE_COMPLETED = "PROFILE_COMPLETED"
     # Neutral / zero
-    THREE_STAR_REVIEW = "three_star_review"
+    THREE_STAR_REVIEW = "THREE_STAR_REVIEW"
     # Negative events
-    TWO_STAR_REVIEW = "two_star_review"
-    ONE_STAR_REVIEW = "one_star_review"
-    JOB_DECLINED = "job_declined"
-    JOB_TIMEOUT = "job_timeout"
-    THREE_CONSECUTIVE_DECLINES = "three_consecutive_declines"
-    TASK_CANCELLED_BY_PROVIDER = "task_cancelled_by_provider"
-    TASK_CANCELLED_BY_CUSTOMER = "task_cancelled_by_customer"
+    TWO_STAR_REVIEW = "TWO_STAR_REVIEW"
+    ONE_STAR_REVIEW = "ONE_STAR_REVIEW"
+    TASK_DECLINED = "TASK_DECLINED"
+    TASK_TIMEOUT = "TASK_TIMEOUT"
+    THREE_CONSECUTIVE_DECLINES = "THREE_CONSECUTIVE_DECLINES"
+    TASK_CANCELLED_BY_PROVIDER = "TASK_CANCELLED_BY_PROVIDER"
+    TASK_CANCELLED_BY_CUSTOMER = "TASK_CANCELLED_BY_CUSTOMER"
 
 
 # Fixed delta values per reason
@@ -39,8 +39,8 @@ CREDIBILITY_DELTAS: dict[str, float] = {
     CredibilityReason.ONE_STAR_REVIEW: -5.0,
     CredibilityReason.ACCOUNT_VERIFIED: 5.0,
     CredibilityReason.PROFILE_COMPLETED: 2.0,
-    CredibilityReason.JOB_DECLINED: -1.0,
-    CredibilityReason.JOB_TIMEOUT: -1.5,
+    CredibilityReason.TASK_DECLINED: -1.0,
+    CredibilityReason.TASK_TIMEOUT: -1.5,
     CredibilityReason.THREE_CONSECUTIVE_DECLINES: -5.0,
     CredibilityReason.TASK_CANCELLED_BY_PROVIDER: -3.0,
     CredibilityReason.TASK_CANCELLED_BY_CUSTOMER: -1.0,

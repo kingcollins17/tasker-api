@@ -2,7 +2,7 @@ import re
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, Literal, List
 from datetime import datetime
-from app.core.models.users import UserType, KYCStatus, DutyStatus, DayOfWeek
+from app.core.models.users import UserType, KYCStatus, DutyStatus
 from app.core.schemas.users import PaymentAccountResponse, UserLocationResponse
 from app.core.utils.phone_helper import format_nigerian_phone
 from datetime import time

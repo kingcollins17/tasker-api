@@ -6,7 +6,7 @@ from celery import shared_task
 from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
 from app.core.utils.celery import run_async
-from app.features.payments.services import get_payment_service_manual
+from app.features.payments.payment_service import get_payment_service_manual
 
 
 @shared_task(name="payments.process_task_payment")

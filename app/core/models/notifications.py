@@ -12,18 +12,10 @@ from app.core.utils.datetime_helper import lagos_now
 # ── Enums ────────────────────────────────────────────────────────────────────
 
 class NotificationType(str, enum.Enum):
-    TASK_ACCEPTED = "TASK_ACCEPTED"
-    TASK_COMPLETED = "TASK_COMPLETED"
-    TASK_CANCELLED = "TASK_CANCELLED"
-    PAYMENT_REQUESTED = "PAYMENT_REQUESTED"
-    PAYMENT_RECEIVED = "PAYMENT_RECEIVED"
-    PAYMENT_FAILED = "PAYMENT_FAILED"
-    NEW_MESSAGE = "NEW_MESSAGE"
-    REVIEW_RECEIVED = "REVIEW_RECEIVED"
-    PROMOTION = "PROMOTION"
     SECURITY_ALERT = "SECURITY_ALERT"
     SYSTEM_ALERT = "SYSTEM_ALERT"
     JOB_PING = "JOB_PING"
+    PLATFORM = "PLATFORM"
 
 
 class NotificationChannel(str, enum.Enum):

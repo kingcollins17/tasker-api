@@ -22,7 +22,7 @@ from app.core.services.logger_service import get_logger_service_manual
 from app.core.utils.celery import run_async
 from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.timer import Timer
-from app.features.credibility.services import get_credibility_service_manual
+from app.features.credibility.credibility_service import get_credibility_service_manual
 from app.features.payments.celery.tasks import process_task_payment
 from app.features.tasks.celery.metrics import (
     sync_provider_metrics,

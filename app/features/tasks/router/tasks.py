@@ -15,7 +15,7 @@ from fastapi import (
     UploadFile,
     File,
 )
-from app.features.notifications.services import (
+from app.features.notifications.notification_service import (
     NotificationService,
     get_notification_service,
 )
@@ -54,12 +54,12 @@ from app.core.models.tasks import (
     TaskStatus,
     PriceAdjustmentStatus,
 )
-from app.features.tasks.services import TaskService, get_task_service
+from app.features.tasks.task_service import TaskService, get_task_service
+from app.features.tasks.dispatch_service import DispatchService, get_dispatch_service
 from app.core.error_handler import AppErrorHandler
 from app.core.queries.task_queries import TaskQueries
 from app.core.repository import Repository, GetRepository
 
-from app.features.tasks.celery.dispatch import start_dispatch_session_task
 from app.core.models.payments import PayoutQueue
 from app.features.payments.schemas import PayoutQueueResponse
 
@@ -171,6 +171,7 @@ async def confirm_draft(
         )
     ),
     task_service: TaskService = Depends(get_task_service),
+    dispatch_service: DispatchService = Depends(get_dispatch_service),
     system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Confirm a draft task and start the dispatch workflow."""
@@ -179,8 +180,7 @@ async def confirm_draft(
         timer.start()
         task = await task_service.confirm_draft(task_id, current_user.id)
 
-        # pyrefly: ignore [not-callable]
-        start_dispatch_session_task.delay(task.id) # type: ignore
+        await dispatch_service.start_initial_dispatch(task.id)
 
         await system_logger.metric(
             "confirm_draft", timer.stop(), source="tasks.confirm_draft"
@@ -667,61 +667,6 @@ async def cancel_task(
             detail="An unexpected error occurred while cancelling the task.",
         )
 
-
-@router.post(
-    "/{task_id}/redispatch",
-    response_model=BaseAPIResponse[TaskResponse],
-    status_code=status.HTTP_200_OK,
-)
-@router.put(
-    "/{task_id}/redispatch",
-    response_model=BaseAPIResponse[TaskResponse],
-    status_code=status.HTTP_200_OK,
-)
-async def redispatch_task(
-    task_id: str,
-    schema: TaskRedispatchRequest,
-    current_user: UserResponse = Depends(GetCurrentUser()),
-    task_service: TaskService = Depends(get_task_service),
-    system_logger: LoggerService = Depends(get_logger_service),
-):
-    """Redispatch a task to find a different provider.
-    
-    Cancels current assignment if assigned and initiates a new manual dispatch session.
-    """
-    try:
-        timer = Timer()
-        timer.start()
-        task = await task_service.redispatch_task(
-            task_id=task_id,
-            current_user_id=current_user.id,
-            feedback=schema.feedback,
-        )
-
-        await system_logger.metric(
-            "redispatch_task", timer.stop(), source="tasks.redispatch_task"
-        )
-        return BaseAPIResponse[TaskResponse](
-            data=TaskResponse.model_validate(task),
-            detail="Task redispatch initiated. Searching for alternative provider.",
-            status_code=status.HTTP_200_OK,
-        )
-    except HTTPException as e:
-        await system_logger.warn(
-            "redispatch_task failed",
-            source="tasks.redispatch_task",
-            metadata={"detail": str(e.detail) if hasattr(e, "detail") else str(e)},
-        )
-        raise
-    except Exception as e:
-        await system_logger.error(
-            f"redispatch_task error: {str(e)}", source="tasks.redispatch_task"
-        )
-        AppErrorHandler.handleError(e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while redispatching the task.",
-        )
 
 
 @router.put(

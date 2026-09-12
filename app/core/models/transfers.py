@@ -64,7 +64,7 @@ class Transfer(SQLModel, table=True):
         nullable=True,
         description="Associated task that generated this transfer",
     )
-    payment_id: Optional[str] = Field(
+    payout_id: Optional[str] = Field(
         default=None,
         foreign_key="payout_queue.id",
         index=True,
@@ -72,7 +72,7 @@ class Transfer(SQLModel, table=True):
         nullable=True,
         description="Associated payout queue entry — unique constraint prevents duplicate transfers per payment",
     )
-    provider_id: Optional[str] = Field(
+    user_id: Optional[str] = Field(
         default=None,
         foreign_key="users.id",
         index=True,

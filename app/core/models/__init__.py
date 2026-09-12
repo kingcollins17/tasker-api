@@ -4,7 +4,6 @@ from .users import (
     DutyStatus,
     VerificationStatus,
     OnboardingStep,
-    MediaType,
     User,
     ProviderProfile,
     CustomerProfile,
@@ -12,8 +11,6 @@ from .users import (
     PaymentAccount,
     UserLocation,
     UserDevice,
-    DayOfWeek,
-    ProviderAvailability,
 )
 from .system_logs import (
     SystemLog,
@@ -78,10 +75,23 @@ from .transfers import (
     TransferAttempt,
 )
 from .vetting import (
-    QuizQuestion,
-    ProviderQuizResult,
-    ProviderPortfolioMedia,
     ProviderGuarantor,
+)
+from .support import (
+    CaseType,
+    CaseStatus,
+    CasePriority,
+    MessageSenderType,
+    MessageChannel,
+    MessageVisibility,
+    CaseEventType,
+    SupportCase,
+    Dispute,
+    CaseMessage,
+    CaseEvent,
+    CaseAssignment,
+    CaseAttachment,
+    CaseResolution,
 )
 
 
@@ -91,7 +101,6 @@ __all__ = [
     "DutyStatus",
     "VerificationStatus",
     "OnboardingStep",
-    "MediaType",
     "AdminRole",
     "User",
     "ProviderProfile",
@@ -117,8 +126,6 @@ __all__ = [
     "NotificationDelivery",
     "UserLocation",
     "UserDevice",
-    "DayOfWeek",
-    "ProviderAvailability",
     "TaskStatus",
     "DispatchAttemptStatus",
     "DispatchSessionStatus",
@@ -146,10 +153,21 @@ __all__ = [
     "TransferAttempt",
     "SystemLog",
     "LogLevel",
-    "QuizQuestion",
-    "ProviderQuizResult",
-    "ProviderPortfolioMedia",
     "ProviderGuarantor",
+    "CaseType",
+    "CaseStatus",
+    "CasePriority",
+    "MessageSenderType",
+    "MessageChannel",
+    "MessageVisibility",
+    "CaseEventType",
+    "SupportCase",
+    "Dispute",
+    "CaseMessage",
+    "CaseEvent",
+    "CaseAssignment",
+    "CaseAttachment",
+    "CaseResolution",
 ]
 
 

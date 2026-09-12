@@ -18,20 +18,20 @@ def generate_4digit_pin() -> str:
 
 class LocationType(str, enum.Enum):
     """Discriminates task geographical point roles."""
-    PICKUP = "pickup"
-    DROPOFF = "dropoff"
-    SERVICE = "service"
+    PICKUP = "PICKUP"
+    DROPOFF = "DROPOFF"
+    SERVICE = "SERVICE"
 
 class TaskStatus(str, enum.Enum):
     """Lifecycle states of a task request."""
-    DRAFT = "draft"
-    OPEN = "open"
-    SEARCHING = "searching"
-    ASSIGNED = "assigned"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    EXPIRED = "expired"
+    DRAFT = "DRAFT"
+    OPEN = "OPEN"
+    SEARCHING = "SEARCHING"
+    ASSIGNED = "ASSIGNED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+    NO_MATCH = "NO_MATCH"
 
 class TaskDispatchStatus(str, enum.Enum):
     """Workflow states of task dispatch retry engine."""
@@ -50,8 +50,8 @@ class DispatchSessionTrigger(str, enum.Enum):
 
 class PaymentMode(str, enum.Enum):
     """Supported payment settlement modes."""
-    CASH = "cash"
-    ONLINE = "online"
+    CASH = "CASH"
+    ONLINE = "ONLINE"
 
 class PaymentStatus(str, enum.Enum):
     """Lifecycle states of task payment settlement."""

@@ -1,4 +1,4 @@
-from app.features.credibility.services import (
+from app.features.credibility.credibility_service import (
     CredibilityService,
     get_credibility_service,
 )

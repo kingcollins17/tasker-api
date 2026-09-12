@@ -19,7 +19,7 @@ from app.core.services.matching_engine import (
     ScoredCandidate,
     _ScoredCandidate,
 )
-from app.core.services.provider_location import NearbyProviderResult
+from app.core.services.geo_service import NearbyProviderResult
 from app.core.utils.datetime_helper import lagos_now
 
 
@@ -44,7 +44,7 @@ async def test_matching_engine_skips_non_searching_session(mock_db_session):
     )
     mock_db_session.get.return_value = non_searching_session
 
-    engine = MatchingEngine(session_id=session_id, db_session=mock_db_session)
+    engine = MatchingEngine(session_id=session_id, session=mock_db_session)
     result = await engine.run()
 
     assert result.matched is False
@@ -66,7 +66,7 @@ async def test_matching_engine_optimistic_locking_conflict(mock_db_session):
     mock_exec_res.rowcount = 0
     mock_db_session.exec.return_value = mock_exec_res
 
-    engine = MatchingEngine(session_id=session_id, db_session=mock_db_session)
+    engine = MatchingEngine(session_id=session_id, session=mock_db_session)
     result = await engine.run()
 
     assert result.matched is False
@@ -93,7 +93,7 @@ async def test_matching_engine_returns_no_candidates(mock_db_session):
     mock_exec_res.all.return_value = []
     mock_db_session.exec.return_value = mock_exec_res
 
-    engine = MatchingEngine(session_id=session_id, db_session=mock_db_session)
+    engine = MatchingEngine(session_id=session_id, session=mock_db_session)
     engine._fetch_and_filter_candidates = AsyncMock(return_value=[])
 
     result = await engine.run()
@@ -122,7 +122,7 @@ async def test_matching_engine_dispatches_candidate_batch(mock_db_session):
     mock_exec_res.all.return_value = []
     mock_db_session.exec.return_value = mock_exec_res
 
-    engine = MatchingEngine(session_id=session_id, db_session=mock_db_session)
+    engine = MatchingEngine(session_id=session_id, session=mock_db_session)
     candidate = _ScoredCandidate(user_id="provider-1", distance_km=1.0, score=2.5)
     engine._fetch_and_filter_candidates = AsyncMock(return_value=[candidate])
     engine.notification_service.notify = AsyncMock()
@@ -149,16 +149,10 @@ async def test_matching_engine_excludes_provider_ids_from_session(mock_db_sessio
     task_location.latitude = 6.5
     task_location.longitude = 3.4
 
-    engine = MatchingEngine(session_id=session_id, db_session=mock_db_session)
-    engine.attempt_repo.execute = AsyncMock(return_value=MagicMock(all=lambda: []))
-    engine.task_location_repo.execute = AsyncMock(return_value=MagicMock(one_or_none=lambda: task_location))
+    engine = MatchingEngine(session_id=session_id, session=mock_db_session)
 
-    engine.geo_service.search_nearby_providers = AsyncMock(
-        return_value=[
-            NearbyProviderResult(provider_id="provider-1", distance_km=1.0, is_online=True),
-            NearbyProviderResult(provider_id="provider-2", distance_km=1.0, is_online=True),
-        ]
-    )
+    mock_attempts_res = MagicMock(all=lambda: [])
+    mock_loc_res = MagicMock(one_or_none=lambda: task_location)
 
     mock_user2 = MagicMock()
     mock_user2.id = "provider-2"
@@ -174,7 +168,25 @@ async def test_matching_engine_excludes_provider_ids_from_session(mock_db_sessio
 
     mock_eligibility_res = MagicMock()
     mock_eligibility_res.unique.return_value.all.return_value = [(mock_user2, mock_profile2)]
-    engine.provider_profile_repo.execute = AsyncMock(return_value=mock_eligibility_res)
+
+    def exec_side_effect(stmt):
+        stmt_str = str(stmt)
+        if "task_dispatch_attempts" in stmt_str:
+            return mock_attempts_res
+        elif "task_locations" in stmt_str:
+            return mock_loc_res
+        elif "provider_profiles" in stmt_str or "users" in stmt_str:
+            return mock_eligibility_res
+        return MagicMock(all=lambda: [], one_or_none=lambda: None)
+
+    mock_db_session.exec.side_effect = exec_side_effect
+
+    engine.geo_service.search_nearby_providers = AsyncMock(
+        return_value=[
+            NearbyProviderResult(provider_id="provider-1", distance_km=1.0, is_online=True),
+            NearbyProviderResult(provider_id="provider-2", distance_km=1.0, is_online=True),
+        ]
+    )
 
     batch = await engine._fetch_and_filter_candidates(
         task=task,
@@ -189,11 +201,11 @@ async def test_matching_engine_excludes_provider_ids_from_session(mock_db_sessio
 
 @pytest.mark.asyncio
 async def test_get_excluded_provider_ids_unpacks_row_tuples(mock_db_session):
-    engine = MatchingEngine(session_id="session-tuple", db_session=mock_db_session)
+    engine = MatchingEngine(session_id="session-tuple", session=mock_db_session)
 
     mock_res = MagicMock()
     mock_res.all.return_value = [("prov-1",), ("prov-2",), (None,)]
-    engine.attempt_repo.execute = AsyncMock(return_value=mock_res)
+    mock_db_session.exec.return_value = mock_res
 
     excluded = await engine._get_excluded_provider_ids(task_id="task-123")
     assert set(excluded) == {"prov-1", "prov-2"}
@@ -220,19 +232,14 @@ def test_candidate_scorer_ranks_by_score():
 
 @pytest.mark.asyncio
 async def test_candidate_pinger_ping_candidate(mock_db_session):
-    attempt_repo = MagicMock()
-    attempt_repo.add = AsyncMock()
-
-    provider_profile_repo = MagicMock()
     mock_exec_res = MagicMock()
     mock_exec_res.rowcount = 1
-    provider_profile_repo.execute = AsyncMock(return_value=mock_exec_res)
+    mock_db_session.exec.return_value = mock_exec_res
 
     notification_service = MagicMock()
 
     pinger = CandidatePinger(
-        attempt_repo=attempt_repo,
-        provider_profile_repo=provider_profile_repo,
+        session=mock_db_session,
         notification_service=notification_service,
         ping_duration=180,
     )
@@ -251,4 +258,4 @@ async def test_candidate_pinger_ping_candidate(mock_db_session):
     assert attempt.provider_id == "p1"
     assert attempt.task_id == "t1"
     assert attempt.match_score == 85.0
-    attempt_repo.add.assert_called_once_with(attempt)
+    mock_db_session.add.assert_called_once_with(attempt)

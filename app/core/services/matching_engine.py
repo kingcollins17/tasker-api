@@ -27,22 +27,18 @@ from app.core.models.users import (
     User,
     UserLocation,
 )
-from app.core.repository import QueryOptions, Repository
-from app.core.services.availability_service import (
-    AvailabilityService,
-    get_availability_service_manual,
-)
+from app.core.services.dispatch_policy import DispatchPolicy
 from app.core.services.logger_service import (
     LoggerService,
     get_logger_service_manual,
 )
-from app.core.services.provider_location import (
+from app.core.services.geo_service import (
+    GeoService,
     NearbyProviderResult,
-    PostGISProviderLocationService,
 )
 from app.core.utils.currency import to_naira
 from app.core.utils.datetime_helper import lagos_now
-from app.features.notifications.services import (
+from app.features.notifications.notification_service import (
     NotificationService,
     get_notification_service_manual,
 )
@@ -80,16 +76,12 @@ class CandidateFetcher:
 
     def __init__(
         self,
-        task_location_repo: Repository[TaskLocation],
-        attempt_repo: Repository[TaskDispatchAttempt],
-        provider_profile_repo: Repository[ProviderProfile],
-        geo_service: PostGISProviderLocationService,
+        session: AsyncSession,
+        geo_service: GeoService,
         exclude_previous_sessions: bool = True,
         excluded_provider_ids: Optional[List[str]] = None,
     ):
-        self.task_location_repo = task_location_repo
-        self.attempt_repo = attempt_repo
-        self.provider_profile_repo = provider_profile_repo
+        self.session = session
         self.geo_service = geo_service
         self.exclude_previous_sessions = exclude_previous_sessions
         self.excluded_provider_ids = (
@@ -108,13 +100,13 @@ class CandidateFetcher:
             all_excluded.update(excluded_provider_ids)
 
         stmt_attempts = select(TaskDispatchAttempt.provider_id).where(
-            TaskDispatchAttempt.task_id == task_id
+            col(TaskDispatchAttempt.task_id) == task_id
         )
         if not self.exclude_previous_sessions and dispatch_session:
             stmt_attempts = stmt_attempts.where(
-                TaskDispatchAttempt.dispatch_session_id == dispatch_session.id
+                col(TaskDispatchAttempt.dispatch_session_id) == dispatch_session.id
             )
-        res_attempts = await self.attempt_repo.execute(stmt_attempts)
+        res_attempts = await self.session.exec(stmt_attempts)
         raw_attempts = res_attempts.all()
         attempted_ids: Set[str] = {
             (row[0] if isinstance(row, (tuple, Row)) else row)
@@ -130,8 +122,10 @@ class CandidateFetcher:
         if not task.service_id:
             return None
 
-        stmt_loc = select(TaskLocation).where(TaskLocation.task_id == task.id).limit(1)
-        res_loc = await self.task_location_repo.execute(stmt_loc)
+        stmt_loc = (
+            select(TaskLocation).where(col(TaskLocation.task_id) == task.id).limit(1)
+        )
+        res_loc = await self.session.exec(stmt_loc)
 
         task_loc: Optional[TaskLocation] = res_loc.one_or_none()
         if not task_loc or task_loc.latitude is None or task_loc.longitude is None:
@@ -150,22 +144,23 @@ class CandidateFetcher:
 
         stmt_eligibility = (
             select(User, ProviderProfile)
-            .join(ProviderProfile, ProviderProfile.user_id == User.id)  # type: ignore
+            .join(ProviderProfile, col(ProviderProfile.user_id) == col(User.id))  # type: ignore
             .join(
                 ProviderServiceLink,
-                ProviderServiceLink.provider_id == ProviderProfile.user_id,  # type: ignore
+                col(ProviderServiceLink.provider_id) == col(ProviderProfile.user_id),  # type: ignore
             )
             .where(
-                User.id.in_(provider_ids),  # type: ignore
-                User.is_active == True,  # noqa: E712
-                ProviderProfile.status == KYCStatus.VERIFIED,
-                ProviderServiceLink.service_id == service_id,
-                ProviderProfile.is_online == True,  # noqa: E712
-                ProviderProfile.duty_status == DutyStatus.ONLINE_AVAILABLE,
+                col(User.id).in_(provider_ids),  # type: ignore
+                col(User.is_active) == True,  # noqa: E712
+                col(ProviderProfile.status) == KYCStatus.VERIFIED,
+                col(ProviderServiceLink.service_id) == service_id,
+                col(ProviderProfile.is_online) == True,  # noqa: E712
+                col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE,
             )
         )
 
-        res_eligibility = await self.provider_profile_repo.execute(stmt_eligibility)
+        res_eligibility = await self.session.exec(stmt_eligibility)
+        # pyrefly: ignore [missing-attribute]
         return res_eligibility.unique().all()
 
     async def fetch(
@@ -193,9 +188,11 @@ class CandidateFetcher:
 
         batch_size = max(
             1,
-            dispatch_session.batch_size
-            if (dispatch_session and dispatch_session.batch_size)
-            else 5,
+            (
+                dispatch_session.batch_size
+                if (dispatch_session and dispatch_session.batch_size)
+                else 5
+            ),
         )
 
         limit_pool = 50
@@ -289,13 +286,11 @@ class CandidatePinger:
 
     def __init__(
         self,
-        attempt_repo: Repository[TaskDispatchAttempt],
-        provider_profile_repo: Repository[ProviderProfile],
+        session: AsyncSession,
         notification_service: NotificationService,
-        ping_duration: int = 180,
+        ping_duration: int = DispatchPolicy.PING_DURATION_SECONDS,
     ):
-        self.attempt_repo = attempt_repo
-        self.provider_profile_repo = provider_profile_repo
+        self.session = session
         self.notification_service = notification_service
         self.ping_duration = ping_duration
 
@@ -304,32 +299,30 @@ class CandidatePinger:
         stmt_stale = select(
             TaskDispatchAttempt.id, TaskDispatchAttempt.provider_id
         ).where(
-            TaskDispatchAttempt.task_id == task.id,
-            TaskDispatchAttempt.status == DispatchAttemptStatus.PENDING,  # type: ignore
+            col(TaskDispatchAttempt.task_id) == task.id,
+            col(TaskDispatchAttempt.status) == DispatchAttemptStatus.PENDING,  # type: ignore
             col(TaskDispatchAttempt.expires_at) <= lagos_now(),
         )
-        res_stale = await self.attempt_repo.execute(stmt_stale)
+        res_stale = await self.session.exec(stmt_stale)
         stale_records = res_stale.all()
         if stale_records:
             stale_attempt_ids = [r[0] for r in stale_records]
             stale_provider_ids = [r[1] for r in stale_records]
 
-            await self.attempt_repo.execute(
+            await self.session.exec(
                 update(TaskDispatchAttempt)
                 .where(col(TaskDispatchAttempt.id).in_(stale_attempt_ids))
-                .values(
-                    status=DispatchAttemptStatus.TIMEOUT, responded_at=lagos_now()
-                )
+                .values(status=DispatchAttemptStatus.TIMEOUT, responded_at=lagos_now())
             )
-            await self.provider_profile_repo.execute(
+            await self.session.exec(
                 update(ProviderProfile)
                 .where(
                     col(ProviderProfile.user_id).in_(stale_provider_ids),
-                    ProviderProfile.duty_status == DutyStatus.ON_DISPATCH,  # type: ignore
+                    col(ProviderProfile.duty_status) == DutyStatus.ON_DISPATCH,  # type: ignore
                 )
                 .values(duty_status=DutyStatus.ONLINE_AVAILABLE)
             )
-            await self.provider_profile_repo.session.commit()
+            await self.session.commit()
             logger.info(
                 f"CandidatePinger: Recovered {len(stale_attempt_ids)} stale attempts for task {task.id}"
             )
@@ -353,11 +346,11 @@ class CandidatePinger:
             update(ProviderProfile)
             .where(
                 col(ProviderProfile.user_id) == candidate.user_id,
-                ProviderProfile.duty_status == DutyStatus.ONLINE_AVAILABLE,  # type: ignore
+                col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE,  # type: ignore
             )
             .values(duty_status=DutyStatus.ON_DISPATCH)
         )
-        res_update = await self.provider_profile_repo.execute(stmt_update)
+        res_update = await self.session.exec(stmt_update)
         if res_update.rowcount == 0:
             logger.debug(
                 f"CandidatePinger: Candidate {candidate.user_id} is no longer ONLINE_AVAILABLE (lost race). Skipping."
@@ -375,7 +368,7 @@ class CandidatePinger:
             expires_at=now + timedelta(seconds=effective_ping_duration),
             status=DispatchAttemptStatus.PENDING,
         )
-        await self.attempt_repo.add(attempt)
+        self.session.add(attempt)
         return attempt
 
     async def send_batch_notification(
@@ -387,9 +380,7 @@ class CandidatePinger:
         expires_at: Optional[str] = None,
     ) -> None:
         """Sends a single notification to all candidate providers in the batch at once."""
-        payout_fmt = (
-            to_naira(offered_payout) if offered_payout > 0 else "offered price"
-        )
+        payout_fmt = to_naira(offered_payout) if offered_payout > 0 else "offered price"
         if self.ping_duration >= 60 and self.ping_duration % 60 == 0:
             mins = self.ping_duration // 60
             time_str = f"{mins} minute" if mins == 1 else f"{mins} minutes"
@@ -476,71 +467,50 @@ class MatchingEngine:
     def __init__(
         self,
         session_id: str,
-        db_session: AsyncSession,
+        session: Optional[AsyncSession] = None,
         ping_duration: int = 180,
         exclude_previous_sessions: bool = True,
         excluded_provider_ids: Optional[List[str]] = None,
-        session_repo: Optional[Repository[DispatchSession]] = None,
-        task_repo: Optional[Repository[Task]] = None,
-        task_location_repo: Optional[Repository[TaskLocation]] = None,
-        attempt_repo: Optional[Repository[TaskDispatchAttempt]] = None,
-        provider_profile_repo: Optional[Repository[ProviderProfile]] = None,
-        user_repo: Optional[Repository[User]] = None,
-        geo_service: Optional[PostGISProviderLocationService] = None,
+        geo_service: Optional[GeoService] = None,
         notification_service: Optional[NotificationService] = None,
-        availability_service: Optional[AvailabilityService] = None,
         system_logger: Optional[LoggerService] = None,
         fetcher: Optional[CandidateFetcher] = None,
         scorer: Optional[CandidateScorer] = None,
         pinger: Optional[CandidatePinger] = None,
+        db_session: Optional[AsyncSession] = None,
     ):
         self.session_id = session_id
-        self.db_session = db_session
+        effective_session = session if session is not None else db_session
+        if effective_session is None:
+            raise ValueError(
+                "AsyncSession must be provided to MatchingEngine constructor."
+            )
+        self.session = effective_session
+        self.db_session = effective_session
         self.ping_duration = ping_duration
         self.exclude_previous_sessions = exclude_previous_sessions
         self.excluded_provider_ids = (
             list(excluded_provider_ids) if excluded_provider_ids else []
         )
 
-        self.session_repo = session_repo or Repository(DispatchSession, db_session)
-        self.task_repo = task_repo or Repository(Task, db_session)
-        self.task_location_repo = task_location_repo or Repository(
-            TaskLocation, db_session
-        )
-        self.attempt_repo = attempt_repo or Repository(TaskDispatchAttempt, db_session)
-        self.provider_profile_repo = provider_profile_repo or Repository(
-            ProviderProfile, db_session
-        )
-        self.user_repo = user_repo or Repository(User, db_session)
-
         if geo_service is None:
-            location_repo = Repository(UserLocation, db_session)
-            geo_service = PostGISProviderLocationService(
-                location_repo=location_repo,
-                provider_profile_repo=self.provider_profile_repo,
-            )
+            geo_service = GeoService(session=self.session)
         self.geo_service = geo_service
 
         self.notification_service = (
-            notification_service or get_notification_service_manual(db_session)
+            notification_service or get_notification_service_manual(self.session)
         )
-        self.availability_service = (
-            availability_service or get_availability_service_manual(db_session)
-        )
-        self.system_logger = system_logger or get_logger_service_manual(db_session)
+        self.system_logger = system_logger or get_logger_service_manual(self.session)
 
         self.fetcher = fetcher or CandidateFetcher(
-            task_location_repo=self.task_location_repo,
-            attempt_repo=self.attempt_repo,
-            provider_profile_repo=self.provider_profile_repo,
+            session=self.session,
             geo_service=self.geo_service,
             exclude_previous_sessions=self.exclude_previous_sessions,
             excluded_provider_ids=self.excluded_provider_ids,
         )
         self.scorer = scorer or CandidateScorer()
         self.pinger = pinger or CandidatePinger(
-            attempt_repo=self.attempt_repo,
-            provider_profile_repo=self.provider_profile_repo,
+            session=self.session,
             notification_service=self.notification_service,
             ping_duration=self.ping_duration,
         )
@@ -582,9 +552,11 @@ class MatchingEngine:
         )
         batch_size = max(
             1,
-            dispatch_session.batch_size
-            if (dispatch_session and dispatch_session.batch_size)
-            else 5,
+            (
+                dispatch_session.batch_size
+                if (dispatch_session and dispatch_session.batch_size)
+                else 5
+            ),
         )
         return self.scorer.score(
             rows=candidates.rows,
@@ -636,7 +608,7 @@ class MatchingEngine:
         """
         logger.debug(f"MatchingEngine.run starting for session {self.session_id}")
 
-        dispatch_session = await self.session_repo.get(self.session_id)
+        dispatch_session = await self.session.get(DispatchSession, self.session_id)
         if not dispatch_session:
             return MatchingResult(
                 matched=False,
@@ -657,15 +629,15 @@ class MatchingEngine:
         stmt_opt = (
             update(DispatchSession)
             .where(
-                DispatchSession.id == self.session_id,  # type: ignore
-                DispatchSession.lock_version == lock_version,  # type: ignore
+                col(DispatchSession.id) == self.session_id,  # type: ignore
+                col(DispatchSession.lock_version) == lock_version,  # type: ignore
             )
             .values(
                 lock_version=lock_version + 1,
                 updated_at=lagos_now(),
             )
         )
-        res_opt = await self.session_repo.execute(stmt_opt)
+        res_opt = await self.session.exec(stmt_opt)
         if res_opt.rowcount == 0:
             return MatchingResult(
                 matched=False,
@@ -674,9 +646,9 @@ class MatchingEngine:
                 reason="LOCKING_CONFLICT",
             )
 
-        await self.session_repo.refresh(dispatch_session)
+        await self.session.refresh(dispatch_session)
 
-        task = await self.task_repo.get(dispatch_session.task_id)
+        task = await self.session.get(Task, dispatch_session.task_id)
         if not task:
             return MatchingResult(
                 matched=False,
@@ -708,12 +680,10 @@ class MatchingEngine:
 
         stmt_attempts_count = select(
             func.max(TaskDispatchAttempt.sequence_order)
-        ).where(TaskDispatchAttempt.dispatch_session_id == dispatch_session.id)
-        res_count = await self.attempt_repo.execute(stmt_attempts_count)
+        ).where(col(TaskDispatchAttempt.dispatch_session_id) == dispatch_session.id)
+        res_count = await self.session.exec(stmt_attempts_count)
         raw_count = res_count.one_or_none()
-        max_seq = (
-            raw_count[0] if isinstance(raw_count, (tuple, Row)) else raw_count
-        )
+        max_seq = raw_count[0] if isinstance(raw_count, (tuple, Row)) else raw_count
         seq_start = (max_seq or 0) + 1
 
         attempts = await self.pinger.ping_batch(

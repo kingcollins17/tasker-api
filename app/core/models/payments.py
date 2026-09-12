@@ -51,6 +51,7 @@ class PayoutStatus(str, enum.Enum):
     TRANSFER_INITIATED = "TRANSFER_INITIATED"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
 
 
 class PayoutQueue(SQLModel, table=True):

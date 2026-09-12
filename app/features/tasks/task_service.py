@@ -1,4 +1,3 @@
-from app.core.models.users import DutyStatus
 import math
 import random
 from datetime import datetime
@@ -9,17 +8,22 @@ from geoalchemy2 import Geography
 from sqlalchemy import cast, update
 from sqlalchemy.orm import contains_eager
 from sqlmodel import col, desc, func, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.database import get_session
 from app.core.models.notifications import (
     NotificationChannel,
     NotificationPriority,
     NotificationType,
 )
+from app.core.models.payments import PayoutQueue
 from app.core.models.services import PricingRule, Service, ServiceCategory
 from app.core.models.tasks import (
+    CancelledBy,
     DispatchAttemptStatus,
     DispatchSession,
     LocationType,
+    PriceAdjustmentStatus,
     Task,
     TaskAssignment,
     TaskAssignmentStatus,
@@ -27,25 +31,28 @@ from app.core.models.tasks import (
     TaskDispatchAttempt,
     TaskEventHistory,
     TaskLocation,
-    TaskStatus,
     TaskPriceAdjustment,
-    PriceAdjustmentStatus,
+    TaskStatus,
 )
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
-from app.core.models.payments import PayoutQueue
-from app.core.models.users import ProviderProfile, User, UserLocation, UserType
+from app.core.models.users import DutyStatus, ProviderProfile, User, UserLocation, UserType
 from app.core.queries.task_queries import TaskQueries
 from app.core.repository import GetRepository, QueryOptions, Repository
+from app.core.services.logger_service import LoggerService, get_logger_service
 from app.core.services.payment import (
     PaymentGateway,
     PaymentInitializationResponse,
     get_paystack_gateway,
 )
+from app.core.utils.currency import to_naira
 from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.geo import calculate_locations_distance
-from app.core.utils.currency import to_naira
+from app.features.credibility.credibility_service import (
+    CredibilityService,
+    get_credibility_service,
+)
 from app.features.notifications.schemas import CreateNotification
-from app.features.notifications.services import (
+from app.features.notifications.notification_service import (
     NotificationService,
     get_notification_service,
 )
@@ -55,12 +62,13 @@ from app.features.services.pricing_engine import (
     PricingEngine,
     get_pricing_engine,
 )
+from app.features.tasks.dispatch_service import DispatchService
 from app.features.tasks.schemas import (
-    TaskCreate,
-    TaskUpdate,
-    TaskPriceEstimateRequest,
     PriceAdjustmentCreate,
     PriceAdjustmentRespond,
+    TaskCreate,
+    TaskPriceEstimateRequest,
+    TaskUpdate,
 )
 
 
@@ -81,6 +89,9 @@ class TaskService:
         pricing_engine: PricingEngine,
         price_adjustment_repo: Repository[TaskPriceAdjustment],
         payout_repo: Optional[Repository[PayoutQueue]] = None,
+        session: Optional[AsyncSession] = None,
+        system_logger: Optional[LoggerService] = None,
+        credibility_service: Optional[CredibilityService] = None,
     ):
         self.task_repo = task_repo
         self.location_repo = location_repo
@@ -96,6 +107,9 @@ class TaskService:
         self.pricing_engine = pricing_engine
         self.price_adjustment_repo = price_adjustment_repo
         self.payout_repo = payout_repo
+        self.session = session or task_repo.session
+        self.system_logger = system_logger
+        self.credibility_service = credibility_service
 
     def _generate_pin(self) -> str:
         return f"{random.randint(0, 9999):04d}"
@@ -267,8 +281,6 @@ class TaskService:
         - Marks task as cancelled by customer
         - Notifies provider
         """
-        from app.core.models.tasks import CancelledBy
-        
         task = await self.task_repo.get(task_id)
         if not task:
             raise HTTPException(
@@ -368,7 +380,7 @@ class TaskService:
                 recepients=[provider_id],
                 title=notification_title,
                 body=notification_body,
-                type=NotificationType.TASK_CANCELLED,
+                type=NotificationType.SYSTEM_ALERT,
                 data={
                     "task_id": task.id,
                     "task_title": task.title,
@@ -382,32 +394,6 @@ class TaskService:
         # Refresh task to return updated state
         await self.task_repo.refresh(task)
         return task
-
-    async def redispatch_task(
-        self,
-        task_id: str,
-        current_user_id: str,
-        feedback: Optional[str] = None,
-    ) -> Task:
-        """Redispatch a task via DispatchService manual_redispatch flow."""
-        from app.features.tasks.dispatch_service import DispatchService
-        dispatch_service = DispatchService(
-            session=self.session,
-            task_repo=self.task_repo,
-            session_repo=Repository(DispatchSession, self.session),
-            attempt_repo=self.attempt_repo,
-            assignment_repo=self.assignment_repo,
-            provider_profile_repo=Repository(ProviderProfile, self.session),
-            system_logger=self.system_logger,
-            notification_service=self.notification_service,
-            credibility_service=self.credibility_service,
-            task_service=self,
-        )
-        return await dispatch_service.manual_redispatch(
-            task_id=task_id,
-            current_user_id=current_user_id,
-            feedback=feedback,
-        )
 
     async def estimate_task_price(
         self,
@@ -454,7 +440,7 @@ class TaskService:
         customer_id: Optional[str] = None,
     ) -> Tuple[List[Task], int]:
         statement = select(Task)
-        count_statement = select(func.count()).select_from(Task)
+        count_statement = select(func.count(col(Task.id).distinct())).select_from(Task)
 
         if status_filter:
             statement = statement.where(col(Task.status).in_(status_filter))
@@ -618,7 +604,6 @@ class TaskService:
         if updates:
             updates["updated_at"] = lagos_now()
             await self.task_repo.update(task_id, updates)
-            await self.task_repo.refresh(task)
 
         await self.task_repo.refresh(task)
         return task
@@ -690,6 +675,8 @@ class TaskService:
             and customer.provider_profile.last_name
         ):
             fullname = f"{customer.provider_profile.first_name} {customer.provider_profile.last_name}"
+        elif getattr(customer, "first_name", None) and getattr(customer, "last_name", None):
+            fullname = f"{customer.first_name} {customer.last_name}"
 
         total_amount = task.customer_total_price or 0.0
         if total_amount <= 0:
@@ -852,9 +839,16 @@ class TaskService:
 
         if schema.approved:
             adjustment.status = PriceAdjustmentStatus.APPROVED
-            task.customer_total_price = (task.customer_total_price or 0.0) + (adjustment.amount or 0.0)
-            task.provider_payout = (task.provider_payout or 0.0) + (adjustment.amount or 0.0)
-            await self.task_repo.add(task)
+            new_customer_price = max(0.0, float(adjustment.amount or 0.0))
+            service = await self.service_repo.get(task.service_id) if task.service_id else None
+            take_rate = service.take_rate if (service and service.take_rate is not None) else 0.15
+            new_platform_fee = round(new_customer_price * take_rate, 2)
+            new_payout = round(new_customer_price - new_platform_fee, 2)
+            await self.task_repo.update(task.id, {
+                "customer_total_price": new_customer_price,
+                "platform_fee": new_platform_fee,
+                "provider_payout": new_payout,
+            })
 
             event_name = "PRICE_ADJUSTMENT_APPROVED"
             notif_title = "Price Adjustment Approved"
@@ -920,6 +914,9 @@ def get_task_service(
         GetRepository(TaskPriceAdjustment)
     ),
     payout_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
+    session: AsyncSession = Depends(get_session),
+    system_logger: LoggerService = Depends(get_logger_service),
+    credibility_service: CredibilityService = Depends(get_credibility_service),
 ) -> TaskService:
     return TaskService(
         task_repo=task_repo,
@@ -936,4 +933,7 @@ def get_task_service(
         pricing_engine=pricing_engine,
         price_adjustment_repo=price_adjustment_repo,
         payout_repo=payout_repo,
+        session=session,
+        system_logger=system_logger,
+        credibility_service=credibility_service,
     )

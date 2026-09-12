@@ -1,3 +1,4 @@
+
 import logging
 from typing import Any, Dict, Optional
 
@@ -5,6 +6,7 @@ from fastapi import Depends
 from sqlmodel import col, select, update
 
 from app.core.models.notifications import NotificationType
+from app.features.notifications.notification_service import NotificationService,get_notification_service
 from app.core.models.payments import DebtReason, PayoutQueue, PayoutStatus, ProviderDebt
 from app.core.models.tasks import PaymentStatus, Task
 from app.core.models.transactions import Transaction, TransactionStatus, TransactionType
@@ -14,11 +16,8 @@ from app.core.services.logger_service import LoggerService, get_logger_service
 from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.timer import Timer
 from app.core.utils.currency import to_naira
-from app.features.notifications.services import (
-    NotificationService,
-    get_notification_service,
-)
-from app.features.payments.services import PaymentService, get_payment_service
+
+from app.features.payments.payment_service import PaymentService, get_payment_service
 from app.features.payments.transfer_service import TransferService, get_transfer_service
 
 logger = logging.getLogger(__name__)
@@ -299,7 +298,7 @@ class PaymentWebhookProcessor:
                     recepients=[user_id],
                     title="Payment Successful",
                     body=f"Your payment of {to_naira(amount)} has been received successfully.",
-                    type=NotificationType.PAYMENT_RECEIVED,
+                    type=NotificationType.SYSTEM_ALERT,
                     data={"transaction_id": transaction.id, "reference": reference},
                 )
                 print(f"[DEBUG handle_charge_success] Notification dispatched successfully to user: {user_id}")
@@ -401,7 +400,7 @@ class PaymentWebhookProcessor:
                 recepients=[user_id],
                 title="Payment Failed",
                 body=f"Your payment of {to_naira(amount)} could not be processed. Please try again.",
-                type=NotificationType.PAYMENT_FAILED,
+                type=NotificationType.SYSTEM_ALERT,
                 data={"reference": reference},
             )
             await self.system_logger.info(
@@ -659,14 +658,14 @@ class TransferWebhookProcessor:
                 recepients=[user_id],
                 title="Payout Successful",
                 body=f"Your payout of {to_naira(amount)} has been processed successfully.",
-                type=NotificationType.PAYMENT_RECEIVED,
+                type=NotificationType.SYSTEM_ALERT,
                 data={"reference": reference},
             )
             print(
                 f"[TransferWebhookProcessor.handle_transfer_success] Dispatched payout notification to user_id={user_id}"
             )
             await self.system_logger.info(
-                f"Dispatched payout notification ({NotificationType.PAYMENT_RECEIVED}) to user: {user_id}",
+                f"Dispatched payout notification ({NotificationType.SYSTEM_ALERT}) to user: {user_id}",
                 source="payments.webhook",
             )
         except Exception as e:
@@ -674,7 +673,7 @@ class TransferWebhookProcessor:
                 f"[TransferWebhookProcessor.handle_transfer_success] Notification dispatch failed: {e}"
             )
             await self.system_logger.error(
-                f"Failed to dispatch payout notification ({NotificationType.PAYMENT_RECEIVED}) to user {user_id}: {str(e)}",
+                f"Failed to dispatch payout notification ({NotificationType.SYSTEM_ALERT}) to user {user_id}: {str(e)}",
                 source="payments.webhook",
             )
 
@@ -810,16 +809,16 @@ class TransferWebhookProcessor:
                 recepients=[user_id],
                 title="Payout Failed",
                 body="There was an issue processing your payout. Please check your details.",
-                type=NotificationType.PAYMENT_FAILED,
+                type=NotificationType.SYSTEM_ALERT,
                 data={"reference": reference},
             )
             await self.system_logger.info(
-                f"Dispatched payout notification ({NotificationType.PAYMENT_FAILED}) to user: {user_id}",
+                f"Dispatched payout notification ({NotificationType.SYSTEM_ALERT}) to user: {user_id}",
                 source="payments.webhook",
             )
         except Exception as e:
             await self.system_logger.error(
-                f"Failed to dispatch payout notification ({NotificationType.PAYMENT_FAILED}) to user {user_id}: {str(e)}",
+                f"Failed to dispatch payout notification ({NotificationType.SYSTEM_ALERT}) to user {user_id}: {str(e)}",
                 source="payments.webhook",
             )
 

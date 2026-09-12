@@ -8,7 +8,6 @@ from app.core.models.users import CustomerProfile, ProviderProfile, User, UserDe
 from app.core.repository import GetRepository, Repository
 from app.core.services import OTPService, get_otp_service
 from app.core.services.provider_location import ProviderLocationService, get_provider_location_service
-from app.core.services.availability_service import AvailabilityService, get_availability_service, get_availability_service_manual
 from app.features.users.schemas import UserLogin, UserRegister
 from app.features.users.services.auth_service import UserAuthService, get_user_auth_service
 from app.features.users.services.customer_profile_service import CustomerProfileService, get_customer_profile_service
@@ -31,7 +30,6 @@ class UserService:
         region_repo: Repository[Region],
         location_repo: Repository[UserLocation],
         device_repo: Repository[UserDevice],
-        availability_service: AvailabilityService,
         provider_location_service: ProviderLocationService,
         auth_service: UserAuthService,
         customer_service: CustomerProfileService,
@@ -47,8 +45,6 @@ class UserService:
         self.location_repo = location_repo
         self.device_repo = device_repo
         self.provider_location_service = provider_location_service
-        self.availability_service = availability_service
-
         # Sub-services
         self.auth = auth_service
         self.customer = customer_service
@@ -227,7 +223,6 @@ def get_user_service(
     region_repo: Repository[Region] = Depends(GetRepository(Region)),
     location_repo: Repository[UserLocation] = Depends(GetRepository(UserLocation)),
     device_repo: Repository[UserDevice] = Depends(GetRepository(UserDevice)),
-    availability_service: AvailabilityService = Depends(get_availability_service),
     provider_location_service: ProviderLocationService = Depends(
         get_provider_location_service
     ),
@@ -245,7 +240,6 @@ def get_user_service(
         region_repo=region_repo,
         location_repo=location_repo,
         device_repo=device_repo,
-        availability_service=availability_service,
         provider_location_service=provider_location_service,
         auth_service=auth_service,
         customer_service=customer_service,

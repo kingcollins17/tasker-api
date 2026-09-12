@@ -15,7 +15,7 @@ from app.core.models.users import UserType
 from app.features.users.schemas import UserResponse
 from app.core.api_response import BaseAPIResponse
 from app.core.error_handler import AppErrorHandler
-from app.features.payments.services import PaymentService, get_payment_service
+from app.features.payments.payment_service import PaymentService, get_payment_service
 from app.features.payments.schemas import CustomerPayoutStatsResponse, ProviderEarningStatsResponse
 
 

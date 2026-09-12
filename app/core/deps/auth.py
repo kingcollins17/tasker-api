@@ -175,3 +175,49 @@ class GetCurrentUserOrAdminOptional:
             return admin
             
         return None
+
+
+class GetCurrentAdmin:
+    """Dependency class to retrieve and validate the currently authenticated admin user."""
+
+    async def __call__(
+        self,
+        token_oauth: str | None = Depends(oauth2_scheme),
+        token_bearer: HTTPAuthorizationCredentials | None = Depends(http_bearer),
+        admin_repo: Repository[AdminUser] = Depends(GetRepository(AdminUser)),
+    ) -> AdminUser:
+        token = None
+        if token_bearer:
+            token = token_bearer.credentials
+        elif token_oauth:
+            token = token_oauth
+
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        payload = security.decode_access_token(token)
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        admin_id = payload.get("id")
+        if not admin_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        admin = await admin_repo.get(admin_id)
+        if not admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin user not found or unauthorized",
+            )
+        return admin

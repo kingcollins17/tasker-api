@@ -12,10 +12,12 @@ celery_app = Celery(
         "app.features.tasks.celery.dispatch",
         "app.features.tasks.celery.completion",
         "app.features.tasks.celery.metrics",
+        "app.features.tasks.celery.beat",
         "app.features.reviews.celery.tasks",
         "app.features.credibility.celery.tasks",
         "app.features.payments.celery.tasks",
         "app.features.payments.celery.transfer_tasks",
+        "app.features.payments.celery.beat",
     ]
 )
 
@@ -61,8 +63,10 @@ celery_app.conf.update(
         "tasks.sync_service_duration_metrics": {"queue": "tasks"},
         "tasks.start_dispatch_session_task": {"queue": "tasks"},
         "tasks.process_auto_retry_task": {"queue": "tasks"},
-        "tasks.process_due_dispatches": {"queue": "tasks"},
-        "tasks.recover_stale_dispatches": {"queue": "tasks"},
+        "tasks.process_due_dispatches_task": {"queue": "tasks"},
+        "tasks.recover_stale_dispatches_task": {"queue": "tasks"},
+        "tasks.process_due_dispatches_beat": {"queue": "tasks"},
+        "tasks.recover_stale_dispatches_beat": {"queue": "tasks"},
         "tasks.execute_matching_engine_task": {"queue": "tasks"},
         "tasks.complete_task_assignment": {"queue": "tasks"},
         "reviews.sync_user_ratings": {"queue": "tasks"},
@@ -71,26 +75,28 @@ celery_app.conf.update(
         "payments.process_provider_payout": {"queue": "payments"},
         "payments.process_debt_settlement": {"queue": "payments"},
         "transfers.process_transfer": {"queue": "payments"},
-        "transfers.recover_stuck_transfers": {"queue": "payments"},
-        "transfers.reconcile_processing_transfers": {"queue": "payments"},
+        "transfers.recover_stuck_transfers_task": {"queue": "payments"},
+        "transfers.reconcile_processing_transfers_task": {"queue": "payments"},
+        "transfers.recover_stuck_transfers_beat": {"queue": "payments"},
+        "transfers.reconcile_processing_transfers_beat": {"queue": "payments"},
     },
 
     # ── Celery Beat schedule ──────────────────────────────────────────────
     beat_schedule={
-        "process-due-dispatches": {
-            "task": "tasks.process_due_dispatches",
-            "schedule": 10.0,  # every 10 seconds
-        },
-        "recover-stale-dispatches": {
-            "task": "tasks.recover_stale_dispatches",
-            "schedule": crontab(minute="*/2"),  # every 2 minutes
-        },
-        "recover-stuck-transfers": {
-            "task": "transfers.recover_stuck_transfers",
+        "process-due-dispatches-beat": {
+            "task": "tasks.process_due_dispatches_beat",
             "schedule": crontab(minute="*/5"),  # every 5 minutes
         },
-        "reconcile-processing-transfers": {
-            "task": "transfers.reconcile_processing_transfers",
+        "recover-stale-dispatches-beat": {
+            "task": "tasks.recover_stale_dispatches_beat",
+            "schedule": crontab(minute="*/5"),  # every 5 minutes
+        },
+        "recover-stuck-transfers-beat": {
+            "task": "transfers.recover_stuck_transfers_beat",
+            "schedule": crontab(minute="*/5"),  # every 5 minutes
+        },
+        "reconcile-processing-transfers-beat": {
+            "task": "transfers.reconcile_processing_transfers_beat",
             "schedule": crontab(minute="*/10"),  # every 10 minutes
         },
     },

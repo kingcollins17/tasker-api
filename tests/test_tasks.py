@@ -18,7 +18,7 @@ from app.core.models.tasks import (
     LocationType,
 )
 from app.core.models.users import UserType
-from app.features.tasks.services import TaskService, get_task_service
+from app.features.tasks.task_service import TaskService, get_task_service
 from app.features.tasks.schemas import TaskCreate, TaskUpdate, LocationCreate
 from app.features.users.schemas import UserResponse
 from app.core.repository import Repository

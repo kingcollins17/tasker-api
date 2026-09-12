@@ -6,7 +6,6 @@ from fastapi import Depends, HTTPException, status
 from app.core.logging import log_error
 from app.core.models.users import CustomerProfile, KYCStatus, ProviderProfile, User, UserType
 from app.core.repository import GetRepository, QueryOptions, Repository
-from app.core.services.availability_service import AvailabilityService, get_availability_service, get_availability_service_manual
 from app.core.services import (
     OTPError,
     OTPMaxAttemptsReachedError,
@@ -32,13 +31,11 @@ class UserAuthService:
         customer_repo: Repository[CustomerProfile],
         provider_repo: Repository[ProviderProfile],
         otp_service: OTPService,
-        availability_service: AvailabilityService,
     ):
         self.user_repo = user_repo
         self.customer_repo = customer_repo
         self.provider_repo = provider_repo
         self.otp_service = otp_service
-        self.availability_service = availability_service
 
     @log_error()
     async def register_user(self, schema: UserRegister) -> User:
@@ -93,9 +90,6 @@ class UserAuthService:
                 status=KYCStatus.PENDING_SUBMISSION,
             )
             await self.provider_repo.add(provider_profile)
-
-            # Insert default availability for all weekdays (Monday-Friday, 06:00:00 to 23:59:00) via availability_service
-            await self.availability_service.create_default_availability(user.id)
 
         # Refresh user instance to populate relationships
         await self.user_repo.refresh(user)
@@ -303,7 +297,6 @@ def get_user_auth_service(
         GetRepository(ProviderProfile)
     ),
     otp_service: OTPService = Depends(get_otp_service),
-    availability_service: AvailabilityService = Depends(get_availability_service),
 ) -> UserAuthService:
     """Dependency provider injecting repositories and sub-services into UserAuthService."""
     return UserAuthService(
@@ -311,5 +304,4 @@ def get_user_auth_service(
         customer_repo=customer_repo,
         provider_repo=provider_repo,
         otp_service=otp_service,
-        availability_service=availability_service,
     )

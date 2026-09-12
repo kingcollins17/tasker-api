@@ -34,7 +34,7 @@ from app.features.payments.schemas import (
     TransactionResponse,
     PayoutQueueResponse,
 )
-from app.features.payments.services import PaymentService, get_payment_service
+from app.features.payments.payment_service import PaymentService, get_payment_service
 from app.features.users.schemas import UserResponse
 from app.core.services.logger_service import LoggerService, get_logger_service
 from app.core.utils.timer import Timer

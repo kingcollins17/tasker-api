@@ -16,7 +16,7 @@ from app.core.services.payment import (
     TransferResult,
 )
 from app.features.payments.processors import PaymentWebhookProcessor, TransferWebhookProcessor
-from app.features.payments.services import PaymentService
+from app.features.payments.payment_service import PaymentService
 from app.features.payments.transfer_service import TransferService
 
 
@@ -370,7 +370,7 @@ async def test_transfer_service_mark_completed_updates_db_records(mock_payment_d
     transfer = Transfer(
         id="tr_100",
         task_id="task_1",
-        payment_id="pay_1",
+        payout_id="pay_1",
         provider_id="prov_1",
         amount=5000.0,
         status=TransferStatus.PROCESSING,

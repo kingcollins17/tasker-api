@@ -42,15 +42,23 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Initialize database tables defined in models on app startup."""
-    async with engine.begin() as conn:
-        # Create PostGIS extension if it doesn't exist (required for geometry types)
-        try:
+    try:
+        async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
-            await conn.execute(text("ALTER TABLE payout_queue ADD COLUMN IF NOT EXISTS lock_version INT NOT NULL DEFAULT 1;"))
-        except Exception:
-            # Ignore exceptions (e.g. concurrent creation race conditions or pre-existing extension/column)
-            pass
+    except Exception:
+        pass
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("ALTER TABLE payout_queue ADD COLUMN IF NOT EXISTS lock_version INT NOT NULL DEFAULT 1;")
+            )
+    except Exception:
+        pass
+
+    async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+
 
 
 

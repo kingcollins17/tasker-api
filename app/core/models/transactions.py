@@ -10,18 +10,18 @@ from app.core.utils.datetime_helper import lagos_now
 
 
 class TransactionType(str, enum.Enum):
-    TASK_PAYMENT = "task_payment"
-    PROVIDER_PAYOUT = "provider_payout"
-    CASH_COMMISSION_DEBT = "cash_commission_debt"
-    DEBT_SETTLEMENT = "debt_settlement"
-    REFUND = "refund"
-    DISPUTE_SETTLEMENT = "dispute_settlement"
+    TASK_PAYMENT = "TASK_PAYMENT"
+    PROVIDER_PAYOUT = "PROVIDER_PAYOUT"
+    CASH_COMMISSION_DEBT = "CASH_COMMISSION_DEBT"
+    DEBT_SETTLEMENT = "DEBT_SETTLEMENT"
+    REFUND = "REFUND"
+    DISPUTE_SETTLEMENT = "DISPUTE_SETTLEMENT"
 
 
 class TransactionStatus(str, enum.Enum):
-    PENDING = "pending"
-    SUCCESS = "success"
-    FAILED = "failed"
+    PENDING = "PENDING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
 
 
 class Transaction(SQLModel, table=True):
@@ -35,7 +35,6 @@ class Transaction(SQLModel, table=True):
     )
     transaction_type: TransactionType = Field(index=True)
     status: TransactionStatus = Field(index=True, default=TransactionStatus.PENDING)
-    payment_mode: Optional[str] = Field(default=None, nullable=True, description="Payment mode: cash or online")
     user_id: Optional[str] = Field(default=None, foreign_key="users.id", ondelete="SET NULL", nullable=True, index=True)
     task_id: Optional[str] = Field(default=None, foreign_key="tasks.id", ondelete="SET NULL", nullable=True, index=True)
     reference: Optional[str] = Field(default=None, index=True, description="External payment gateway reference")

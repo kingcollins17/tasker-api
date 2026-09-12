@@ -23,12 +23,9 @@ from app.features.users.schemas import (
     UpdateRegion,
     UpdateOnlineStatus,
     LocationPing,
-    ProviderAvailabilityResponse,
-    UpdateProviderAvailabilityBlock,
 )
 from typing import List
 from app.features.users.services import UserService, get_user_service
-from app.core.services.availability_service import AvailabilityService, get_availability_service
 
 router = APIRouter()
 
@@ -524,98 +521,6 @@ async def ping_location(
         )
 
 
-@router.get("/provider/availability", response_model=BaseAPIResponse[List[ProviderAvailabilityResponse]], status_code=status.HTTP_200_OK)
-async def get_provider_availability(
-    current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
-    availability_service: AvailabilityService = Depends(get_availability_service),
-    system_logger: LoggerService = Depends(get_logger_service)
-):
-    """Get the weekly availability schedule for the authenticated provider."""
-    try:
-        timer = Timer()
-        timer.start()
-        blocks = await availability_service.get_provider_availability(current_user.id)
-        await system_logger.metric('get_availability', timer.stop(), source='profile.get_availability')
-        return BaseAPIResponse[List[ProviderAvailabilityResponse]](
-            data=[ProviderAvailabilityResponse.model_validate(b) for b in blocks],
-            detail="Availability fetched successfully.",
-            status_code=status.HTTP_200_OK,
-        )
-    except HTTPException as e:
-        await system_logger.warn('get_availability failed', source='profile.get_availability', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
-        raise e
-    except Exception as e:
-        await system_logger.error(f'get_availability error: {str(e)}', source='profile.get_availability')
-        AppErrorHandler.handleError(e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred.",
-        )
 
-@router.put("/provider/availability/{availability_id}", response_model=BaseAPIResponse[ProviderAvailabilityResponse], status_code=status.HTTP_200_OK)
-async def update_provider_availability(
-    availability_id: str,
-    schema: UpdateProviderAvailabilityBlock,
-    current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
-    availability_service: AvailabilityService = Depends(get_availability_service),
-    system_logger: LoggerService = Depends(get_logger_service)
-):
-    """Update an availability block for the authenticated provider (day_of_week, start_time, end_time, is_active)."""
-    try:
-        timer = Timer()
-        timer.start()
-        block = await availability_service.update_availability_block(
-            availability_id=availability_id,
-            provider_id=current_user.id,
-            day_of_week=schema.day_of_week,
-            start_time=schema.start_time,
-            end_time=schema.end_time,
-            is_active=schema.is_active,
-        )
-        await system_logger.metric('update_availability', timer.stop(), source='profile.update_availability')
-        return BaseAPIResponse[ProviderAvailabilityResponse](
-            data=ProviderAvailabilityResponse.model_validate(block),
-            detail="Availability block updated successfully.",
-            status_code=status.HTTP_200_OK,
-        )
-    except HTTPException as e:
-        await system_logger.warn('update_availability failed', source='profile.update_availability', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
-        raise e
-    except Exception as e:
-        await system_logger.error(f'update_availability error: {str(e)}', source='profile.update_availability')
-        AppErrorHandler.handleError(e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while updating availability.",
-        )
-
-
-@router.post("/provider/availability/default", response_model=BaseAPIResponse[List[ProviderAvailabilityResponse]], status_code=status.HTTP_201_CREATED)
-async def create_default_provider_availability(
-    current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
-    availability_service: AvailabilityService = Depends(get_availability_service),
-    system_logger: LoggerService = Depends(get_logger_service)
-):
-    """Create default availability blocks for the authenticated provider if none exist."""
-    try:
-        timer = Timer()
-        timer.start()
-        blocks = await availability_service.create_default_availability(current_user.id)
-        await system_logger.metric('create_default_availability', timer.stop(), source='profile.create_default_availability')
-        return BaseAPIResponse[List[ProviderAvailabilityResponse]](
-            data=[ProviderAvailabilityResponse.model_validate(b) for b in blocks],
-            detail="Default availability blocks created successfully.",
-            status_code=status.HTTP_201_CREATED,
-        )
-    except HTTPException as e:
-        await system_logger.warn('create_default_availability failed', source='profile.create_default_availability', metadata={'detail': str(e.detail) if hasattr(e, 'detail') else str(e)})
-        raise e
-    except Exception as e:
-        await system_logger.error(f'create_default_availability error: {str(e)}', source='profile.create_default_availability')
-        AppErrorHandler.handleError(e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while creating default availability.",
-        )
 
 

@@ -30,7 +30,7 @@ dev:
 celery:
 	$(CELERY) -A app.celery_app.celery_app worker --loglevel=info --pool=solo
 
-celery-beat:
+beat:
 	$(CELERY) -A app.celery_app.celery_app beat --loglevel=info
 
 install:

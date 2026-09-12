@@ -12,7 +12,7 @@ from app.core.models.reviews import TaskReview
 from app.core.models.tasks import Task, TaskStatus, PaymentStatus
 from app.core.models.users import User
 from app.core.repository import GetRepository, Repository
-from app.features.credibility.services import CredibilityService, get_credibility_service
+from app.features.credibility.credibility_service import CredibilityService, get_credibility_service
 from app.features.reviews.schemas import CreateReviewRequest
 from app.features.reviews.celery.tasks import sync_user_ratings
 

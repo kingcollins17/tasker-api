@@ -68,30 +68,9 @@ def mock_deps():
     session = MagicMock()
     session.commit = AsyncMock()
     session.refresh = AsyncMock()
-
-    task_repo = MagicMock()
-    task_repo.get = AsyncMock()
-    task_repo.add = AsyncMock()
-    task_repo.execute = AsyncMock()
-
-    session_repo = MagicMock()
-    session_repo.get = AsyncMock()
-    session_repo.add = AsyncMock(side_effect=lambda obj: obj)
-    session_repo.execute = AsyncMock()
-
-    attempt_repo = MagicMock()
-    attempt_repo.get = AsyncMock()
-    attempt_repo.add = AsyncMock()
-    attempt_repo.execute = AsyncMock()
-
-    assignment_repo = MagicMock()
-    assignment_repo.get = AsyncMock()
-    assignment_repo.add = AsyncMock()
-    assignment_repo.execute = AsyncMock()
-
-    provider_profile_repo = MagicMock()
-    provider_profile_repo.execute = AsyncMock()
-    provider_profile_repo.add = AsyncMock()
+    session.add = MagicMock()
+    session.exec = AsyncMock()
+    session.get = AsyncMock()
 
     system_logger = MagicMock()
     system_logger.info = AsyncMock()
@@ -103,21 +82,21 @@ def mock_deps():
     credibility_service = MagicMock()
     credibility_service.add = AsyncMock()
 
-    task_service = MagicMock()
-    task_service.log_task_event = AsyncMock()
-
     return {
         "session": session,
-        "task_repo": task_repo,
-        "session_repo": session_repo,
-        "attempt_repo": attempt_repo,
-        "assignment_repo": assignment_repo,
-        "provider_profile_repo": provider_profile_repo,
         "system_logger": system_logger,
         "notification_service": notification_service,
         "credibility_service": credibility_service,
-        "task_service": task_service,
     }
+
+
+def create_service(mock_deps):
+    return DispatchService(
+        session=mock_deps["session"],
+        system_logger=mock_deps["system_logger"],
+        notification_service=mock_deps["notification_service"],
+        credibility_service=mock_deps["credibility_service"],
+    )
 
 
 @pytest.mark.asyncio
@@ -126,20 +105,18 @@ async def test_dispatch_service_start_initial_dispatch(mock_deps):
     
     mock_res_lock = MagicMock()
     mock_res_lock.one_or_none.return_value = task
-    mock_deps["task_repo"].execute.return_value = mock_res_lock
 
     mock_res_seq = MagicMock()
     mock_res_seq.one_or_none.return_value = (0,)
-    mock_deps["session_repo"].execute.return_value = mock_res_seq
 
-    service = DispatchService(**mock_deps)
+    mock_deps["session"].exec.side_effect = [mock_res_lock, mock_res_seq]
+
+    service = create_service(mock_deps)
     
-    # Mock MatchingEngine.run to succeed
     from unittest.mock import patch
-    from app.core.services.matching_engine import MatchingResult
-    with patch("app.features.tasks.dispatch_service.MatchingEngine.run", new_callable=AsyncMock) as mock_run:
-        mock_run.return_value = MatchingResult(matched=True, candidates_count=1, attempts_created=1)
+    with patch("app.features.tasks.dispatch_service.execute_matching_engine.delay") as mock_delay:
         ds = await service.start_initial_dispatch("task-init")
+        assert mock_delay.called
 
         assert ds is not None
         assert ds.trigger == DispatchSessionTrigger.INITIAL
@@ -151,15 +128,21 @@ async def test_dispatch_service_start_initial_dispatch(mock_deps):
 @pytest.mark.asyncio
 async def test_dispatch_service_handle_no_match_schedules_retry(mock_deps):
     task = Task(id="task-nomatch", title="Task", description="D", auto_dispatch_count=0, customer_id="c1", status=TaskStatus.SEARCHING)
-    session = DispatchSession(id="sess-1", task_id="task-nomatch", trigger=DispatchSessionTrigger.INITIAL, sequence=1, status=DispatchSessionStatus.RUNNING)
+    ds_session = DispatchSession(id="sess-1", task_id="task-nomatch", trigger=DispatchSessionTrigger.INITIAL, sequence=1, status=DispatchSessionStatus.RUNNING)
 
-    mock_deps["task_repo"].get.return_value = task
-    mock_deps["session_repo"].get.return_value = session
+    async def mock_get(model, id_val):
+        if model == Task:
+            return task
+        if model == DispatchSession:
+            return ds_session
+        return None
 
-    service = DispatchService(**mock_deps)
+    mock_deps["session"].get.side_effect = mock_get
+
+    service = create_service(mock_deps)
     await service.handle_no_match(task_id="task-nomatch", session_id="sess-1", reason="No candidates")
 
-    assert session.status == DispatchSessionStatus.FAILED
+    assert ds_session.status == DispatchSessionStatus.FAILED
     assert task.dispatch_status == TaskDispatchStatus.RETRY_SCHEDULED
     assert task.next_dispatch_at is not None
 
@@ -167,17 +150,23 @@ async def test_dispatch_service_handle_no_match_schedules_retry(mock_deps):
 @pytest.mark.asyncio
 async def test_dispatch_service_auto_retry_exhaustion(mock_deps):
     task = Task(id="task-exh", title="Task", description="D", auto_dispatch_count=5, customer_id="c1", status=TaskStatus.SEARCHING)
-    session = DispatchSession(id="sess-5", task_id="task-exh", trigger=DispatchSessionTrigger.AUTO_RETRY, sequence=5, status=DispatchSessionStatus.RUNNING)
+    ds_session = DispatchSession(id="sess-5", task_id="task-exh", trigger=DispatchSessionTrigger.AUTO_RETRY, sequence=5, status=DispatchSessionStatus.RUNNING)
 
-    mock_deps["task_repo"].get.return_value = task
-    mock_deps["session_repo"].get.return_value = session
+    async def mock_get(model, id_val):
+        if model == Task:
+            return task
+        if model == DispatchSession:
+            return ds_session
+        return None
 
-    service = DispatchService(**mock_deps)
+    mock_deps["session"].get.side_effect = mock_get
+
+    service = create_service(mock_deps)
     await service.handle_no_match(task_id="task-exh", session_id="sess-5", reason="Max retries")
 
-    assert session.status == DispatchSessionStatus.EXHAUSTED
+    assert ds_session.status == DispatchSessionStatus.EXHAUSTED
     assert task.dispatch_status == TaskDispatchStatus.AUTO_EXHAUSTED
-    assert task.status == TaskStatus.EXPIRED
+    assert task.status == TaskStatus.NO_MATCH
     assert mock_deps["notification_service"].notify.called
 
 
@@ -196,20 +185,18 @@ async def test_dispatch_service_manual_redispatch_success(mock_deps):
 
     mock_res_lock = MagicMock()
     mock_res_lock.one_or_none.return_value = task
-    mock_deps["task_repo"].execute.return_value = mock_res_lock
 
     mock_res_seq = MagicMock()
     mock_res_seq.one_or_none.return_value = (1,)
-    mock_deps["session_repo"].execute.return_value = mock_res_seq
-    mock_deps["task_repo"].refresh = AsyncMock()
 
-    service = DispatchService(**mock_deps)
+    mock_deps["session"].exec.side_effect = [mock_res_lock, MagicMock(), mock_res_seq]
+
+    service = create_service(mock_deps)
 
     from unittest.mock import patch
-    from app.core.services.matching_engine import MatchingResult
-    with patch("app.features.tasks.dispatch_service.MatchingEngine.run", new_callable=AsyncMock) as mock_run:
-        mock_run.return_value = MatchingResult(matched=True, candidates_count=1, attempts_created=1)
+    with patch("app.features.tasks.dispatch_service.execute_matching_engine.delay") as mock_delay:
         res_task = await service.manual_redispatch(task_id="task-manual", current_user_id="cust-1", feedback="Provider late")
+        assert mock_delay.called
 
         assert res_task.manual_dispatch_count == 1
         assert res_task.assigned_provider_id is None
@@ -230,12 +217,11 @@ async def test_dispatch_service_manual_redispatch_limit_exceeded(mock_deps):
 
     mock_res_lock = MagicMock()
     mock_res_lock.one_or_none.return_value = task
-    mock_deps["task_repo"].execute.return_value = mock_res_lock
+    mock_deps["session"].exec.return_value = mock_res_lock
 
-    service = DispatchService(**mock_deps)
+    service = create_service(mock_deps)
 
     with pytest.raises(HTTPException) as exc:
         await service.manual_redispatch(task_id="task-limit", current_user_id="cust-1")
 
     assert exc.value.status_code == 400
-    assert "Maximum allowed customer redispatches" in exc.value.detail

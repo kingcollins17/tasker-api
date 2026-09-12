@@ -11,14 +11,14 @@ from .services import ProviderServiceLink, Service
 
 class UserType(str, enum.Enum):
     """Discriminates user role types within the platform."""
-    CUSTOMER = "customer"
-    PROVIDER = "provider"
+    CUSTOMER = "CUSTOMER"
+    PROVIDER = "PROVIDER"
 
 class KYCStatus(str, enum.Enum):
     """Tracks Know-Your-Customer verification workflow states for service providers."""
     PENDING_SUBMISSION = "PENDING_SUBMISSION"
     SUBMITTED = "SUBMITTED"
-    PENDING_ADMIN_REVIEW = "PENDING_ADMIN_REVIEW"
+    UNDER_REVIEW = "UNDER_REVIEW"
     VERIFIED = "VERIFIED"
     FAILED = "FAILED"
 
@@ -45,25 +45,10 @@ class VerificationStatus(str, enum.Enum):
 class OnboardingStep(str, enum.Enum):
     """Current step in the provider onboarding vetting process."""
     KYC = "KYC"
-    TRADE_QUIZ = "TRADE_QUIZ"
     GUARANTOR = "GUARANTOR"
     INTERVIEW = "INTERVIEW"
     COMPLETED = "COMPLETED"
 
-class MediaType(str, enum.Enum):
-    """Type of portfolio media uploaded by a provider."""
-    TOOL_PHOTO = "tool_photo"
-    PAST_WORK_VIDEO = "past_work_video"
-    WORKSPACE = "workspace"
-
-class DayOfWeek(int, enum.Enum):
-    SUNDAY = 1
-    MONDAY = 2
-    TUESDAY = 3
-    WEDNESDAY = 4
-    THURSDAY = 5
-    FRIDAY = 6
-    SATURDAY = 7
 
 class User(SQLModel, table=True):
     """Core user identity table containing login credentials, verification flags, and role assignments."""
@@ -110,7 +95,7 @@ class ProviderProfile(SQLModel, table=True):
     __tablename__ = "provider_profiles"  # type: ignore
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique primary identifier for the provider profile")
-    user_id: str = Field(foreign_key="users.id", unique=True, ondelete="CASCADE", description="Foreign key reference to the core user account")
+    user_id: str = Field(foreign_key="users.id", unique=True, index=True, ondelete="CASCADE", description="Foreign key reference to the core user account")
     first_name: Optional[str] = Field(default=None, description="Legal first name of provider")
     last_name: Optional[str] = Field(default=None, description="Legal last name of provider")
     id_type: Optional[str] = Field(default=None, description="Type of government identification document (e.g., NIN, BVN)")
@@ -172,7 +157,7 @@ class CustomerProfile(SQLModel, table=True):
     __tablename__ = "customer_profiles"  # type: ignore
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique customer profile ID")
-    user_id: str = Field(foreign_key="users.id", unique=True, ondelete="CASCADE", description="Foreign key reference to core user account")
+    user_id: str = Field(foreign_key="users.id", unique=True, index=True, ondelete="CASCADE", description="Foreign key reference to core user account")
     first_name: Optional[str] = Field(default=None, description="Customer first name")
     last_name: Optional[str] = Field(default=None, description="Customer last name")
     created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
@@ -216,17 +201,3 @@ class UserDevice(SQLModel, table=True):
     
     user: User = Relationship(back_populates="devices")
 
-class ProviderAvailability(SQLModel, table=True):
-    """Recurring weekly schedule for provider availability."""
-    __tablename__ = "provider_availabilities"  # type: ignore
-    
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique availability block ID")
-    provider_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE", description="Foreign key reference to provider user account")
-    day_of_week: int = Field(description="1=Sunday, 7=Saturday")
-    day_name: str = Field(description="Name of day of week (e.g., Sunday, Monday)")
-    
-    start_time: time = Field(sa_column=Column(Time, nullable=False), description="Start time (e.g., 07:00:00)")
-    end_time: time = Field(sa_column=Column(Time, nullable=False), description="End time (e.g., 18:00:00)")
-    is_active: bool = Field(default=True, description="Whether this availability block is active")
-    
-    provider: User = Relationship()

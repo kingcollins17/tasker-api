@@ -6,9 +6,9 @@ from sqlmodel import select
 
 from app.core.repository import Repository, GetRepository, QueryOptions
 from sqlalchemy.orm import noload
-from app.core.models.users import ProviderProfile, User, UserLocation, DutyStatus, KYCStatus, ProviderAvailability
+from app.core.models.users import ProviderProfile, User, UserLocation, DutyStatus, KYCStatus
 from app.core.schemas.users import MinimalProviderResponse, UserLocationResponse
-from app.features.users.schemas import PublicProviderProfileResponse, PublicUserResponse, ProviderAvailabilityResponse
+from app.features.users.schemas import PublicProviderProfileResponse, PublicUserResponse
 from app.core.error_handler import AppErrorHandler
 from app.core.api_response import BaseAPIResponse, PaginatedData
 
@@ -18,7 +18,6 @@ router = APIRouter(prefix="/providers", tags=["Providers"])
 async def get_public_provider_profile(
     provider_id: str,
     user_repo: Repository[User] = Depends(GetRepository(User)),
-    availability_repo: Repository[ProviderAvailability] = Depends(GetRepository(ProviderAvailability))
 ):
     try:
         user = await user_repo.get(provider_id)
@@ -34,9 +33,6 @@ async def get_public_provider_profile(
                 user_id=user.id,
                 region_id=user.region_id
             )
-        
-        availabilities = await availability_repo.get_all(QueryOptions(filters={"provider_id": provider_id}))
-        availability_data = [ProviderAvailabilityResponse.model_validate(a) for a in availabilities]
 
         provider_profile_data = PublicProviderProfileResponse.model_validate(profile)
 
@@ -54,7 +50,6 @@ async def get_public_provider_profile(
             region_id=user.region_id,
             location=loc_data,
             services=profile.services,
-            availability=availability_data,
             profile=provider_profile_data
         )
 

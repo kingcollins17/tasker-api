@@ -12,11 +12,14 @@ class DispatchPolicy:
     AUTO_DISPATCH_MAX: int = 5
     MANUAL_DISPATCH_MAX: int = 3
 
+    # Ping attempt duration for candidate pings (seconds)
+    PING_DURATION_SECONDS: int = 180
+
     # Delays for retries: 2m, 5m, 10m, 20m, 30m
     RETRY_DELAYS_SECONDS: List[int] = [120, 300, 600, 1200, 1800]
 
-    # Stale claim recovery threshold
-    STALE_CLAIM_TIMEOUT_SECONDS: int = 300  # 5 minutes
+    # Stale claim recovery threshold (2x ping duration)
+    STALE_CLAIM_TIMEOUT_SECONDS: int = PING_DURATION_SECONDS * 2
 
     @classmethod
     def can_auto_retry(cls, auto_dispatch_count: int) -> bool:
