@@ -1,9 +1,10 @@
+from typing import Any
 import re
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, Literal, List
 from datetime import datetime
 from app.core.models.users import UserType, KYCStatus, DutyStatus
-from app.core.schemas.users import PaymentAccountResponse, UserLocationResponse
+from app.core.schemas.users import PaymentAccountResponse, UserLocationResponse, UserStatsResponse
 from app.core.utils.phone_helper import format_nigerian_phone
 from datetime import time
 
@@ -94,28 +95,43 @@ class PublicUserResponse(BaseModel):
 
 
 
+class KYCDocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    user_id: str
+    provider_profile_id: Optional[str] = None
+    id_type: str
+    id_number: str
+    id_doc_url: str
+    status: KYCStatus
+    rejection_reason: Optional[str] = None
+    attempt_number: int
+    meta_data: Optional[dict] = {}
+    submitted_at: datetime
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ProviderProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: Optional[str]=None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    id_type: Optional[str] = None
-    id_number: Optional[str] = None
-    id_doc_url: Optional[str] = None
     selfie_url: Optional[str] = None
     gender: Optional[str] = None
-    status: KYCStatus
+    kyc_status: KYCStatus
     provider_reference: Optional[str] = None
     liveness_score: Optional[float] = None
-    rejection_reason: Optional[str] = None
     verified_at: Optional[datetime] = None
     address_line: Optional[str] = None
     is_online: Optional[bool] = None
     duty_status: Optional[DutyStatus] = None
     last_heartbeat_at: Optional[datetime] = None
-    total_tasks_completed: Optional[int] = 0
     services: List[ServiceResponse] = []
+    kyc_documents: List[KYCDocumentResponse] = []
 
 class UserDeviceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -140,16 +156,61 @@ class UserResponse(BaseModel):
     is_active: bool
     email_verified: bool
     phone_verified: bool
-    credibility_score: Optional[float] = 25.0
-    average_ratings: Optional[float] = 0.0
     created_at: datetime
     updated_at: datetime
     region_id: Optional[str] = None
+    meta_data: Optional[dict] = {}
+    stats: Optional[UserStatsResponse] = None
     customer_profile: Optional[CustomerProfileResponse] = None
     provider_profile: Optional[ProviderProfileResponse] = None
     devices: Optional[List[UserDeviceResponse]] = []
     location: Optional[UserLocationResponse] = None
     payment_account: Optional[PaymentAccountResponse] = None
+
+
+class AdminUserStatusUpdate(BaseModel):
+    reason: Optional[str] = Field(None, description="Optional reason or notes for activating/deactivating user")
+    meta_data: Optional[dict] = Field(default_factory=dict, description="Optional extra metadata fields to record in user.meta_data")
+
+
+class UserLiteResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    phone_number: Optional[str] = None
+    fullname: Optional[str] = None
+    type: UserType
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    region_id: Optional[str] = None
+
+    @classmethod
+    def from_user(cls, user: Any) -> "UserLiteResponse":
+        fullname = None
+        if getattr(user, "customer_profile", None):
+            fname = user.customer_profile.first_name or ""
+            lname = user.customer_profile.last_name or ""
+            fullname = f"{fname} {lname}".strip() or None
+        elif getattr(user, "provider_profile", None):
+            fname = user.provider_profile.first_name or ""
+            lname = user.provider_profile.last_name or ""
+            fullname = f"{fname} {lname}".strip() or None
+
+        return cls(
+            id=user.id,
+            email=user.email,
+            phone_number=user.phone_number,
+            fullname=fullname,
+            type=user.type,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+            region_id=user.region_id,
+        )
+
+
 
 
 

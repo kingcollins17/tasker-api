@@ -4,7 +4,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import cast
 from geoalchemy2 import Geography
 from app.core.models.services import Service, ProviderServiceLink
-from app.core.models.users import User, UserLocation
+from app.core.models.users import User, UserStats, UserLocation
 
 class ServicesQueries:
     @staticmethod
@@ -52,11 +52,12 @@ class ServicesQueries:
             select(User)
             .join(ProviderServiceLink, col(User.id) == ProviderServiceLink.provider_id)
             .join(Service, col(ProviderServiceLink.service_id) == Service.id)
+            .join(UserStats, col(UserStats.user_id) == User.id, isouter=True)
             .where(Service.id == service_id)
             .where(User.region_id == region_id)
             .where(User.is_active == True)
             .where(Service.is_active == True)
-            .order_by(desc(User.average_ratings), desc(User.credibility_score))
+            .order_by(desc(UserStats.average_ratings), desc(UserStats.credibility_score))
         )
         
         count_statement = (

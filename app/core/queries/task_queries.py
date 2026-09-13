@@ -3,6 +3,7 @@ from sqlalchemy import func
 from typing import Any, List, Optional
 from app.core.models.users import (
     User,
+    UserStats,
     ProviderProfile,
     UserLocation,
     DutyStatus,
@@ -32,11 +33,12 @@ class TaskQueries:
                 col(ProviderServiceLink.provider_id) == ProviderProfile.user_id,
             )
             .join(UserLocation, col(UserLocation.user_id) == User.id)
+            .join(UserStats, col(UserStats.user_id) == User.id, isouter=True)
             .where(
                 col(User.is_active) == True,
                 col(ProviderProfile.is_online) == True,
                 col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE,
-                col(ProviderProfile.status) == KYCStatus.VERIFIED,
+                col(ProviderProfile.kyc_status) == KYCStatus.VERIFIED,
             )
         )
 
@@ -54,7 +56,7 @@ class TaskQueries:
                 <= distance_m
             )
             .order_by(
-                col(User.average_ratings).desc(), col(User.credibility_score).desc()
+                col(UserStats.average_ratings).desc(), col(UserStats.credibility_score).desc()
             )
             .limit(100)
         )
@@ -78,8 +80,8 @@ class TaskQueries:
         )
 
         if statuses:
-            statement = statement.where(Task.status.in_(statuses))
-            count_statement = count_statement.where(Task.status.in_(statuses))
+            statement = statement.where(col(Task.status).in_(statuses))
+            count_statement = count_statement.where(col(Task.status).in_(statuses))
 
         if category_id:
             statement = statement.where(Task.category_id == category_id)
@@ -102,6 +104,6 @@ class TaskQueries:
             statement = statement.order_by(sort_col.desc() if sort_desc else sort_col)
 
             if sort_by != "updated_at":
-                statement = statement.order_by(Task.updated_at.desc())
+                statement = statement.order_by(col(Task.updated_at).desc())
 
         return statement, count_statement

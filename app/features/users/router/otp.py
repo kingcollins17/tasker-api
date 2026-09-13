@@ -11,7 +11,7 @@ from app.features.users.schemas import (
     VerifyPhoneOTP,
     VerifyOTP,
 )
-from app.features.users.services import UserService, get_user_service
+from app.features.users.services import UserAuthService, get_user_auth_service
 
 router = APIRouter()
 
@@ -20,14 +20,14 @@ router = APIRouter()
 async def request_email_otp(
     schema: RequestEmailOTP,
     response: Response,
-    user_service: UserService = Depends(get_user_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Request an OTP to be sent to the user's email for verification."""
     try:
         timer = Timer()
         timer.start()
-        await user_service.request_email_otp(schema.email)
+        await auth_service.request_email_otp(schema.email)
         await system_logger.metric('request_email_otp', timer.stop(), source='otp.request_email_otp')
         return BaseAPIResponse[None](
             detail="Verification code sent to your email.",
@@ -49,14 +49,14 @@ async def request_email_otp(
 async def verify_email(
     schema: VerifyEmailOTP,
     response: Response,
-    user_service: UserService = Depends(get_user_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Verify the user's email using the provided OTP."""
     try:
         timer = Timer()
         timer.start()
-        user = await user_service.verify_email_otp(schema.email, schema.code)
+        user = await auth_service.verify_email_otp(schema.email, schema.code)
         await system_logger.metric('verify_email', timer.stop(), source='otp.verify_email')
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(user),
@@ -79,14 +79,14 @@ async def verify_email(
 async def request_phone_otp(
     schema: RequestPhoneOTP,
     response: Response,
-    user_service: UserService = Depends(get_user_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Request an OTP to be sent to the user's phone number for verification."""
     try:
         timer = Timer()
         timer.start()
-        await user_service.request_phone_otp(schema.phone_number)
+        await auth_service.request_phone_otp(schema.phone_number)
         await system_logger.metric('request_phone_otp', timer.stop(), source='otp.request_phone_otp')
         return BaseAPIResponse[None](
             detail="Verification code sent to your phone number.",
@@ -108,14 +108,14 @@ async def request_phone_otp(
 async def verify_phone(
     schema: VerifyPhoneOTP,
     response: Response,
-    user_service: UserService = Depends(get_user_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Verify the user's phone number using the provided OTP."""
     try:
         timer = Timer()
         timer.start()
-        user = await user_service.verify_phone_otp(schema.phone_number, schema.code)
+        user = await auth_service.verify_phone_otp(schema.phone_number, schema.code)
         await system_logger.metric('verify_phone', timer.stop(), source='otp.verify_phone')
         return BaseAPIResponse[UserResponse](
             data=UserResponse.model_validate(user),
@@ -138,14 +138,14 @@ async def verify_phone(
 async def verify_otp(
     schema: VerifyOTP,
     response: Response,
-    user_service: UserService = Depends(get_user_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Verify an OTP code for a target (email or phone) without registering or updating user verification status."""
     try:
         timer = Timer()
         timer.start()
-        await user_service.verify_otp(schema.target, schema.channel, schema.code)
+        await auth_service.verify_otp(schema.target, schema.channel, schema.code)
         await system_logger.metric('verify_otp', timer.stop(), source='otp.verify_otp')
         return BaseAPIResponse[bool](
             data=True,

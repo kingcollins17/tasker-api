@@ -4,7 +4,8 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 
 from app.core.logging import log_error
-from app.core.models.users import CustomerProfile, KYCStatus, ProviderProfile, User, UserType
+from app.core.models.regions import Region
+from app.core.models.users import CustomerProfile, KYCStatus, ProviderProfile, User, UserStats, UserType
 from app.core.repository import GetRepository, QueryOptions, Repository
 from app.core.services import (
     OTPError,
@@ -31,16 +32,34 @@ class UserAuthService:
         customer_repo: Repository[CustomerProfile],
         provider_repo: Repository[ProviderProfile],
         otp_service: OTPService,
+        region_repo: Optional[Repository[Region]] = None,
+        stats_repo: Optional[Repository[UserStats]] = None,
     ):
         self.user_repo = user_repo
         self.customer_repo = customer_repo
         self.provider_repo = provider_repo
         self.otp_service = otp_service
+        self.region_repo = region_repo
+        self.stats_repo = stats_repo
 
     @log_error()
     async def register_user(self, schema: UserRegister) -> User:
         """Register a new user (Customer or Provider) and initialize their profile."""
-        # 1. Check email uniqueness
+        # 1. Validate region if region_id provided
+        if schema.region_id and self.region_repo:
+            region = await self.region_repo.get(schema.region_id)
+            if not region:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The specified region does not exist.",
+                )
+            if not region.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="We are not active in this region yet",
+                )
+
+        # 2. Check email uniqueness
         existing_email = await self.user_repo.get_all(
             QueryOptions(filters={"email": schema.email})
         )
@@ -50,7 +69,7 @@ class UserAuthService:
                 detail="A user with this email already exists.",
             )
 
-        # 2. Check phone number uniqueness if provided
+        # 3. Check phone number uniqueness if provided
         if schema.phone_number:
             existing_phone = await self.user_repo.get_all(
                 QueryOptions(filters={"phone_number": schema.phone_number})
@@ -61,7 +80,7 @@ class UserAuthService:
                     detail="A user with this phone number already exists.",
                 )
 
-        # 3. Hash password and persist base user account
+        # 4. Hash password and persist base user account
         hashed_password = security.hash_password(schema.password)
         user = User(
             email=schema.email,
@@ -73,7 +92,15 @@ class UserAuthService:
         )
         user = await self.user_repo.add(user)
 
-        # 4. Initialize specific profile based on role (Customer vs Provider)
+        # 5. Initialize user stats
+        stats = UserStats(user_id=user.id)
+        if self.stats_repo:
+            await self.stats_repo.add(stats)
+        else:
+            self.user_repo.session.add(stats)
+            await self.user_repo.session.commit()
+
+        # 6. Initialize specific profile based on role (Customer vs Provider)
         if schema.type == UserType.CUSTOMER:
             customer_profile = CustomerProfile(
                 user_id=user.id,
@@ -120,11 +147,15 @@ class UserAuthService:
                 detail="User account is inactive.",
             )
 
-        if schema.user_type is not None and (schema.user_type != user.type.value):
+        if schema.user_type is not None and (schema.user_type.upper() != user.type.value):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"User cannot sign-in as {schema.user_type}",
             )
+
+        user.last_login_at = lagos_now()
+        user = await self.user_repo.add(user)
+
         token_payload = {
             "id": user.id,
             "email": user.email,
@@ -297,6 +328,7 @@ def get_user_auth_service(
         GetRepository(ProviderProfile)
     ),
     otp_service: OTPService = Depends(get_otp_service),
+    stats_repo: Repository[UserStats] = Depends(GetRepository(UserStats)),
 ) -> UserAuthService:
     """Dependency provider injecting repositories and sub-services into UserAuthService."""
     return UserAuthService(
@@ -304,4 +336,5 @@ def get_user_auth_service(
         customer_repo=customer_repo,
         provider_repo=provider_repo,
         otp_service=otp_service,
+        stats_repo=stats_repo,
     )

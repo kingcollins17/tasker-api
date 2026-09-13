@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from app.core.api_response import BaseAPIResponse
 from app.core.deps.auth import GetCurrentAdmin
 from app.core.error_handler import AppErrorHandler
 from app.core.models.admins import AdminUser
@@ -21,7 +22,7 @@ from app.features.admin.services import (
 router = APIRouter(prefix="/auth", tags=["Admin Auth"])
 
 
-@router.post("/login", response_model=AdminTokenResponse)
+@router.post("/login", response_model=BaseAPIResponse[AdminTokenResponse])
 async def login(
     body: AdminLoginRequest,
     request: Request,
@@ -39,11 +40,15 @@ async def login(
             user_agent=user_agent,
         )
 
-        return AdminTokenResponse(
+        token_response = AdminTokenResponse(
             access_token=token_data["access_token"],
             token_type="bearer",
             refresh_token=token_data["refresh_token"],
             admin=AdminUserResponse.model_validate(admin),
+        )
+        return BaseAPIResponse.success_response(
+            data=token_response,
+            message="Admin logged in successfully.",
         )
     except HTTPException:
         raise
@@ -55,7 +60,7 @@ async def login(
         )
 
 
-@router.post("/refresh", response_model=AdminTokenResponse)
+@router.post("/refresh", response_model=BaseAPIResponse[AdminTokenResponse])
 async def refresh_token(
     body: RefreshTokenRequest,
     admin_service: AdminService = Depends(get_admin_service),
@@ -80,11 +85,15 @@ async def refresh_token(
         new_payload = {"id": admin.id, "type": "admin", "role": admin.role.value}
         access_token = security.create_access_token(new_payload)
 
-        return AdminTokenResponse(
+        token_response = AdminTokenResponse(
             access_token=access_token,
             token_type="bearer",
             refresh_token=body.refresh_token,
             admin=AdminUserResponse.model_validate(admin),
+        )
+        return BaseAPIResponse.success_response(
+            data=token_response,
+            message="Token refreshed successfully.",
         )
     except HTTPException:
         raise
@@ -96,7 +105,7 @@ async def refresh_token(
         )
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=BaseAPIResponse[None])
 async def logout(
     request: Request,
     current_admin: AdminUser = Depends(GetCurrentAdmin()),
@@ -115,7 +124,7 @@ async def logout(
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        return {"message": "Logged out successfully."}
+        return BaseAPIResponse.success_response(message="Logged out successfully.")
     except HTTPException:
         raise
     except Exception as e:
@@ -126,7 +135,7 @@ async def logout(
         )
 
 
-@router.post("/accept-invitation", response_model=AdminUserResponse)
+@router.post("/accept-invitation", response_model=BaseAPIResponse[AdminUserResponse])
 async def accept_invitation(
     body: AcceptInvitationRequest,
     request: Request,
@@ -144,7 +153,10 @@ async def accept_invitation(
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        return AdminUserResponse.model_validate(admin)
+        return BaseAPIResponse.success_response(
+            data=AdminUserResponse.model_validate(admin),
+            message="Invitation accepted successfully.",
+        )
     except HTTPException:
         raise
     except Exception as e:

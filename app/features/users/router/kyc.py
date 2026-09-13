@@ -6,7 +6,7 @@ from app.core.api_response import BaseAPIResponse
 from app.core.deps import GetCurrentUser
 from app.core.models.users import UserType, KYCStatus
 from app.features.users.schemas import ProviderProfileResponse, UserResponse
-from app.features.users.services import UserService, get_user_service
+from app.features.users.services import ProviderProfileService, get_provider_profile_service, KYCService, get_kyc_service
 from app.core.services.storage import StorageService, get_storage_service
 
 router = APIRouter()
@@ -27,7 +27,7 @@ async def submit_kyc_selfie(
             required_phone_verified=True,
         )
     ),
-    user_service: UserService = Depends(get_user_service),
+    provider_service: ProviderProfileService = Depends(get_provider_profile_service),
     storage_service: StorageService = Depends(get_storage_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
@@ -37,7 +37,7 @@ async def submit_kyc_selfie(
         timer.start()
         selfie_url = await storage_service.upload_file(selfie)
 
-        profile = await user_service.submit_kyc_selfie(
+        profile = await provider_service.submit_kyc_selfie(
             user_id=current_user.id, selfie_url=selfie_url
         )
 
@@ -77,7 +77,7 @@ async def submit_kyc_document(
             allowed_kyc_statuses=[KYCStatus.PENDING_SUBMISSION, KYCStatus.FAILED],
         )
     ),
-    user_service: UserService = Depends(get_user_service),
+    provider_service: ProviderProfileService = Depends(get_provider_profile_service),
     storage_service: StorageService = Depends(get_storage_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
@@ -87,7 +87,7 @@ async def submit_kyc_document(
         timer.start()
         id_doc_url = await storage_service.upload_file(id_doc)
 
-        profile = await user_service.submit_kyc_document(
+        profile = await provider_service.submit_kyc_document(
             user_id=current_user.id,
             id_type=id_type,
             id_number=id_number,

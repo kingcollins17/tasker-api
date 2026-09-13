@@ -7,6 +7,8 @@ from .users import (
     User,
     ProviderProfile,
     CustomerProfile,
+    KYCDocument,
+    UserStats,
     PaymentProvider,
     PaymentAccount,
     UserLocation,
@@ -79,6 +81,8 @@ from .transfers import (
 )
 from .vetting import (
     ProviderGuarantor,
+    ProviderInterview,
+    InterviewStatus,
 )
 from .support import (
     CaseType,
@@ -109,6 +113,8 @@ __all__ = [
     "User",
     "ProviderProfile",
     "CustomerProfile",
+    "KYCDocument",
+    "UserStats",
     "AdminUser",
     "AdminInvitation",
     "PaymentProvider",
@@ -159,6 +165,8 @@ __all__ = [
     "SystemLog",
     "LogLevel",
     "ProviderGuarantor",
+    "ProviderInterview",
+    "InterviewStatus",
     "CaseType",
     "CaseStatus",
     "CasePriority",

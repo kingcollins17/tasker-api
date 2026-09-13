@@ -504,7 +504,9 @@ class NotificationPipeline:
                                 *(
                                     push_svc.send_message(
                                         token=device.messaging_token,
+                                        # pyrefly: ignore [missing-attribute]
                                         title=notification.title,
+                                        # pyrefly: ignore [missing-attribute]
                                         body=notification.body,
                                         data=data_payload,
                                     )

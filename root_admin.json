@@ -1,0 +1,22 @@
+{
+  "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImIwNjdiOGQ0LTZiNzgtNGY1MC1iOTJlLTcwMjdmZGM2MmIwZSIsInR5cGUiOiJhZG1pbiIsInJvbGUiOiJST09UX0FETUlOIiwiZXhwIjoxODE5MzA0MjI2fQ.W2410QUD_dyriQBuEVsXz0fFkhVvFxpA0ju1W59JJR8",
+    "token_type": "bearer",
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImIwNjdiOGQ0LTZiNzgtNGY1MC1iOTJlLTcwMjdmZGM2MmIwZSIsInR5cGUiOiJhZG1pbl9yZWZyZXNoIiwiZXhwIjoxNzg5OTA5MDI2fQ.KmEIlufjN3D5C5s3KQgt0OhBl7VZYJgYrl90wu7YDBQ",
+    "admin": {
+      "id": "b067b8d4-6b78-4f50-b92e-7027fdc62b0e",
+      "email": "admin@tasker.com",
+      "fullname": "Root Admin",
+      "role": "ROOT_ADMIN",
+      "parent_admin_id": null,
+      "created_by_id": null,
+      "is_active": true,
+      "last_login_at": "2026-09-13T13:57:05.220497",
+      "created_at": "2026-09-13T13:30:44.296150",
+      "updated_at": "2026-09-13T13:30:44.296194"
+    }
+  },
+  "detail": "Admin logged in successfully.",
+  "message": "Admin logged in successfully.",
+  "status_code": 200
+}

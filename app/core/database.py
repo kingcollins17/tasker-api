@@ -5,13 +5,12 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 import app.core.models  # noqa: F401
-from app.core.config import settings
+from app.core.config import settings,IS_LOCAL
 
 # Create the async database engine
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=False,
-    # future=True,
+    echo=IS_LOCAL,
     pool_size=settings.POOL_SIZE,
     max_overflow=1,
     pool_pre_ping=True,

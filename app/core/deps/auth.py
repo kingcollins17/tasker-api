@@ -1,3 +1,4 @@
+from app.core.models import User
 from typing import List, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
@@ -90,7 +91,7 @@ class GetCurrentUser:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        user = await user_service.get_user(user_id)
+        user: User | None = await user_service.get_user(user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -129,7 +130,7 @@ class GetCurrentUser:
             )
 
         if self.allowed_kyc_statuses is not None:
-            if not user.provider_profile or user.provider_profile.status not in self.allowed_kyc_statuses:
+            if not user.provider_profile or user.provider_profile.kyc_status not in self.allowed_kyc_statuses:
                 raise HTTPException(
                     status_code=self.kyc_status_error_status,
                     detail=self.kyc_status_error_detail,

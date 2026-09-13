@@ -5,6 +5,7 @@ from app.core.utils.datetime_helper import lagos_now
 from typing import List, Optional, Any
 from sqlmodel import Field, SQLModel, Relationship
 from sqlalchemy import Column, Index, JSON, UniqueConstraint, Time
+from sqlalchemy.orm import synonym
 from .spatial import PointType
 from datetime import time
 from .services import ProviderServiceLink, Service
@@ -63,9 +64,6 @@ class User(SQLModel, table=True):
     email_verified: bool = Field(default=False, description="Whether the user's email address has been verified")
     phone_verified: bool = Field(default=False, description="Whether the user's phone number has been verified")
     region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True, description="Default geographical region assignment")
-    credibility_score: float = Field(default=25.0, description="Platform credibility score metric based on history")
-    average_ratings: float = Field(default=0.0, description="Aggregated average rating score across completed tasks based on history")
-    total_ratings: int = Field(default=0, description="Total number of ratings received from completed tasks")
     meta_data: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Provider-specific JSON metadata payload")
     last_login_at: Optional[datetime] = Field(default=None, description="Timestamp of the users's most recent successful login")
     created_at: datetime = Field(default_factory=lagos_now, description="Timestamp when the user registered")
@@ -91,6 +89,57 @@ class User(SQLModel, table=True):
         back_populates="user",
         sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan", "lazy": "joined"}
     )
+    kyc_documents: List["KYCDocument"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    )
+    stats: Optional["UserStats"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan", "lazy": "joined"}
+    )
+
+class UserStats(SQLModel, table=True):
+    """Aggregated performance metrics, credibility scores, ratings, and operational statistics for users."""
+    __tablename__ = "user_stats"  # type: ignore
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique primary identifier for user stats")
+    user_id: str = Field(foreign_key="users.id", unique=True, index=True, ondelete="CASCADE", description="Foreign key reference to core user account")
+    credibility_score: float = Field(default=25.0, description="Platform credibility score metric based on history")
+    average_ratings: float = Field(default=0.0, description="Aggregated average rating score across completed tasks")
+    total_ratings: int = Field(default=0, description="Total number of ratings received from completed tasks")
+    acceptance_rate_30d: float = Field(default=100.0, description="Rolling 30-day percentage of accepted dispatch pings")
+    completion_rate_30d: float = Field(default=100.0, description="Rolling 30-day percentage of successfully completed assigned tasks")
+    current_tier: int = Field(default=1, le=10, ge=1, description="Provider trade tier level (1 to 10)")
+    total_tasks_completed: int = Field(default=0, description="Lifetime total count of successfully completed tasks")
+    total_tasks_posted: int = Field(default=0, description="Lifetime total count of tasks posted by customer")
+    consecutive_declines: int = Field(default=0, description="Count of consecutive dispatch ping declines or timeouts")
+    cancellation_count: int = Field(default=0, description="Number of times accepted tasks were cancelled")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record last updated timestamp")
+
+    user: Optional["User"] = Relationship(back_populates="stats")
+
+class KYCDocument(SQLModel, table=True):
+    """Stores KYC document uploads, verification state, resubmission attempts, and review metadata."""
+    __tablename__ = "kyc_documents"  # type: ignore
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique primary identifier for the KYC document submission")
+    user_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE", description="Foreign key reference to core user account")
+    provider_profile_id: Optional[str] = Field(default=None, foreign_key="provider_profiles.id", index=True, ondelete="CASCADE", description="Foreign key reference to provider profile")
+    id_type: str = Field(description="Type of government identification document (e.g., NIN, BVN, PASSPORT)")
+    id_number: str = Field(description="Unique identification document number")
+    id_doc_url: str = Field(description="Cloud storage URL for uploaded ID document")
+    status: KYCStatus = Field(default=KYCStatus.SUBMITTED, description="Verification status for this document submission attempt")
+    rejection_reason: Optional[str] = Field(default=None, description="Reason stated if document verification was rejected")
+    attempt_number: int = Field(default=1, description="1-indexed attempt number for resubmissions under KYCPolicy")
+    meta_data: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Review audit trail and extra metadata payload")
+    submitted_at: datetime = Field(default_factory=lagos_now, description="Timestamp when document was submitted")
+    reviewed_at: Optional[datetime] = Field(default=None, description="Timestamp when document was approved or rejected")
+    created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
+    updated_at: datetime = Field(default_factory=lagos_now, description="Record last updated timestamp")
+
+    user: Optional["User"] = Relationship(back_populates="kyc_documents")
+    provider_profile: Optional["ProviderProfile"] = Relationship(back_populates="kyc_documents")
 
 class ProviderProfile(SQLModel, table=True):
     """Detailed profile data, KYC verification state, presence, and performance metrics for task service providers."""
@@ -100,27 +149,17 @@ class ProviderProfile(SQLModel, table=True):
     user_id: str = Field(foreign_key="users.id", unique=True, index=True, ondelete="CASCADE", description="Foreign key reference to the core user account")
     first_name: Optional[str] = Field(default=None, description="Legal first name of provider")
     last_name: Optional[str] = Field(default=None, description="Legal last name of provider")
-    id_type: Optional[str] = Field(default=None, description="Type of government identification document (e.g., NIN, BVN)")
-    id_number: Optional[str] = Field(default=None, description="Unique identification document number")
-    id_doc_url: Optional[str] = Field(default=None, description="Cloud storage URL for uploaded ID document")
     selfie_url: Optional[str] = Field(default=None, description="Cloud storage URL for uploaded verification selfie")
     gender: Optional[str] = Field(default=None, description="Gender of the provider")
     
-    current_tier: int = Field(default=1, le=10, ge=1, description="Provider trade tier level (1 to 5)")
     current_onboarding_step: OnboardingStep = Field(default=OnboardingStep.KYC, description="Current progress step in the vetting pipeline")
 
-    status: KYCStatus = Field(default=KYCStatus.PENDING_SUBMISSION, description="Current status of KYC document verification")
+    kyc_status: KYCStatus = Field(default=KYCStatus.PENDING_SUBMISSION, description="Current status of KYC document verification")
     provider_reference: Optional[str] = Field(default=None, index=True, description="Third-party identity verification provider reference ID")
     liveness_score: Optional[float] = Field(default=None, description="Facial liveness confidence score from verification check")
-    rejection_reason: Optional[str] = Field(default=None, description="Reason stated if KYC verification was rejected")
     is_online: Optional[bool] = Field(default=False, index=True, nullable=True, description="Real-time online presence toggle. Updated via mobile app toggle API when provider switches online/offline state.")
     duty_status: Optional[DutyStatus] = Field(default=DutyStatus.OFFLINE, index=True, nullable=True, description="Current dispatch activity state (OFFLINE, ONLINE_AVAILABLE, ON_DISPATCH, ON_TASK). Updated by ProviderLocationService, cascading dispatcher, and task lifecycle events.")
     last_heartbeat_at: Optional[datetime] = Field(default=None, nullable=True, description="Timestamp of the most recent location/presence ping. Updated continuously via ProviderLocationService.update_provider_location().")
-    acceptance_rate_30d: Optional[float] = Field(default=100.0, nullable=True, description="Rolling 30-day percentage of accepted dispatch pings (accepted / total dispatches * 100). Updated asynchronously by background Celery metrics task or after dispatch attempt completion.")
-    completion_rate_30d: Optional[float] = Field(default=100.0, nullable=True, description="Rolling 30-day percentage of successfully completed assigned tasks (completed / assigned * 100). Updated asynchronously by background Celery metrics task or task completion events.")
-    total_tasks_completed: Optional[int] = Field(default=0, nullable=True, description="Lifetime total count of successfully completed tasks. Incremented by 1 when a task transitions to COMPLETED status.")
-    consecutive_declines: Optional[int] = Field(default=0, nullable=True, description="Count of consecutive dispatch ping declines or timeouts. Incremented on declined/expired pings, reset to 0 on acceptance. Used to auto-pause inactive providers.")
-    cancellation_count: int = Field(default=0, description="Number of times the provider has cancelled accepted tasks")
 
     meta_data: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Provider-specific JSON metadata payload")
     
@@ -128,6 +167,10 @@ class ProviderProfile(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lagos_now, description="Record last updated timestamp")
     verified_at: Optional[datetime] = Field(default=None, description="Timestamp when provider was fully KYC verified")
     user: User = Relationship(back_populates="provider_profile")
+    kyc_documents: List["KYCDocument"] = Relationship(
+        back_populates="provider_profile",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    )
 
     services: List[Service] = Relationship(
         back_populates="providers",

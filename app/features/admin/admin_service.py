@@ -84,6 +84,8 @@ class AdminService:
 
     def can_invite_role(self, requester_role: AdminRole, target_role: AdminRole) -> bool:
         """Validates role creation permissions."""
+        if target_role == AdminRole.ROOT_ADMIN:
+            return False
         if requester_role == AdminRole.ROOT_ADMIN:
             return True
         if requester_role == AdminRole.SUPER_ADMIN:
@@ -104,6 +106,12 @@ class AdminService:
         user_agent: Optional[str] = None,
     ) -> Tuple[AdminInvitation, str]:
         """Creates a secure admin invitation."""
+        if role == AdminRole.ROOT_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot invite an administrator as ROOT_ADMIN. Only one Root Admin can exist.",
+            )
+
         if not self.can_invite_role(requester.role, role):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -360,8 +368,8 @@ class AdminService:
             if not await self.can_demote_admin(requester, target):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to demote this Super Admin")
 
-        if new_role == AdminRole.ROOT_ADMIN and requester.role != AdminRole.ROOT_ADMIN:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Root Admin can assign ROOT_ADMIN role")
+        if new_role == AdminRole.ROOT_ADMIN:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot assign ROOT_ADMIN role. Only one Root Admin can exist.")
 
         prev_role = target.role.value
         target.role = new_role

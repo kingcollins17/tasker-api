@@ -3,6 +3,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from app.core.utils.datetime_helper import lagos_now
 from typing import List, Optional, TYPE_CHECKING
+from sqlalchemy import Index
 from sqlmodel import Field, SQLModel, Relationship
 
 if TYPE_CHECKING:
@@ -20,6 +21,9 @@ class PricingRuleType(str, enum.Enum):
 class ProviderServiceLink(SQLModel, table=True):
     """Many-to-many junction table mapping provider profiles to offered services."""
     __tablename__ = "provider_services"  # type: ignore
+    __table_args__ = (
+        Index("idx_provider_service", "service_id", "provider_id"),
+    )
     
     provider_id: str = Field(foreign_key="users.id", primary_key=True, ondelete="CASCADE", description="Foreign key reference to provider user ID")
     service_id: str = Field(foreign_key="services.id", primary_key=True, description="Foreign key reference to service ID")
@@ -56,7 +60,7 @@ class Service(SQLModel, table=True):
     per_km_rate: Optional[float] = Field(default=150.0, nullable=True, description="Per-kilometer distance rate override")
     per_minute_rate: Optional[float] = Field(default=20.0, nullable=True, description="Per-minute labor rate override")
     take_rate: float = Field(default=0.15, description="Dynamic percentage platform commission take-rate")
-    min_tier_required: int = Field(default=1, le=5, ge=1, description="Minimum provider tier required to perform this service")
+    min_tier_required: int = Field(default=4, le=10, ge=1, description="Minimum provider tier required to perform this service")
     is_high_risk: bool = Field(default=False, description="Whether this service involves high-risk tasks requiring extra verification")
     is_active: bool = Field(default=True, description="Whether this service is active and bookable")
     created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")

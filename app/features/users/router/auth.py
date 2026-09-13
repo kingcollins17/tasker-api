@@ -10,7 +10,7 @@ from app.features.users.schemas import (
     UserLogin,
     LoginResponse,
 )
-from app.features.users.services import UserService, get_user_service
+from app.features.users.services import UserAuthService, get_user_auth_service
 from app.core.services.logger_service import LoggerService, get_logger_service
 from app.core.utils.timer import Timer
 
@@ -25,14 +25,14 @@ router = APIRouter()
 async def register(
     schema: UserRegister,
     response: Response,
-    user_service: UserService = Depends(get_user_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Register a new user (customer or provider) and automatically create their profile."""
     try:
         timer = Timer()
         timer.start()
-        user = await user_service.register_user(schema)
+        user = await auth_service.register_user(schema)
 
         await system_logger.metric(
             f"User registration: {schema.email}", timer.stop(), source="auth.register"
@@ -72,7 +72,7 @@ async def register(
 @router.post("/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
-    user_service: UserService = Depends(get_user_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     system_logger: LoggerService = Depends(get_logger_service),
     user_type: Literal["customer", "provider"] = "customer",
 ):
@@ -85,7 +85,7 @@ async def login(
         )
         timer = Timer()
         timer.start()
-        login_data = await user_service.login_user(schema)
+        login_data = await auth_service.login_user(schema)
 
         await system_logger.metric(
             f"User login: {form_data.username}", timer.stop(), source="auth.login"

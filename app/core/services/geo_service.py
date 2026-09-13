@@ -2,17 +2,23 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 
 from fastapi import Depends
+from geoalchemy2 import Geography
 from pydantic import BaseModel, Field
 from sqlalchemy import cast, func
-from geoalchemy2 import Geography
-from sqlmodel import select, col
+from sqlmodel import col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.database import get_session
-from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.models.services import ProviderServiceLink
-from app.core.models.users import ProviderProfile, UserLocation
-from app.core.repository import Repository
-from app.core.services.cache import CacheService, get_cache_service
+from app.core.models.tasks import TaskDispatchAttempt
+from app.core.models.users import (
+    DutyStatus,
+    KYCStatus,
+    ProviderProfile,
+    User,
+    UserLocation,
+    UserStats,
+)
 from app.core.utils.datetime_helper import lagos_now
 
 
@@ -42,6 +48,9 @@ class NearbyProviderResult(BaseModel):
     longitude: Optional[float] = Field(default=None, description="Provider current longitude")
     last_heartbeat_at: Optional[str] = Field(default=None, description="ISO timestamp of last location ping")
     is_online: Optional[bool] = Field(default=True, description="Online status flag")
+    acceptance_rate_30d: Optional[float] = Field(default=100.0, description="Rolling 30-day percentage of accepted pings")
+    average_ratings: Optional[float] = Field(default=0.0, description="Average rating score")
+    credibility_score: Optional[float] = Field(default=0.0, description="Credibility score metric")
 
 
 class GeoService:
@@ -49,48 +58,26 @@ class GeoService:
 
     def __init__(
         self,
-        session: Optional[AsyncSession] = None,
-        location_repo: Optional[Repository[UserLocation]] = None,
-        provider_profile_repo: Optional[Repository[ProviderProfile]] = None,
+        session: AsyncSession,
     ):
         self.session = session
-        self.location_repo = location_repo
-        self.provider_profile_repo = provider_profile_repo
 
     async def remove_provider_location(self, provider_id: str) -> bool:
-        stmt = select(UserLocation).where(UserLocation.user_id == provider_id)
-        if self.session:
-            result = await self.session.exec(stmt)
-            loc: Optional[UserLocation] = result.one_or_none()
-            if loc:
-                loc.latitude = None
-                loc.longitude = None
-                loc.last_known_location = None
-                loc.updated_at = lagos_now()
-                self.session.add(loc)
-                return True
-            return False
-        elif self.location_repo:
-            result = await self.location_repo.execute(stmt)
-            loc: Optional[UserLocation] = result.one_or_none()
-            if loc:
-                loc.latitude = None
-                loc.longitude = None
-                loc.last_known_location = None
-                loc.updated_at = lagos_now()
-                await self.location_repo.add(loc)
-                return True
-            return False
+        stmt = select(UserLocation).where(col(UserLocation.user_id) == provider_id)
+        result = await self.session.exec(stmt)
+        loc: Optional[UserLocation] = result.one_or_none()
+        if loc:
+            loc.latitude = None
+            loc.longitude = None
+            loc.last_known_location = None
+            loc.updated_at = lagos_now()
+            self.session.add(loc)
+            return True
         return False
 
     async def get_provider_location(self, provider_id: str) -> Optional[ProviderLocationPing]:
-        stmt = select(UserLocation).where(UserLocation.user_id == provider_id)
-        if self.session:
-            result = await self.session.exec(stmt)
-        elif self.location_repo:
-            result = await self.location_repo.execute(stmt)
-        else:
-            return None
+        stmt = select(UserLocation).where(col(UserLocation.user_id) == provider_id)
+        result = await self.session.exec(stmt)
 
         loc: Optional[UserLocation] = result.one_or_none()
         if loc and loc.latitude is not None and loc.longitude is not None:
@@ -110,6 +97,9 @@ class GeoService:
         limit: Optional[int] = 100,
         excluded_provider_ids: Optional[List[str]] = None,
         service_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        exclude_previous_sessions: bool = True,
+        dispatch_session_id: Optional[str] = None,
     ) -> List[NearbyProviderResult]:
         target_point = func.ST_SetSRID(func.ST_MakePoint(longitude, latitude), 4326)
         distance_m_expr = func.ST_Distance(
@@ -118,25 +108,33 @@ class GeoService:
         )
 
         stmt = (
-            select(
+            select(  # type: ignore
                 UserLocation,
                 ProviderProfile,
                 (distance_m_expr / 1000.0).label("distance_km"),
+                col(UserStats.acceptance_rate_30d),
+                col(UserStats.average_ratings),
+                col(UserStats.credibility_score),
             )
+            .join(User, col(User.id) == col(UserLocation.user_id))
             .join(ProviderProfile, col(UserLocation.user_id) == col(ProviderProfile.user_id))
+            .outerjoin(UserStats, col(UserStats.user_id) == col(User.id))
         )
 
         if service_id:
             stmt = stmt.join(
                 ProviderServiceLink,
-                ProviderServiceLink.provider_id == ProviderProfile.user_id,  # type: ignore
+                col(ProviderServiceLink.provider_id) == col(ProviderProfile.user_id),  # type: ignore
             ).where(
-                ProviderServiceLink.service_id == service_id,
+                col(ProviderServiceLink.service_id) == service_id,
             )
 
         stmt = (
-            stmt.where(UserLocation.last_known_location != None)  # noqa: E711
-            .where(ProviderProfile.is_online == True)  # noqa: E712
+            stmt.where(col(UserLocation.last_known_location) != None)  # noqa: E711
+            .where(col(User.is_active) == True)  # noqa: E712
+            .where(col(ProviderProfile.kyc_status) == KYCStatus.VERIFIED)
+            .where(col(ProviderProfile.is_online) == True)  # noqa: E712
+            .where(col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE)
             .where(
                 func.ST_DWithin(
                     cast(UserLocation.last_known_location, Geography),
@@ -144,25 +142,30 @@ class GeoService:
                     radius_km * 1000.0,
                 )
             )
-            .order_by(distance_m_expr)
         )
 
-        if limit:
-            stmt = stmt.limit(limit)
+        if task_id:
+            subq = select(1).where(
+                col(TaskDispatchAttempt.task_id) == task_id,
+                col(TaskDispatchAttempt.provider_id) == col(UserLocation.user_id),
+            )
+            if not exclude_previous_sessions and dispatch_session_id:
+                subq = subq.where(col(TaskDispatchAttempt.dispatch_session_id) == dispatch_session_id)
+            stmt = stmt.where(~subq.exists())
+
         if excluded_provider_ids:
             stmt = stmt.where(~col(UserLocation.user_id).in_(excluded_provider_ids))
 
-        if self.session:
-            result = await self.session.exec(stmt)
-        elif self.location_repo:
-            result = await self.location_repo.execute(stmt)
-        else:
-            return []
+        stmt = stmt.order_by(distance_m_expr)
 
+        if limit:
+            stmt = stmt.limit(limit)
+
+        result = await self.session.exec(stmt)
         rows = result.all()
 
         candidates: List[NearbyProviderResult] = []
-        for loc, profile, dist_km in rows:
+        for loc, profile, dist_km, acceptance_rate, avg_rating, credibility in rows:
             candidates.append(
                 NearbyProviderResult(
                     provider_id=loc.user_id,
@@ -171,6 +174,9 @@ class GeoService:
                     longitude=loc.longitude,
                     last_heartbeat_at=loc.updated_at.isoformat() if loc.updated_at else None,
                     is_online=profile.is_online if profile.is_online is not None else True,
+                    acceptance_rate_30d=acceptance_rate if acceptance_rate is not None else 100.0,
+                    average_ratings=avg_rating if avg_rating is not None else 0.0,
+                    credibility_score=credibility if credibility is not None else 0.0,
                 )
             )
 
@@ -188,3 +194,4 @@ def get_geo_service(
 PostGISProviderLocationService = GeoService
 ProviderLocationService = GeoService
 get_provider_location_service = get_geo_service
+

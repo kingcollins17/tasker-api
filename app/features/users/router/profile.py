@@ -25,7 +25,14 @@ from app.features.users.schemas import (
     LocationPing,
 )
 from typing import List
-from app.features.users.services import UserService, get_user_service
+from app.features.users.services import (
+    CustomerProfileService,
+    get_customer_profile_service,
+    ProviderProfileService,
+    get_provider_profile_service,
+    UserLocationDeviceService,
+    get_user_location_device_service,
+)
 
 router = APIRouter()
 
@@ -34,7 +41,7 @@ router = APIRouter()
 async def get_me(
     response: Response,
     current_user: UserResponse = Depends(GetCurrentUser()),
-    user_service: UserService = Depends(get_user_service),
+    service_repo: Repository[Service] = Depends(GetRepository(Service)),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Retrieve the profile details of the currently authenticated user."""
@@ -42,25 +49,16 @@ async def get_me(
         timer = Timer()
         timer.start()
         if current_user.type == UserType.PROVIDER and current_user.provider_profile:
-            def _get_services(current_user, user_service):
-                stmt = select(Service).join(
-                    ProviderServiceLink, Service.id == ProviderServiceLink.service_id  # type: ignore
-                ).where(
-                    ProviderServiceLink.provider_id == current_user.id
-                ).where(
-                    Service.is_active == True
-                )
+            stmt = select(Service).join(
+                ProviderServiceLink, Service.id == ProviderServiceLink.service_id  # type: ignore
+            ).where(
+                ProviderServiceLink.provider_id == current_user.id
+            ).where(
+                Service.is_active == True
+            )
 
-                result = user_service.provider_repo.execute(stmt)
-                return result
-
-            result = _get_services(current_user, user_service)
-
-            if inspect.isawaitable(result):
-                result = await result
-                services = list(result.all())
-            else:
-                services = []
+            result = await service_repo.execute(stmt)
+            services = list(result.all())
 
             current_user.provider_profile.services = [
                 ServiceResponse.model_validate(s) for s in services
@@ -90,14 +88,14 @@ async def update_profile(
     response: Response,
     current_user: UserResponse = Depends(
         GetCurrentUser(required_type=UserType.PROVIDER)),
-    user_service: UserService = Depends(get_user_service),
+    provider_service: ProviderProfileService = Depends(get_provider_profile_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Update profile details for the currently authenticated provider."""
     try:
         timer = Timer()
         timer.start()
-        updated_user = await user_service.update_provider_profile(
+        updated_user = await provider_service.update_provider_profile(
             user_id=current_user.id,
             first_name=schema.first_name,
             last_name=schema.last_name,
@@ -128,14 +126,14 @@ async def update_seeker_profile(
     response: Response,
     current_user: UserResponse = Depends(
         GetCurrentUser(required_type=UserType.CUSTOMER)),
-    user_service: UserService = Depends(get_user_service),
+    customer_service: CustomerProfileService = Depends(get_customer_profile_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Update profile details for the currently authenticated seeker (customer)."""
     try:
         timer = Timer()
         timer.start()
-        updated_user = await user_service.update_customer_profile(
+        updated_user = await customer_service.update_customer_profile(
             user_id=current_user.id,
             first_name=schema.first_name,
             last_name=schema.last_name,
@@ -164,14 +162,14 @@ async def update_location(
     schema: UpdateLocation,
     response: Response,
     current_user: UserResponse = Depends(GetCurrentUser()),
-    user_service: UserService = Depends(get_user_service),
+    location_service: UserLocationDeviceService = Depends(get_user_location_device_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Update the live last known location of the currently authenticated user (seeker or tasker)."""
     try:
         timer = Timer()
         timer.start()
-        await user_service.update_user_location(
+        await location_service.update_user_location(
             user_id=current_user.id,
             user_type=current_user.type,
             latitude=schema.latitude,
@@ -201,14 +199,14 @@ async def update_cloud_messaging_token(
     schema: UpdateCloudMessagingToken,
     response: Response,
     current_user: UserResponse = Depends(GetCurrentUser()),
-    user_service: UserService = Depends(get_user_service),
+    location_service: UserLocationDeviceService = Depends(get_user_location_device_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Update the cloud messaging token for push notifications."""
     try:
         timer = Timer()
         timer.start()
-        await user_service.update_cloud_messaging_token(current_user.id, schema.token, schema.platform)
+        await location_service.update_cloud_messaging_token(current_user.id, schema.token, schema.platform)
         await system_logger.metric('update_cloud_messaging_token', timer.stop(), source='profile.update_cloud_messaging_token')
         return BaseAPIResponse[None](
             detail="Cloud messaging token updated successfully.",
@@ -232,14 +230,14 @@ async def attach_provider_service(
     response: Response,
     current_user: UserResponse = Depends(
         GetCurrentUser(required_type=UserType.PROVIDER)),
-    user_service: UserService = Depends(get_user_service),
+    provider_service: ProviderProfileService = Depends(get_provider_profile_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Add a service to the authenticated provider's account. Max 3 services allowed."""
     try:
         timer = Timer()
         timer.start()
-        await user_service.attach_provider_service(
+        await provider_service.attach_provider_service(
             user_id=current_user.id,
             service_id=schema.service_id
         )
@@ -393,14 +391,14 @@ async def remove_provider_service(
     response: Response,
     current_user: UserResponse = Depends(
         GetCurrentUser(required_type=UserType.PROVIDER)),
-    user_service: UserService = Depends(get_user_service),
+    provider_service: ProviderProfileService = Depends(get_provider_profile_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Remove a service from the authenticated provider's account."""
     try:
         timer = Timer()
         timer.start()
-        await user_service.remove_provider_service(
+        await provider_service.remove_provider_service(
             user_id=current_user.id,
             service_id=service_id
         )
@@ -426,14 +424,14 @@ async def update_region(
     schema: UpdateRegion,
     response: Response,
     current_user: UserResponse = Depends(GetCurrentUser()),
-    user_service: UserService = Depends(get_user_service),
+    location_service: UserLocationDeviceService = Depends(get_user_location_device_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Update the region ID of the currently authenticated user."""
     try:
         timer = Timer()
         timer.start()
-        updated_user = await user_service.update_user_region(
+        updated_user = await location_service.update_user_region(
             user_id=current_user.id,
             region_id=schema.region_id
         )
@@ -459,14 +457,14 @@ async def update_region(
 async def update_online_status(
     schema: UpdateOnlineStatus,
     current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
-    user_service: UserService = Depends(get_user_service),
+    provider_service: ProviderProfileService = Depends(get_provider_profile_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Toggle online presence status for the authenticated service provider."""
     try:
         timer = Timer()
         timer.start()
-        updated_user = await user_service.update_provider_online_status(
+        updated_user = await provider_service.update_provider_online_status(
             user_id=current_user.id,
             is_online=schema.is_online,
         )
@@ -492,14 +490,14 @@ async def update_online_status(
 async def ping_location(
     schema: LocationPing,
     current_user: UserResponse = Depends(GetCurrentUser(required_type=UserType.PROVIDER)),
-    user_service: UserService = Depends(get_user_service),
+    location_service: UserLocationDeviceService = Depends(get_user_location_device_service),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """Real-time provider location heartbeat ping to Redis geospatial index."""
     try:
         timer = Timer()
         timer.start()
-        await user_service.ping_provider_location(
+        await location_service.ping_provider_location(
             user_id=current_user.id,
             latitude=schema.latitude,
             longitude=schema.longitude,

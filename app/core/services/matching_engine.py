@@ -72,7 +72,7 @@ class MatchingResult:
 
 
 class CandidateFetcher:
-    """Handles candidate location validation, exclusion filtering, PostGIS discovery, and eligibility querying."""
+    """Handles candidate location validation, PostGIS discovery, and single-query eligibility matching."""
 
     def __init__(
         self,
@@ -94,39 +94,28 @@ class CandidateFetcher:
         excluded_provider_ids: Optional[List[str]] = None,
         dispatch_session: Optional[DispatchSession] = None,
     ) -> List[str]:
-        """Combines excluded provider IDs from constructor, method parameters, and DB dispatch attempts."""
+        """Combines explicit excluded provider IDs.
+        Note: DB attempt exclusions are handled directly in PostgreSQL via NOT EXISTS in GeoService.
+        """
         all_excluded: Set[str] = set(self.excluded_provider_ids)
         if excluded_provider_ids:
             all_excluded.update(excluded_provider_ids)
-
-        stmt_attempts = select(TaskDispatchAttempt.provider_id).where(
-            col(TaskDispatchAttempt.task_id) == task_id
-        )
-        if not self.exclude_previous_sessions and dispatch_session:
-            stmt_attempts = stmt_attempts.where(
-                col(TaskDispatchAttempt.dispatch_session_id) == dispatch_session.id
-            )
-        res_attempts = await self.session.exec(stmt_attempts)
-        raw_attempts = res_attempts.all()
-        attempted_ids: Set[str] = {
-            (row[0] if isinstance(row, (tuple, Row)) else row)
-            for row in raw_attempts
-            if (row[0] if isinstance(row, (tuple, Row)) else row) is not None
-        }
-
-        all_excluded.update(attempted_ids)
         return list(all_excluded)
 
     async def validate_task(self, task: Task) -> Optional[TaskLocation]:
-        """Validates if task is fit for matching and returns TaskLocation."""
+        """Validates if task is fit for matching and returns TaskLocation without extra DB queries if loaded."""
         if not task.service_id:
             return None
+
+        if task.locations:
+            for loc in task.locations:
+                if loc.latitude is not None and loc.longitude is not None:
+                    return loc
 
         stmt_loc = (
             select(TaskLocation).where(col(TaskLocation.task_id) == task.id).limit(1)
         )
         res_loc = await self.session.exec(stmt_loc)
-
         task_loc: Optional[TaskLocation] = res_loc.one_or_none()
         if not task_loc or task_loc.latitude is None or task_loc.longitude is None:
             return None
@@ -138,7 +127,7 @@ class CandidateFetcher:
         provider_ids: List[str],
         service_id: str,
     ) -> List[Tuple[User, ProviderProfile]]:
-        """Queries DB for active, verified, online providers matching service_id."""
+        """Queries DB for active, verified, online providers matching service_id (retained for compatibility)."""
         if not provider_ids:
             return []
 
@@ -152,7 +141,7 @@ class CandidateFetcher:
             .where(
                 col(User.id).in_(provider_ids),  # type: ignore
                 col(User.is_active) == True,  # noqa: E712
-                col(ProviderProfile.status) == KYCStatus.VERIFIED,
+                col(ProviderProfile.kyc_status) == KYCStatus.VERIFIED,
                 col(ProviderServiceLink.service_id) == service_id,
                 col(ProviderProfile.is_online) == True,  # noqa: E712
                 col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE,
@@ -168,13 +157,13 @@ class CandidateFetcher:
         task: Task,
         excluded_provider_ids: Optional[List[str]] = None,
         dispatch_session: Optional[DispatchSession] = None,
-    ) -> EligibleCandidates:
-        """Discovers nearby providers and excludes already pinged/excluded candidates at DB level."""
+    ) -> List[NearbyProviderResult]:
+        """Discovers nearby eligible providers in a single PostGIS DB query with NOT EXISTS exclusion."""
         task_loc = await self.validate_task(task)
         if not task_loc:
-            return EligibleCandidates(rows=[], nearby_map={})
+            return []
 
-        all_excluded_list = await self.get_excluded_ids(
+        explicit_excluded = await self.get_excluded_ids(
             task_id=task.id,
             excluded_provider_ids=excluded_provider_ids,
             dispatch_session=dispatch_session,
@@ -195,44 +184,18 @@ class CandidateFetcher:
             ),
         )
 
-        limit_pool = 50
-        local_excluded = set(all_excluded_list)
-        all_eligible_rows: List[Tuple[User, ProviderProfile]] = []
-        nearby_map: Dict[str, float] = {}
-
-        while True:
-            nearby_results: List[NearbyProviderResult] = (
-                await self.geo_service.search_nearby_providers(
-                    latitude=task_loc.latitude,
-                    longitude=task_loc.longitude,
-                    radius_km=current_radius,
-                    limit=limit_pool,
-                    excluded_provider_ids=list(local_excluded),
-                    service_id=task.service_id,
-                )
-            )
-
-            if not nearby_results:
-                break
-
-            for r in nearby_results:
-                if r.provider_id and r.distance_km is not None:
-                    nearby_map[r.provider_id] = r.distance_km
-
-            provider_ids = [r.provider_id for r in nearby_results if r.provider_id]
-            local_excluded.update(provider_ids)
-            if provider_ids:
-                assert task.service_id, "Task service id must not be null"
-                rows = await self.get_eligible(
-                    provider_ids=provider_ids,
-                    service_id=task.service_id,
-                )
-                all_eligible_rows.extend(rows)
-
-            if len(all_eligible_rows) >= batch_size or len(nearby_results) < limit_pool:
-                break
-
-        return EligibleCandidates(rows=all_eligible_rows, nearby_map=nearby_map)
+        assert task.service_id, "Task service id must not be null"
+        return await self.geo_service.search_nearby_providers(
+            latitude=task_loc.latitude,
+            longitude=task_loc.longitude,
+            radius_km=current_radius,
+            limit=max(50, batch_size),
+            excluded_provider_ids=explicit_excluded,
+            service_id=task.service_id,
+            task_id=task.id,
+            exclude_previous_sessions=self.exclude_previous_sessions,
+            dispatch_session_id=dispatch_session.id if dispatch_session else None,
+        )
 
 
 class CandidateScorer:
@@ -240,28 +203,27 @@ class CandidateScorer:
 
     def score(
         self,
-        rows: List[Tuple[User, ProviderProfile]],
-        nearby_map: Dict[str, float],
+        candidates: List[NearbyProviderResult],
         batch_size: int,
         current_radius: float,
     ) -> List[ScoredCandidate]:
         scored: List[ScoredCandidate] = []
-        for user, profile in rows:
-            dist_km = nearby_map.get(user.id, 10.0)
+        for c in candidates:
+            if not c.provider_id:
+                continue
+            dist_km = c.distance_km if c.distance_km is not None else 10.0
             acceptance_rate = (
-                profile.acceptance_rate_30d
-                if profile.acceptance_rate_30d is not None
+                c.acceptance_rate_30d
+                if c.acceptance_rate_30d is not None
                 else 100.0
             )
-            avg_rating = (
-                user.average_ratings if user.average_ratings is not None else 0.0
-            )
+            avg_rating = c.average_ratings if c.average_ratings is not None else 0.0
             credibility = (
-                user.credibility_score if user.credibility_score is not None else 0.0
+                c.credibility_score if c.credibility_score is not None else 0.0
             )
 
             normalized_dist = (
-                (dist_km / current_radius) * 100 if current_radius > 0 else 0
+                (dist_km / current_radius) * 100.0 if current_radius > 0 else 0.0
             )
             score_val = (
                 (0.30 * acceptance_rate)
@@ -271,13 +233,13 @@ class CandidateScorer:
             )
             scored.append(
                 ScoredCandidate(
-                    user_id=user.id,
+                    user_id=c.provider_id,
                     distance_km=dist_km,
                     score=round(score_val, 2),
                 )
             )
 
-        scored.sort(key=lambda c: c.score, reverse=True)
+        scored.sort(key=lambda item: item.score, reverse=True)
         return scored[:batch_size]
 
 
@@ -295,25 +257,23 @@ class CandidatePinger:
         self.ping_duration = ping_duration
 
     async def recover_stale_attempts(self, task: Task) -> None:
-        """Local Recovery: clean up stale PENDING attempts from previous iterations."""
-        stmt_stale = select(
-            TaskDispatchAttempt.id, TaskDispatchAttempt.provider_id
-        ).where(
-            col(TaskDispatchAttempt.task_id) == task.id,
-            col(TaskDispatchAttempt.status) == DispatchAttemptStatus.PENDING,  # type: ignore
-            col(TaskDispatchAttempt.expires_at) <= lagos_now(),
+        """Local Recovery: clean up stale PENDING attempts using atomic UPDATE ... RETURNING."""
+        now = lagos_now()
+        stmt_stale = (
+            update(TaskDispatchAttempt)
+            .where(
+                col(TaskDispatchAttempt.task_id) == task.id,
+                col(TaskDispatchAttempt.status) == DispatchAttemptStatus.PENDING,  # type: ignore
+                col(TaskDispatchAttempt.expires_at) <= now,
+            )
+            .values(status=DispatchAttemptStatus.TIMEOUT, responded_at=now)
+            .returning(col(TaskDispatchAttempt.provider_id))
         )
         res_stale = await self.session.exec(stmt_stale)
-        stale_records = res_stale.all()
-        if stale_records:
-            stale_attempt_ids = [r[0] for r in stale_records]
-            stale_provider_ids = [r[1] for r in stale_records]
+        raw_stale = res_stale.scalars().all()
+        stale_provider_ids = list(raw_stale)
 
-            await self.session.exec(
-                update(TaskDispatchAttempt)
-                .where(col(TaskDispatchAttempt.id).in_(stale_attempt_ids))
-                .values(status=DispatchAttemptStatus.TIMEOUT, responded_at=lagos_now())
-            )
+        if stale_provider_ids:
             await self.session.exec(
                 update(ProviderProfile)
                 .where(
@@ -324,7 +284,7 @@ class CandidatePinger:
             )
             await self.session.commit()
             logger.info(
-                f"CandidatePinger: Recovered {len(stale_attempt_ids)} stale attempts for task {task.id}"
+                f"CandidatePinger: Recovered {len(stale_provider_ids)} stale attempts for task {task.id}"
             )
 
     async def ping_candidate(
@@ -412,33 +372,60 @@ class CandidatePinger:
         dispatch_session_id: str,
         seq_start: int,
     ) -> List[TaskDispatchAttempt]:
-        """Dispatches ping attempts to a batch of candidates and sends ping notifications."""
+        """Dispatches ping attempts to candidate batch using atomic UPDATE RETURNING and bulk INSERT."""
+        if not batch:
+            return []
+
+        candidate_ids = [c.user_id for c in batch]
+        stmt_lock = (
+            update(ProviderProfile)
+            .where(
+                col(ProviderProfile.user_id).in_(candidate_ids),
+                col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE,  # type: ignore
+            )
+            .values(duty_status=DutyStatus.ON_DISPATCH)
+            .returning(col(ProviderProfile.user_id))
+        )
+        res_lock = await self.session.exec(stmt_lock)
+        winning_provider_ids = set(res_lock.scalars().all())
+
+        if not winning_provider_ids:
+            return []
+
+        now = lagos_now()
+        offered_payout = task.provider_payout or 0.0
+        effective_expires_at = now + timedelta(seconds=self.ping_duration)
+
         attempts: List[TaskDispatchAttempt] = []
         dispatched_user_ids: List[str] = []
 
         for candidate in batch:
-            attempt = await self.ping_candidate(
-                candidate=candidate,
-                task=task,
-                dispatch_session_id=dispatch_session_id,
-                sequence_order=seq_start + len(attempts),
-                ping_duration=self.ping_duration,
-            )
-            if not attempt:
+            if candidate.user_id not in winning_provider_ids:
+                logger.debug(
+                    f"CandidatePinger: Candidate {candidate.user_id} lost race (duty status modified). Skipping."
+                )
                 continue
 
+            attempt = TaskDispatchAttempt(
+                dispatch_session_id=dispatch_session_id,
+                task_id=task.id,
+                provider_id=candidate.user_id,
+                sequence_order=seq_start + len(attempts),
+                match_score=candidate.score,
+                offered_payout=offered_payout,
+                pinged_at=now,
+                expires_at=effective_expires_at,
+                status=DispatchAttemptStatus.PENDING,
+            )
             attempts.append(attempt)
             dispatched_user_ids.append(candidate.user_id)
 
         if not attempts:
             return []
 
-        offered_payout = task.provider_payout or 0.0
-        last_expires_at = (
-            attempts[-1].expires_at.isoformat()
-            if attempts and attempts[-1].expires_at
-            else None
-        )
+        self.session.add_all(attempts)
+
+        last_expires_at = effective_expires_at.isoformat()
 
         try:
             await self.send_batch_notification(
@@ -542,7 +529,7 @@ class MatchingEngine:
             excluded_provider_ids=excluded_provider_ids,
             dispatch_session=dispatch_session,
         )
-        if not candidates.rows:
+        if not candidates:
             return []
 
         current_radius: float = (
@@ -559,8 +546,7 @@ class MatchingEngine:
             ),
         )
         return self.scorer.score(
-            rows=candidates.rows,
-            nearby_map=candidates.nearby_map,
+            candidates=candidates,
             batch_size=batch_size,
             current_radius=current_radius,
         )
@@ -646,7 +632,7 @@ class MatchingEngine:
                 reason="LOCKING_CONFLICT",
             )
 
-        await self.session.refresh(dispatch_session)
+        dispatch_session.lock_version = lock_version + 1
 
         task = await self.session.get(Task, dispatch_session.task_id)
         if not task:

@@ -1,6 +1,5 @@
 from datetime import datetime
 from typing import Optional, List
-from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 from app.core.models.admins import AdminRole, AdminInvitationStatus
 
@@ -64,11 +63,11 @@ class AdminInvitationResponse(BaseModel):
 
 
 class AdminAuditLogResponse(BaseModel):
-    id: UUID
-    admin_id: Optional[UUID] = None
+    id: str
+    admin_id: Optional[str] = None
     action: str
     resource_type: str
-    resource_id: Optional[UUID] = None
+    resource_id: Optional[str] = None
     meta_data: Optional[dict] = None
     reason: Optional[str] = None
     ip_address: Optional[str] = None

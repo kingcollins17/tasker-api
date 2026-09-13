@@ -25,6 +25,7 @@ class LocationType(str, enum.Enum):
 class TaskStatus(str, enum.Enum):
     """Lifecycle states of a task request."""
     DRAFT = "DRAFT"
+    UNDER_REVIEW = "UNDER_REVIEW" # Special status for tasks that need to go under review for security reasons
     OPEN = "OPEN"
     SEARCHING = "SEARCHING"
     ASSIGNED = "ASSIGNED"
@@ -263,6 +264,11 @@ class DispatchSession(SQLModel, table=True):
 class TaskDispatchAttempt(SQLModel, table=True):
     """Logs individual 30-second dispatch pings sent to candidate providers during cascading dispatch."""
     __tablename__ = "task_dispatch_attempts"  # type: ignore
+    __table_args__ = (
+        Index("idx_attempt_task_provider", "task_id", "provider_id"),
+        Index("idx_attempt_session_sequence", "dispatch_session_id", "sequence_order"),
+        Index("idx_attempt_stale", "task_id", "status", "expires_at"),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique dispatch attempt ID")
     dispatch_session_id: Optional[str] = Field(

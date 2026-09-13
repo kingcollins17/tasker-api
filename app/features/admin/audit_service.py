@@ -1,5 +1,4 @@
 from typing import Dict, Any, Optional
-from uuid import UUID
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -28,31 +27,14 @@ class AuditService:
         user_agent: Optional[str] = None,
     ) -> AdminAuditLog:
         """Logs an administrative action to the immutable audit log table."""
-        parsed_admin_id = None
-        if admin_id:
-            if isinstance(admin_id, UUID):
-                parsed_admin_id = admin_id
-            else:
-                try:
-                    parsed_admin_id = UUID(str(admin_id))
-                except (ValueError, TypeError):
-                    parsed_admin_id = None
-
-        parsed_resource_id = None
-        if resource_id:
-            if isinstance(resource_id, UUID):
-                parsed_resource_id = resource_id
-            else:
-                try:
-                    parsed_resource_id = UUID(str(resource_id))
-                except (ValueError, TypeError):
-                    parsed_resource_id = None
+        str_admin_id = str(admin_id) if admin_id is not None else None
+        str_resource_id = str(resource_id) if resource_id is not None else None
 
         audit_log = AdminAuditLog(
-            admin_id=parsed_admin_id,
+            admin_id=str_admin_id,
             action=action,
             resource_type=resource_type,
-            resource_id=parsed_resource_id,
+            resource_id=str_resource_id,
             meta_data=meta_data,
             reason=reason,
             ip_address=ip_address,

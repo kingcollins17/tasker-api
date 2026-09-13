@@ -11,6 +11,7 @@ from app.core.repository import GetRepository, QueryOptions, Repository
 from app.core.services.provider_location import ProviderLocationService, get_provider_location_service
 from app.core.utils.datetime_helper import lagos_now
 from app.core.utils.phone_helper import format_nigerian_phone
+from app.features.users.services.kyc_service import KYCService, get_kyc_service
 
 
 class ProviderProfileService:
@@ -24,10 +25,12 @@ class ProviderProfileService:
         user_repo: Repository[User],
         provider_repo: Repository[ProviderProfile],
         provider_location_service: Optional[ProviderLocationService] = None,
+        kyc_service: Optional[KYCService] = None,
     ):
         self.user_repo = user_repo
         self.provider_repo = provider_repo
         self.provider_location_service = provider_location_service
+        self.kyc_service = kyc_service
 
     @log_error()
     async def update_provider_profile(
@@ -100,6 +103,19 @@ class ProviderProfileService:
         selfie_url: str,
     ) -> ProviderProfile:
         """Submit KYC details for a provider and transition status to SUBMITTED."""
+        if self.kyc_service:
+            await self.kyc_service.submit_kyc(
+                user_id=user_id,
+                id_type=id_type,
+                id_number=id_number,
+                id_doc_url=id_doc_url,
+                selfie_url=selfie_url,
+            )
+            profiles = await self.provider_repo.get_all(
+                QueryOptions(filters={"user_id": user_id})
+            )
+            return profiles[0]
+
         profiles = await self.provider_repo.get_all(
             QueryOptions(filters={"user_id": user_id})
         )
@@ -165,6 +181,30 @@ class ProviderProfileService:
                 detail="Provider profile not found.",
             )
         profile = profiles[0]
+
+        if self.kyc_service:
+            # Check if this is initial or resubmission based on history
+            history = await self.kyc_service.get_user_kyc_history(user_id)
+            if history and history[-1].status == KYCStatus.FAILED:
+                await self.kyc_service.resubmit_kyc(
+                    user_id=user_id,
+                    id_type=id_type,
+                    id_number=id_number,
+                    id_doc_url=id_doc_url,
+                    selfie_url=profile.selfie_url,
+                )
+            else:
+                await self.kyc_service.submit_kyc(
+                    user_id=user_id,
+                    id_type=id_type,
+                    id_number=id_number,
+                    id_doc_url=id_doc_url,
+                    selfie_url=profile.selfie_url,
+                )
+            profiles = await self.provider_repo.get_all(
+                QueryOptions(filters={"user_id": user_id})
+            )
+            return profiles[0]
 
         new_status = profile.status
         if profile.selfie_url:
@@ -319,10 +359,12 @@ def get_provider_profile_service(
     provider_location_service: ProviderLocationService = Depends(
         get_provider_location_service
     ),
+    kyc_service: KYCService = Depends(get_kyc_service),
 ) -> ProviderProfileService:
     """Dependency provider injecting repositories and sub-services into ProviderProfileService."""
     return ProviderProfileService(
         user_repo=user_repo,
         provider_repo=provider_repo,
         provider_location_service=provider_location_service,
+        kyc_service=kyc_service,
     )

@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 from sqlalchemy import Column, JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
@@ -25,15 +25,15 @@ class AdminInvitationStatus(str, enum.Enum):
 
 class AdminUser(SQLModel, table=True):
     """Administrator identity table containing credentials, hierarchy pointers, and status."""
-    __tablename__ = "admin_users"  # type: ignore
+    __tablename__ = "admins"  # type: ignore
     
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique primary identifier for the administrator account")
     email: str = Field(unique=True, index=True, description="Unique email address used for administrator authentication")
     hashed_password: Optional[str] = Field(default=None, description="Argon2 password hash string")
     fullname: Optional[str] = Field(default=None, description="Full legal or display name of the administrator")
     role: AdminRole = Field(description="Assigned administrative role in the authority hierarchy")
-    parent_admin_id: Optional[str] = Field(default=None, foreign_key="admin_users.id", nullable=True, index=True, description="ID of the parent administrator in the hierarchy tree")
-    created_by_id: Optional[str] = Field(default=None, foreign_key="admin_users.id", nullable=True, index=True, description="ID of the administrator who directly invited or created this account")
+    parent_admin_id: Optional[str] = Field(default=None, foreign_key="admins.id", nullable=True, index=True, description="ID of the parent administrator in the hierarchy tree")
+    created_by_id: Optional[str] = Field(default=None, foreign_key="admins.id", nullable=True, index=True, description="ID of the administrator who directly invited or created this account")
     is_active: bool = Field(default=False, description="Flag indicating whether the administrator account is currently active")
     is_email_verified: bool = Field(default=False, description="Flag indicating if the administrator's email address has been verified")
     last_login_at: Optional[datetime] = Field(default=None, description="Timestamp of the administrator's most recent successful login")
@@ -48,7 +48,7 @@ class AdminInvitation(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique identifier for the administrator invitation")
     email: str = Field(index=True, description="Target email address receiving the administrator invitation")
     role: AdminRole = Field(description="Initial administrative role assigned to the invitee upon acceptance")
-    invited_by_id: str = Field(foreign_key="admin_users.id", index=True, description="ID of the administrator who generated the invitation")
+    invited_by_id: str = Field(foreign_key="admins.id", index=True, description="ID of the administrator who generated the invitation")
     token_hash: str = Field(index=True, description="SHA-256 hash of the secure invitation token")
     status: AdminInvitationStatus = Field(default=AdminInvitationStatus.PENDING, index=True, description="Current lifecycle status of the invitation")
     expires_at: datetime = Field(index=True, description="Timestamp when the invitation token expires")
@@ -61,12 +61,12 @@ class AdminAuditLog(SQLModel, table=True):
     """Immutable audit log recording actions, state changes, and context for administrative operations."""
     __tablename__ = "admin_audit_logs"  # type: ignore
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True, description="Unique primary identifier for the audit log entry")
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True, description="Unique primary identifier for the audit log entry")
 
     # Who performed the action
-    admin_id: Optional[UUID] = Field(
+    admin_id: Optional[str] = Field(
         default=None,
-        foreign_key="admin_users.id",
+        foreign_key="admins.id",
         index=True,
         nullable=True,
         description="ID of the administrator who performed the action"
@@ -79,7 +79,7 @@ class AdminAuditLog(SQLModel, table=True):
     resource_type: str = Field(index=True, description="Type of resource or entity affected by the action")
 
     # ID of the affected resource
-    resource_id: Optional[UUID] = Field(
+    resource_id: Optional[str] = Field(
         default=None,
         index=True,
         description="ID of the affected resource or entity"
