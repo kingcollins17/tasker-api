@@ -1,3 +1,4 @@
+from app.core.config import IS_LOCAL
 import sys
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from fastapi import Depends
@@ -46,6 +47,8 @@ class LoggerService:
         duration_ms: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[SystemLog]:
+        # Do not log in local development mode
+        if IS_LOCAL: return
         log_entry = SystemLog(
             level=level,
             message=message,

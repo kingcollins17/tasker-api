@@ -503,24 +503,7 @@ async def get_task(
         if task.customer_id:
             customer_user = await task_service.user_repo.get(task.customer_id)
             if customer_user:
-                fullname = None
-                if customer_user.customer_profile:
-                    first_name = customer_user.customer_profile.first_name or ""
-                    last_name = customer_user.customer_profile.last_name or ""
-                    fullname = f"{first_name} {last_name}".strip() or None
-                gender = None
-                if customer_user.provider_profile:
-                    gender = customer_user.provider_profile.gender
-
-                task_data.customer = MinimalCustomerResponse(
-                    id=customer_user.id,
-                    fullname=fullname,
-                    email=customer_user.email,
-                    phone_number=customer_user.phone_number,
-                    average_ratings=customer_user.average_ratings,
-                    credibility_score=customer_user.credibility_score,
-                    gender=gender,
-                )
+                task_data.customer = MinimalCustomerResponse.from_user(customer_user)
 
         # Stitch in the payout object
         if task_service.payout_repo:
@@ -909,24 +892,9 @@ async def get_nearby_providers(
 
         providers = []
         for u in users:
-            fullname = None
-            gender = None
-            if u.provider_profile:
-                first_name = u.provider_profile.first_name or ""
-                last_name = u.provider_profile.last_name or ""
-                fullname = f"{first_name} {last_name}".strip() or None
-                gender = u.provider_profile.gender
-
-            providers.append(
-                MinimalProviderResponse(
-                    id=u.id,
-                    email=u.email,
-                    fullname=fullname,
-                    average_ratings=u.average_ratings,
-                    credibility_score=u.credibility_score,
-                    gender=gender,
-                )
-            )
+            prov_resp = MinimalProviderResponse.from_user(u)
+            if prov_resp:
+                providers.append(prov_resp)
 
         await system_logger.metric(
             "get_nearby_providers", timer.stop(), source="tasks.get_nearby_providers"

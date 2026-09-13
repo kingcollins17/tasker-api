@@ -10,9 +10,9 @@ from app.core.config import settings,IS_LOCAL
 # Create the async database engine
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=IS_LOCAL,
+    echo=False,
     pool_size=settings.POOL_SIZE,
-    max_overflow=1,
+    max_overflow=2,
     pool_pre_ping=True,
 )
 

@@ -98,9 +98,9 @@ class DispatchService:
 
     async def start_initial_dispatch(self, task_id: str) -> Optional[DispatchSession]:
         """Initializes first dispatch session cycle for a task."""
-        stmt_lock = select(Task).where(Task.id == task_id).with_for_update()
+        stmt_lock = select(Task).where(Task.id == task_id).with_for_update(of=Task)
         res_task = await self.session.exec(stmt_lock)
-        task: Optional[Task] = res_task.one_or_none()
+        task: Optional[Task] = res_task.unique().one_or_none()
 
         if not task or task.status in (TaskStatus.ASSIGNED, TaskStatus.COMPLETED, TaskStatus.CANCELLED):
             logger.info(f"DispatchService: Task {task_id} not eligible for initial dispatch.")
@@ -131,9 +131,9 @@ class DispatchService:
 
     async def auto_retry(self, task_id: str) -> Optional[DispatchSession]:
         """Executes an automatic dispatch retry cycle for a due task."""
-        stmt_lock = select(Task).where(Task.id == task_id).with_for_update()
+        stmt_lock = select(Task).where(Task.id == task_id).with_for_update(of=Task)
         res_task = await self.session.exec(stmt_lock)
-        task: Optional[Task] = res_task.one_or_none()
+        task: Optional[Task] = res_task.unique().one_or_none()
 
         if not task or task.status in (TaskStatus.ASSIGNED, TaskStatus.COMPLETED, TaskStatus.CANCELLED):
             logger.info(f"DispatchService: Task {task_id} not eligible for auto retry.")
@@ -175,9 +175,9 @@ class DispatchService:
         feedback: Optional[str] = None,
     ) -> Task:
         """Triggers customer-initiated manual redispatch for a task."""
-        stmt_lock = select(Task).where(Task.id == task_id).with_for_update()
+        stmt_lock = select(Task).where(Task.id == task_id).with_for_update(of=Task)
         res_task = await self.session.exec(stmt_lock)
-        task: Optional[Task] = res_task.one_or_none()
+        task: Optional[Task] = res_task.unique().one_or_none()
 
         if not task:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")

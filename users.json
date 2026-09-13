@@ -1,0 +1,138 @@
+[
+  {
+    "data": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImIwNjdiOGQ0LTZiNzgtNGY1MC1iOTJlLTcwMjdmZGM2MmIwZSIsInR5cGUiOiJhZG1pbiIsInJvbGUiOiJST09UX0FETUlOIiwiZXhwIjoxODE5MzA0MjI2fQ.W2410QUD_dyriQBuEVsXz0fFkhVvFxpA0ju1W59JJR8",
+      "token_type": "bearer",
+      "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImIwNjdiOGQ0LTZiNzgtNGY1MC1iOTJlLTcwMjdmZGM2MmIwZSIsInR5cGUiOiJhZG1pbl9yZWZyZXNoIiwiZXhwIjoxNzg5OTA5MDI2fQ.KmEIlufjN3D5C5s3KQgt0OhBl7VZYJgYrl90wu7YDBQ",
+      "admin": {
+        "id": "b067b8d4-6b78-4f50-b92e-7027fdc62b0e",
+        "email": "admin@tasker.com",
+        "fullname": "Root Admin",
+        "role": "ROOT_ADMIN",
+        "parent_admin_id": null,
+        "created_by_id": null,
+        "is_active": true,
+        "last_login_at": "2026-09-13T13:57:05.220497",
+        "created_at": "2026-09-13T13:30:44.296150",
+        "updated_at": "2026-09-13T13:30:44.296194"
+      }
+    },
+    "detail": "Admin logged in successfully.",
+    "message": "Admin logged in successfully.",
+    "status_code": 200
+  },
+  {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjI5NjI2Yjg5LTNjMDgtNDIyNS1iNzQ3LTk0NzVlMWU5NDFjOCIsImVtYWlsIjoiY3VzdG9tZXJAZ21haWwuY29tIiwiaXNfYWN0aXZlIjp0cnVlLCJleHAiOjE4MTkzMDU2ODF9.U9S7rDP5fZHAB1le0aCKhxaTCY2T6L8B4G6m0zACgdI",
+    "token_type": "bearer",
+    "user": {
+      "id": "29626b89-3c08-4225-b747-9475e1e941c8",
+      "email": "customer@gmail.com",
+      "phone_number": "+2348048395321",
+      "type": "CUSTOMER",
+      "is_active": true,
+      "email_verified": false,
+      "phone_verified": false,
+      "created_at": "2026-09-13T13:23:12.389161",
+      "updated_at": "2026-09-13T13:23:12.389246",
+      "region_id": "8a1cda28-f1ac-469b-b27a-514197170a41",
+      "meta_data": {},
+      "stats": {
+        "id": "a6f13c9a-6c30-4f54-a9ce-f510d4096d37",
+        "user_id": "29626b89-3c08-4225-b747-9475e1e941c8",
+        "credibility_score": 25,
+        "average_ratings": 0,
+        "total_ratings": 0,
+        "acceptance_rate_30d": 100,
+        "completion_rate_30d": 100,
+        "current_tier": 1,
+        "total_tasks_completed": 0,
+        "total_tasks_posted": 0,
+        "consecutive_declines": 0,
+        "cancellation_count": 0
+      },
+      "customer_profile": {
+        "id": "2e6853aa-a9ef-4a4b-a2a9-4b0d4823360f",
+        "first_name": "John",
+        "last_name": "Doe",
+        "address_line": null
+      },
+      "provider_profile": null,
+      "devices": [],
+      "location": null,
+      "payment_account": null
+    }
+  },
+  {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImQ5NmIyMWQyLTQyM2ItNGNhYS05NGMwLTUxZGJiNjQ3NWNiNyIsImVtYWlsIjoicHJvdmlkZXJAZ21haWwuY29tIiwiaXNfYWN0aXZlIjp0cnVlLCJleHAiOjE4MTkzMDU3MzN9.MKHRH2tP6tPkeILqWDqGJhT1GLq7VJfdtk91UkzfOn4",
+    "token_type": "bearer",
+    "user": {
+      "id": "d96b21d2-423b-4caa-94c0-51dbb6475cb7",
+      "email": "provider@gmail.com",
+      "phone_number": "+2348048395311",
+      "type": "PROVIDER",
+      "is_active": true,
+      "email_verified": false,
+      "phone_verified": false,
+      "created_at": "2026-09-13T13:29:03.248244",
+      "updated_at": "2026-09-13T14:19:46.937198",
+      "region_id": "8a1cda28-f1ac-469b-b27a-514197170a41",
+      "stats": {
+        "id": "c06d0e46-b165-47e3-8b44-fd95d0334175",
+        "user_id": "d96b21d2-423b-4caa-94c0-51dbb6475cb7",
+        "credibility_score": 25,
+        "average_ratings": 0,
+        "total_ratings": 0,
+        "acceptance_rate_30d": 100,
+        "completion_rate_30d": 100,
+        "current_tier": 1,
+        "total_tasks_completed": 0,
+        "total_tasks_posted": 0,
+        "consecutive_declines": 0,
+        "cancellation_count": 0
+      },
+      "customer_profile": null,
+      "provider_profile": {
+        "id": "1c1b3f0a-6b40-40b7-95e7-42a8b3b3f105",
+        "first_name": "Jane",
+        "last_name": "Doe",
+        "selfie_url": null,
+        "gender": "FEMALE",
+        "kyc_status": "PENDING_SUBMISSION",
+        "provider_reference": null,
+        "liveness_score": null,
+        "verified_at": null,
+        "address_line": null,
+        "is_online": false,
+        "duty_status": "OFFLINE",
+        "last_heartbeat_at": null,
+        "services": [],
+        "kyc_documents": []
+      },
+      "devices": [],
+      "location": null,
+      "payment_account": null
+    }
+  },
+  {
+  "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImM1MTdhMmUwLTY5YzEtNGUwNi1hMWVlLWY2ODNjNmQwNTkyNyIsInR5cGUiOiJhZG1pbiIsInJvbGUiOiJTVVBFUl9BRE1JTiIsImV4cCI6MTgxOTMwNjA3NH0.uzoGuaz5JBh2YtuI3zkaOIT4oCEaNUJybg2BtIskjIc",
+    "token_type": "bearer",
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImM1MTdhMmUwLTY5YzEtNGUwNi1hMWVlLWY2ODNjNmQwNTkyNyIsInR5cGUiOiJhZG1pbl9yZWZyZXNoIiwiZXhwIjoxNzg5OTEwODc0fQ.B5uEnpT6WO39pY2aJKLoVAPdW6kZj24nrPZHMCJFums",
+    "admin": {
+      "id": "c517a2e0-69c1-4e06-a1ee-f683c6d05927",
+      "email": "superadmin@tasker.com",
+      "fullname": "Super Admin",
+      "role": "SUPER_ADMIN",
+      "parent_admin_id": "b067b8d4-6b78-4f50-b92e-7027fdc62b0e",
+      "created_by_id": "b067b8d4-6b78-4f50-b92e-7027fdc62b0e",
+      "is_active": true,
+      "last_login_at": "2026-09-13T14:27:50.860657",
+      "created_at": "2026-09-13T14:26:35.715070",
+      "updated_at": "2026-09-13T14:26:35.715098"
+    }
+  },
+  "detail": "Admin logged in successfully.",
+  "message": "Admin logged in successfully.",
+  "status_code": 200
+}
+]

@@ -63,8 +63,8 @@ class MinimalProviderResponse(BaseModel):
             selfie_url = user.provider_profile.selfie_url
 
         stats = getattr(user, "stats", None)
-        avg_ratings = stats.average_ratings if stats else getattr(user, "average_ratings", 0.0)
-        cred_score = stats.credibility_score if stats else getattr(user, "credibility_score", 25.0)
+        avg_ratings = stats.average_ratings if stats else 0.0
+        cred_score = stats.credibility_score if stats else 25.0
         total_tasks = stats.total_tasks_completed if stats else 0
 
         return cls(
@@ -100,9 +100,13 @@ class MinimalCustomerResponse(BaseModel):
             last_name = user.customer_profile.last_name or ""
             fullname = f"{first_name} {last_name}".strip() or None
 
+        gender = None
+        if getattr(user, "provider_profile", None):
+            gender = user.provider_profile.gender
+
         stats = getattr(user, "stats", None)
-        avg_ratings = stats.average_ratings if stats else getattr(user, "average_ratings", 0.0)
-        cred_score = stats.credibility_score if stats else getattr(user, "credibility_score", 25.0)
+        avg_ratings = stats.average_ratings if stats else 0.0
+        cred_score = stats.credibility_score if stats else 25.0
 
         return cls(
             id=user.id,
@@ -111,7 +115,7 @@ class MinimalCustomerResponse(BaseModel):
             fullname=fullname,
             average_ratings=avg_ratings,
             credibility_score=cred_score,
-            gender=None,
+            gender=gender,
         )
 
 
