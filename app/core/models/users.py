@@ -66,6 +66,8 @@ class User(SQLModel, table=True):
     credibility_score: float = Field(default=25.0, description="Platform credibility score metric based on history")
     average_ratings: float = Field(default=0.0, description="Aggregated average rating score across completed tasks based on history")
     total_ratings: int = Field(default=0, description="Total number of ratings received from completed tasks")
+    meta_data: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Provider-specific JSON metadata payload")
+    last_login_at: Optional[datetime] = Field(default=None, description="Timestamp of the users's most recent successful login")
     created_at: datetime = Field(default_factory=lagos_now, description="Timestamp when the user registered")
     updated_at: datetime = Field(default_factory=lagos_now, description="Timestamp when user details were last updated")
     
@@ -104,7 +106,7 @@ class ProviderProfile(SQLModel, table=True):
     selfie_url: Optional[str] = Field(default=None, description="Cloud storage URL for uploaded verification selfie")
     gender: Optional[str] = Field(default=None, description="Gender of the provider")
     
-    current_tier: int = Field(default=1, le=5, ge=1, description="Provider trade tier level (1 to 5)")
+    current_tier: int = Field(default=1, le=10, ge=1, description="Provider trade tier level (1 to 5)")
     current_onboarding_step: OnboardingStep = Field(default=OnboardingStep.KYC, description="Current progress step in the vetting pipeline")
 
     status: KYCStatus = Field(default=KYCStatus.PENDING_SUBMISSION, description="Current status of KYC document verification")
@@ -120,6 +122,7 @@ class ProviderProfile(SQLModel, table=True):
     consecutive_declines: Optional[int] = Field(default=0, nullable=True, description="Count of consecutive dispatch ping declines or timeouts. Incremented on declined/expired pings, reset to 0 on acceptance. Used to auto-pause inactive providers.")
     cancellation_count: int = Field(default=0, description="Number of times the provider has cancelled accepted tasks")
 
+    meta_data: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Provider-specific JSON metadata payload")
     
     created_at: datetime = Field(default_factory=lagos_now, description="Record creation timestamp")
     updated_at: datetime = Field(default_factory=lagos_now, description="Record last updated timestamp")

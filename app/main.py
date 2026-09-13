@@ -21,6 +21,7 @@ from app.features.reviews.routers import router as reviews_router
 from app.features.system.router import router as system_router
 from app.features.vetting.router import router as vetting_router
 from app.features.support.router import router as support_router
+from app.features.admin import router as admin_router
 
 
 @asynccontextmanager
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
 
     # Include API Routers
     API_V1_PREFIX = "/api/v1"
+    app.include_router(admin_router, prefix=f"{API_V1_PREFIX}/admin")
     app.include_router(users_router, prefix=f"{API_V1_PREFIX}/users", tags=["Users"])
     app.include_router(
         regions_router, prefix=f"{API_V1_PREFIX}/regions", tags=["Regions"]

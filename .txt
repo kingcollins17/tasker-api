@@ -1,6 +1,11 @@
 // redis connection
 redis-cli --tls -u redis://default:gQAAAAAAAjx2AAIgcDJkNTIxZGU5Y2MwYjk0YmM3OWRhYzc1MmQ4MTdlNzVhNw@suitable-reindeer-146550.upstash.io:6379
 
+python3 -m app.cli.bootstrap_admin \
+  --email admin@tasker.com \
+  --password "Password123#" \
+  --fullname "Root Admin"
+
 
 UPSTASH_REDIS_REST_URL="https://suitable-reindeer-146550.upstash.io"
 UPSTASH_REDIS_REST_TOKEN="gQAAAAAAAjx2AAIgcDJkNTIxZGU5Y2MwYjk0YmM3OWRhYzc1MmQ4MTdlNzVhNw"

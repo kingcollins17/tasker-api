@@ -180,6 +180,9 @@ class GetCurrentUserOrAdminOptional:
 class GetCurrentAdmin:
     """Dependency class to retrieve and validate the currently authenticated admin user."""
 
+    def __init__(self, required_roles: Optional[List[str]] = None):
+        self.required_roles = required_roles
+
     async def __call__(
         self,
         token_oauth: str | None = Depends(oauth2_scheme),
@@ -206,6 +209,14 @@ class GetCurrentAdmin:
                 detail="Could not validate credentials",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+            
+        token_type = payload.get("type")
+        if token_type != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Token is not an admin token",
+            )
+
         admin_id = payload.get("id")
         if not admin_id:
             raise HTTPException(
@@ -220,4 +231,17 @@ class GetCurrentAdmin:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Admin user not found or unauthorized",
             )
+
+        if not admin.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Administrator account is deactivated",
+            )
+
+        if self.required_roles and admin.role not in self.required_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient admin role permissions",
+            )
+
         return admin
