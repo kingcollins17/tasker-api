@@ -1,5 +1,6 @@
 from typing import List
 from app.core.utils.timer import Timer
+from app.core.services.cache import CacheService, get_cache_service
 from app.core.services.logger_service import LoggerService, get_logger_service
 from app.core.models.users import KYCStatus
 from fastapi import APIRouter, Depends, status, HTTPException, Query
@@ -79,11 +80,27 @@ async def get_my_assignments(
         GetRepository(TaskAssignment)
     ),
     system_logger: LoggerService = Depends(get_logger_service),
+    cache_service: CacheService = Depends(get_cache_service),
 ):
     """Retrieve a paginated list of assignments for the current user."""
     try:
         timer = Timer()
         timer.start()
+
+        status_str = ",".join(sorted([s.value if hasattr(s, "value") else str(s) for s in status_filter])) if status_filter else "all"
+        cache_key = (
+            f"assignments:user:{current_user.id}:page:{page}:per_page:{per_page}"
+            f":status:{status_str}:task:{task_id or 'all'}:sort:{sort_by}:{sort_desc}"
+        )
+
+        cached_data = await cache_service.get_json(cache_key)
+        if cached_data:
+            return BaseAPIResponse[PaginatedData[TaskAssignmentWithTaskResponse]](
+                data=PaginatedData[TaskAssignmentWithTaskResponse](**cached_data),
+                detail="Assignments retrieved successfully.",
+                status_code=status.HTTP_200_OK,
+            )
+
         query = select(TaskAssignment, Task).join(
             # pyrefly: ignore [bad-argument-type]
             Task,
@@ -97,30 +114,6 @@ async def get_my_assignments(
             query = query.where(col(TaskAssignment.status).in_(status_filter))
         if task_id:
             query = query.where(TaskAssignment.task_id == task_id)
-
-        # Counting records
-        # pyrefly: ignore [bad-argument-type]
-        count_query = select(func.count(col(TaskAssignment.id))).join(
-            # pyrefly: ignore [bad-argument-type]
-            Task,
-            # pyrefly: ignore [bad-argument-type]
-            col(TaskAssignment.task_id) == Task.id,
-        )
-        if current_user.type == UserType.PROVIDER:
-            count_query = count_query.where(
-                col(TaskAssignment.provider_id) == current_user.id
-            )
-        elif current_user.type == UserType.CUSTOMER:
-            count_query = count_query.where(col(Task.customer_id) == current_user.id)
-        else:
-            count_query = count_query.where(col(TaskAssignment.id) == "0")
-
-        if status_filter:
-            count_query = count_query.where(col(TaskAssignment.status).in_(status_filter))
-        if task_id:
-            count_query = count_query.where(col(TaskAssignment.task_id) == task_id)
-
-        total = (await assignment_repo.execute(count_query)).one()
 
         if hasattr(TaskAssignment, sort_by):
             order_column = getattr(TaskAssignment, sort_by)
@@ -149,10 +142,15 @@ async def get_my_assignments(
 
         data = PaginatedData[TaskAssignmentWithTaskResponse](
             items=items,
-            total=total,
+            total=len(items),
             page=page,
             per_page=per_page,
         )
+
+        await cache_service.set_json(
+            cache_key, data.model_dump(mode="json"), expire=120
+        )
+
         await system_logger.metric(
             "get_my_assignments", timer.stop(), source="assignments.get_my_assignments"
         )

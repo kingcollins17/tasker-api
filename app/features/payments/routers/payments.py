@@ -150,19 +150,6 @@ async def list_my_transactions(
         if status_filter:
             statement = statement.where(col(Transaction.status).in_(status_filter))
 
-        # pyrefly: ignore [bad-argument-type]
-        count_query = select(func.count(Transaction.id)).where(
-            Transaction.user_id == current_user.id
-        )
-        if transaction_type:
-            count_query = count_query.where(
-                Transaction.transaction_type == transaction_type
-            )
-        if status_filter:
-            count_query = count_query.where(col(Transaction.status).in_(status_filter))
-
-        total = (await transaction_repo.execute(count_query)).one()
-
         if hasattr(Transaction, sort_by):
             sort_col = getattr(Transaction, sort_by)
             statement = statement.order_by(desc(sort_col) if sort_desc else sort_col)
@@ -172,9 +159,11 @@ async def list_my_transactions(
         results = await transaction_repo.execute(statement)
         transactions = list(results.unique().all())
 
+        items = [TransactionResponse.model_validate(t) for t in transactions]
+
         data = PaginatedData[TransactionResponse](
-            items=[TransactionResponse.model_validate(t) for t in transactions],
-            total=total,
+            items=items,
+            total=len(items),
             page=page,
             per_page=per_page,
         )
@@ -293,26 +282,30 @@ async def list_customer_payouts(
     sort_by: str = Query("created_at"),
     sort_desc: bool = Query(True),
     status_filter: Optional[List[PayoutStatus]] = Query(None, alias="status"),
-    service: PaymentService = Depends(get_payment_service),
+    payout_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """List out payout queue items where the current user is the customer."""
     try:
         timer = Timer()
         timer.start()
-        options = QueryOptions(
-            filters={"status": status_filter} if status_filter else {},
-            limit=per_page,
-            offset=(page - 1) * per_page,
-            order_by=sort_by,
-            descending=sort_desc,
-        )
-        data, total = await service.get_customer_payout_queues(current_user.id, options)
-        mapped_data = [PayoutQueueResponse.model_validate(p) for p in data]
+        stmt = select(PayoutQueue).where(PayoutQueue.customer_id == current_user.id)
+        if status_filter:
+            stmt = stmt.where(col(PayoutQueue.status).in_(status_filter))
+
+        if hasattr(PayoutQueue, sort_by):
+            sort_col = getattr(PayoutQueue, sort_by)
+            stmt = stmt.order_by(desc(sort_col) if sort_desc else sort_col)
+
+        stmt = stmt.offset((page - 1) * per_page).limit(per_page)
+
+        results = await payout_repo.execute(stmt)
+        payouts = list(results.unique().all())
+        mapped_data = [PayoutQueueResponse.model_validate(p) for p in payouts]
         
         paginated_data = PaginatedData[PayoutQueueResponse](
             items=mapped_data,
-            total=total,
+            total=len(mapped_data),
             page=page,
             per_page=per_page,
         )
@@ -464,26 +457,30 @@ async def list_provider_payouts(
     sort_by: str = Query("created_at"),
     sort_desc: bool = Query(True),
     status_filter: Optional[List[PayoutStatus]] = Query(None, alias="status"),
-    service: PaymentService = Depends(get_payment_service),
+    payout_repo: Repository[PayoutQueue] = Depends(GetRepository(PayoutQueue)),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
     """List payout queue items where the current user is the provider."""
     try:
         timer = Timer()
         timer.start()
-        options = QueryOptions(
-            filters={"status": status_filter} if status_filter else {},
-            limit=per_page,
-            offset=(page - 1) * per_page,
-            order_by=sort_by,
-            descending=sort_desc,
-        )
-        data, total = await service.get_provider_payout_queues(current_user.id, options)
-        mapped_data = [PayoutQueueResponse.model_validate(p) for p in data]
+        stmt = select(PayoutQueue).where(PayoutQueue.provider_id == current_user.id)
+        if status_filter:
+            stmt = stmt.where(col(PayoutQueue.status).in_(status_filter))
+
+        if hasattr(PayoutQueue, sort_by):
+            sort_col = getattr(PayoutQueue, sort_by)
+            stmt = stmt.order_by(desc(sort_col) if sort_desc else sort_col)
+
+        stmt = stmt.offset((page - 1) * per_page).limit(per_page)
+
+        results = await payout_repo.execute(stmt)
+        payouts = list(results.unique().all())
+        mapped_data = [PayoutQueueResponse.model_validate(p) for p in payouts]
         
         paginated_data = PaginatedData[PayoutQueueResponse](
             items=mapped_data,
-            total=total,
+            total=len(mapped_data),
             page=page,
             per_page=per_page,
         )

@@ -47,9 +47,14 @@ from app.core.schemas.tasks import (
 from app.features.services.pricing_engine import PricingBreakdown
 
 from sqlmodel import select, col, desc
+import math
+from geoalchemy2 import Geography
+from sqlalchemy import cast, func
+from sqlalchemy.orm import contains_eager
 from app.core.models.tasks import (
     TaskAttachment,
     Task,
+    TaskLocation,
     TaskPriceAdjustment,
     TaskStatus,
     PriceAdjustmentStatus,
@@ -277,33 +282,119 @@ async def list_tasks(
     scheduled_start_at: Optional[datetime] = Query(None),
     expires_at: Optional[datetime] = Query(None),
     customer_id: Optional[str] = Query(None),
-    task_service: TaskService = Depends(get_task_service),
+    task_repo: Repository[Task] = Depends(GetRepository(Task)),
     system_logger: LoggerService = Depends(get_logger_service),
 ):
     """Retrieve a list of tasks matching the filters and coordinates."""
     try:
         timer = Timer()
         timer.start()
-        tasks, total = await task_service.get_tasks(
-            page=page,
-            per_page=per_page,
-            status_filter=status_filter,
-            category_id=category_id,
-            service_id=service_id,
-            search=search,
-            latitude=latitude,
-            longitude=longitude,
-            radius_km=radius_km,
-            sort_by=sort_by,
-            sort_desc=sort_desc,
-            region_id=region_id,
-            scheduled_start_at=scheduled_start_at,
-            expires_at=expires_at,
-            customer_id=customer_id,
-        )
+
+        statement = select(Task)
+
+        if status_filter:
+            statement = statement.where(col(Task.status).in_(status_filter))
+
+        if category_id:
+            statement = statement.where(Task.category_id == category_id)
+
+        if service_id:
+            statement = statement.where(Task.service_id == service_id)
+
+        if search:
+            search_pattern = f"%{search}%"
+            search_filter = (col(Task.title).ilike(search_pattern)) | (
+                col(Task.description).ilike(search_pattern)
+            )
+            statement = statement.where(search_filter)
+
+        if region_id:
+            statement = statement.where(Task.region_id == region_id)
+
+        if scheduled_start_at:
+            statement = statement.where(
+                col(Task.scheduled_start_at) >= scheduled_start_at
+            )
+
+        if expires_at:
+            statement = statement.where(col(Task.expires_at) <= expires_at)
+
+        if customer_id:
+            statement = statement.where(Task.customer_id == customer_id)
+
+        if latitude is not None and longitude is not None and radius_km is not None:
+            # pyrefly: ignore [bad-argument-type]
+            statement = statement.join(TaskLocation, col(Task.id) == col(TaskLocation.task_id))
+
+            dialect_name = (
+                task_repo.session.bind.dialect.name
+                if task_repo.session.bind
+                else "postgresql"
+            )
+            if dialect_name == "sqlite":
+                delta_lat = radius_km / 111.0
+                cos_lat = math.cos(math.radians(latitude))
+                cos_lat = max(cos_lat, 0.1)
+                delta_lng = radius_km / (111.0 * cos_lat)
+
+                spatial_filter = (
+                    TaskLocation.latitude >= latitude - delta_lat,
+                    TaskLocation.latitude <= latitude + delta_lat,
+                    TaskLocation.longitude >= longitude - delta_lng,
+                    TaskLocation.longitude <= longitude + delta_lng,
+                )
+                statement = statement.where(*spatial_filter)
+
+                distance_expr = func.sqrt(
+                    func.pow((TaskLocation.latitude - latitude) * 111.0, 2)
+                    + func.pow(
+                        (TaskLocation.longitude - longitude) * 111.0 * cos_lat, 2
+                    )
+                )
+                statement = statement.options(
+                    # pyrefly: ignore [bad-argument-type]
+                    contains_eager(Task.locations).with_expression(  # type: ignore
+                        # pyrefly: ignore [bad-argument-type]
+                        TaskLocation.distance_km,  # type: ignore
+                        distance_expr,
+                    )
+                )
+            else:
+                target_point = func.ST_SetSRID(
+                    func.ST_MakePoint(longitude, latitude), 4326
+                )
+                statement = statement.where(
+                    func.ST_DWithin(
+                        cast(TaskLocation.geography_point, Geography),
+                        cast(target_point, Geography),
+                        radius_km * 1000.0,
+                    )
+                )
+
+                distance_expr = (
+                    func.ST_Distance(
+                        cast(TaskLocation.geography_point, Geography),
+                        cast(target_point, Geography),
+                    )
+                    / 1000.0
+                )
+
+                statement = statement.options(
+                    contains_eager(Task.locations).with_expression(TaskLocation.distance_km, distance_expr)  # type: ignore
+                )
+
+        if sort_by and hasattr(Task, sort_by):
+            sort_col = getattr(Task, sort_by)
+            statement = statement.order_by(desc(sort_col) if sort_desc else sort_col)
+
+        statement = statement.offset((page - 1) * per_page).limit(per_page)
+
+        results = await task_repo.execute(statement)
+        tasks = list(results.unique().all())
+
         data = PaginatedData[TaskListResponse](
             items=[TaskListResponse.model_validate(t) for t in tasks],
-            total=total,
+            total=0,
             page=page,
             per_page=per_page,
         )

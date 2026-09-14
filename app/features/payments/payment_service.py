@@ -451,50 +451,7 @@ class PaymentService:
             amount_to_pay=round(amount_to_pay, 2),
         )
 
-    async def get_customer_payout_queues(self, customer_id: str, options: QueryOptions):
-        """Fetch paginated payout queue items for a given customer id."""
-        # Ensure that we inject the customer filter in the options
-        options.filters = options.filters or {}
-        options.filters["customer_id"] = customer_id
 
-        # pyrefly: ignore [bad-argument-type]
-        count_stmt = select(func.count(PayoutQueue.id)).where(
-            PayoutQueue.customer_id == customer_id
-        )
-        for key, value in options.filters.items():
-            if key != "customer_id" and hasattr(PayoutQueue, key):
-                if isinstance(value, (list, tuple, set)):
-                    count_stmt = count_stmt.where(
-                        col(getattr(PayoutQueue, key)).in_(value)
-                    )
-                else:
-                    count_stmt = count_stmt.where(getattr(PayoutQueue, key) == value)
-        total = (await self.payout_queue_repo.execute(count_stmt)).one()
-
-        paginated_data = await self.payout_queue_repo.get_all(options, use_unique=True)
-        return paginated_data, total
-
-    async def get_provider_payout_queues(self, provider_id: str, options: QueryOptions):
-        """Fetch paginated payout queue items for a given provider id."""
-        options.filters = options.filters or {}
-        options.filters["provider_id"] = provider_id
-
-        # pyrefly: ignore [bad-argument-type]
-        count_stmt = select(func.count(PayoutQueue.id)).where(
-            PayoutQueue.provider_id == provider_id
-        )
-        for key, value in options.filters.items():
-            if key != "provider_id" and hasattr(PayoutQueue, key):
-                if isinstance(value, (list, tuple, set)):
-                    count_stmt = count_stmt.where(
-                        col(getattr(PayoutQueue, key)).in_(value)
-                    )
-                else:
-                    count_stmt = count_stmt.where(getattr(PayoutQueue, key) == value)
-        total = (await self.payout_queue_repo.execute(count_stmt)).one()
-
-        paginated_data = await self.payout_queue_repo.get_all(options, use_unique=True)
-        return paginated_data, total
 
     async def get_provider_payout(
         self, payout_id: str, provider_id: str
