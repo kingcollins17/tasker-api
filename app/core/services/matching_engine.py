@@ -2,7 +2,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from sqlalchemy import Row, func, update
+from geoalchemy2 import Geography
+from sqlalchemy import Row, cast, func, update
 from sqlalchemy.orm import selectinload
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -99,9 +100,9 @@ class CandidateFetcher:
 
     async def get_excluded_ids(
         self,
-        task_id: str,
+        # task_id: str,
         excluded_provider_ids: Optional[List[str]] = None,
-        dispatch_session: Optional[DispatchSession] = None,
+        # dispatch_session: Optional[DispatchSession] = None,
     ) -> List[str]:
         """Combines explicit excluded provider IDs.
         Note: DB attempt exclusions are handled directly in PostgreSQL via NOT EXISTS in GeoService.
@@ -143,51 +144,6 @@ class CandidateFetcher:
         )
         return task_loc
 
-    async def get_eligible(
-        self,
-        provider_ids: List[str],
-        service_id: str,
-    ) -> List[Tuple[User, ProviderProfile]]:
-        """Queries DB for active, verified, online providers matching service_id (retained for compatibility)."""
-        _debug_log(
-            f"get_eligible checking providers",
-            f"provider_ids={provider_ids}, service_id={service_id}",
-        )
-        if not provider_ids:
-            return []
-
-        stmt_eligibility = (
-            select(User, ProviderProfile)
-            .join(ProviderProfile, col(ProviderProfile.user_id) == col(User.id))  # type: ignore
-            .join(
-                ProviderServiceLink,
-                col(ProviderServiceLink.provider_id) == col(ProviderProfile.user_id),  # type: ignore
-            )
-            .join(
-                Service,
-                col(Service.id) == col(ProviderServiceLink.service_id),
-            )
-            .outerjoin(
-                UserStats,
-                col(UserStats.user_id) == col(User.id),
-            )
-            .where(
-                col(User.id).in_(provider_ids),  # type: ignore
-                col(User.is_active) == True,  # noqa: E712
-                col(ProviderProfile.kyc_status) == KYCStatus.VERIFIED,
-                col(ProviderServiceLink.service_id) == service_id,
-                col(ProviderProfile.is_online) == True,  # noqa: E712
-                col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE,
-                func.coalesce(col(UserStats.current_tier), 1) >= col(Service.min_tier_required),
-            )
-        )
-
-        res_eligibility = await self.session.exec(stmt_eligibility)
-        # pyrefly: ignore [missing-attribute]
-        rows = res_eligibility.unique().all()
-        _debug_log(f"get_eligible returned {len(rows)} provider row(s)")
-        return rows
-
     async def fetch(
         self,
         task: Task,
@@ -199,14 +155,14 @@ class CandidateFetcher:
             f"fetch starting candidate discovery for task={task.id}, service_id={task.service_id}"
         )
         task_loc = await self.validate_task(task)
-        if not task_loc:
+        if not task_loc or task_loc.latitude is None or task_loc.longitude is None:
             _debug_log(f"fetch aborted for task={task.id}: invalid task location")
             return []
 
         explicit_excluded = await self.get_excluded_ids(
-            task_id=task.id,
+            # task_id=task.id,
             excluded_provider_ids=excluded_provider_ids,
-            dispatch_session=dispatch_session,
+            # dispatch_session=dispatch_session,
         )
         _debug_log(
             f"fetch combined excluded provider count={len(explicit_excluded)}",
@@ -229,21 +185,105 @@ class CandidateFetcher:
         )
 
         assert task.service_id, "Task service id must not be null"
-        results = await self.geo_service.search_nearby_providers(
-            latitude=task_loc.latitude,
-            longitude=task_loc.longitude,
-            radius_km=current_radius,
-            limit=max(50, batch_size),
-            excluded_provider_ids=explicit_excluded,
-            service_id=task.service_id,
-            task_id=task.id,
-            exclude_previous_sessions=self.exclude_previous_sessions,
-            dispatch_session_id=dispatch_session.id if dispatch_session else None,
+
+        target_point = func.ST_SetSRID(
+            func.ST_MakePoint(
+                task_loc.longitude,
+                task_loc.latitude,
+            ),
+            4326,
         )
+        distance_m_expr = func.ST_Distance(
+            cast(UserLocation.last_known_location, Geography),
+            cast(target_point, Geography),
+        )
+
+        dispatch_session_id = dispatch_session.id if dispatch_session else None
+
+        stmt = (
+            select(  # type: ignore
+                UserLocation,
+                ProviderProfile,
+                (distance_m_expr / 1000.0).label("distance_km"),
+                col(UserStats.acceptance_rate_30d),
+                col(UserStats.average_ratings),
+                col(UserStats.credibility_score),
+            )
+            .join(
+                User,
+                col(User.id) == col(UserLocation.user_id),
+            )
+            .join(
+                ProviderProfile,
+                col(ProviderProfile.user_id) == col(UserLocation.user_id),
+            )
+            .join(
+                ProviderServiceLink,
+                col(ProviderServiceLink.provider_id) == col(ProviderProfile.user_id),  # type: ignore
+            )
+            .join(
+                Service,
+                col(Service.id) == col(ProviderServiceLink.service_id),
+            )
+            .outerjoin(
+                UserStats,
+                col(UserStats.user_id) == col(User.id),
+            )
+            .where(
+                col(UserLocation.last_known_location) != None,  # noqa: E711
+                col(User.is_active) == True,  # noqa: E712
+                col(ProviderProfile.kyc_status) == KYCStatus.VERIFIED,
+                col(ProviderProfile.is_online) == True,  # noqa: E712
+                col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE,
+                col(ProviderServiceLink.service_id) == task.service_id,
+                func.coalesce(col(UserStats.current_tier), 1) >= col(Service.min_tier_required),
+                func.ST_DWithin(
+                    cast(UserLocation.last_known_location, Geography),
+                    cast(target_point, Geography),
+                    current_radius * 1000.0,
+                ),
+            )
+        )
+
+        subq = select(1).where(
+            col(TaskDispatchAttempt.task_id) == task.id,
+            col(TaskDispatchAttempt.provider_id) == col(UserLocation.user_id),
+        )
+        if not self.exclude_previous_sessions and dispatch_session_id:
+            subq = subq.where(
+                col(TaskDispatchAttempt.dispatch_session_id) == dispatch_session_id
+            )
+        stmt = stmt.where(~subq.exists())
+
+        if explicit_excluded:
+            stmt = stmt.where(~col(UserLocation.user_id).in_(explicit_excluded))
+
+        stmt = stmt.order_by(distance_m_expr)
+        stmt = stmt.limit(max(50, batch_size))
+
+        result = await self.session.exec(stmt)
+        rows = result.all()
+
+        candidates: List[NearbyProviderResult] = []
+        for loc, profile, dist_km, acceptance_rate, avg_rating, credibility in rows:
+            candidates.append(
+                NearbyProviderResult(
+                    provider_id=loc.user_id,
+                    distance_km=round(float(dist_km), 2) if dist_km is not None else 0.0,
+                    latitude=loc.latitude,
+                    longitude=loc.longitude,
+                    last_heartbeat_at=loc.updated_at.isoformat() if loc.updated_at else None,
+                    is_online=profile.is_online if profile.is_online is not None else True,
+                    acceptance_rate_30d=acceptance_rate if acceptance_rate is not None else 100.0,
+                    average_ratings=avg_rating if avg_rating is not None else 0.0,
+                    credibility_score=credibility if credibility is not None else 0.0,
+                )
+            )
+
         _debug_log(
-            f"fetch geo_service.search_nearby_providers returned {len(results)} raw candidate(s)"
+            f"fetch single-query combined candidate search returned {len(candidates)} raw candidate(s)"
         )
-        return results
+        return candidates
 
 
 class CandidateScorer:
@@ -599,14 +639,14 @@ class MatchingEngine:
     # Delegated helper methods for backwards compatibility with tests / callers
     async def _get_excluded_provider_ids(
         self,
-        task_id: str,
+
         excluded_provider_ids: Optional[List[str]] = None,
-        dispatch_session: Optional[DispatchSession] = None,
+
     ) -> List[str]:
         return await self.fetcher.get_excluded_ids(
-            task_id=task_id,
+            # task_id=task_id,
             excluded_provider_ids=excluded_provider_ids,
-            dispatch_session=dispatch_session,
+            # dispatch_session=dispatch_session,
         )
 
     async def _validate_task_for_matching(self, task: Task) -> Optional[TaskLocation]:
