@@ -85,19 +85,19 @@ celery_app.conf.update(
     beat_schedule={
         "process-due-dispatches-beat": {
             "task": "tasks.process_due_dispatches_beat",
-            "schedule": crontab(minute="*/5"),  # every 5 minutes
+            "schedule": crontab(minute="*/10"),  # every 10 minutes
         },
         "recover-stale-dispatches-beat": {
             "task": "tasks.recover_stale_dispatches_beat",
-            "schedule": crontab(minute="*/5"),  # every 5 minutes
+            "schedule": crontab(minute="*/10"),  # every 10 minutes
         },
         "recover-stuck-transfers-beat": {
             "task": "transfers.recover_stuck_transfers_beat",
-            "schedule": crontab(minute="*/5"),  # every 5 minutes
+            "schedule": crontab(minute="*/10"),  # every 10 minutes
         },
         "reconcile-processing-transfers-beat": {
             "task": "transfers.reconcile_processing_transfers_beat",
-            "schedule": crontab(minute="*/10"),  # every 10 minutes
+            "schedule": crontab(minute="*/15"),  # every 15 minutes
         },
     },
 )
