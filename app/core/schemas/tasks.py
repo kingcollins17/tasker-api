@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.models.tasks import PaymentStatus, TaskAssignmentStatus, TaskStatus, TaskDispatchStatus, DispatchAttemptStatus, CancelledBy
 from app.core.schemas.users import MinimalCustomerResponse, MinimalProviderResponse
-from app.features.services.schemas import CategoryResponse
+from app.features.services.schemas import CategoryResponse, ServiceResponse
 from app.features.payments.schemas import PayoutQueueResponse
 
 class TaskLocationResponse(BaseModel):
@@ -176,3 +176,37 @@ class TaskDispatchAttemptResponse(BaseModel):
     responded_at: Optional[datetime] = None
     status: Optional[DispatchAttemptStatus] = None
     provider: Optional[MinimalProviderResponse] = None
+
+
+class TaskOfferBriefResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category_id: Optional[str] = None
+    service_id: Optional[str] = None
+    customer_total_price: Optional[float] = None
+    provider_payout: Optional[float] = None
+    status: Optional[TaskStatus] = None
+    scheduled_start_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    category: Optional[CategoryResponse] = None
+    service: Optional[ServiceResponse] = None
+
+
+class ProviderOfferResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    task_id: Optional[str] = None
+    provider_id: Optional[str] = None
+    sequence_order: Optional[int] = None
+    match_score: Optional[float] = None
+    offered_payout: Optional[float] = None
+    pinged_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    responded_at: Optional[datetime] = None
+    status: Optional[DispatchAttemptStatus] = None
+    task: Optional[TaskOfferBriefResponse] = None
+

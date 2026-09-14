@@ -25,12 +25,16 @@ from app.core.models.tasks import (
 )
 from app.core.repository import GetRepository, Repository
 from app.core.utils.datetime_helper import lagos_now
+from app.core.models.services import Service, ServiceCategory
 from app.core.schemas.tasks import (
     TaskAssignmentResponse,
     TaskAssignmentWithTaskResponse,
     TaskMinimalResponse,
     TaskDispatchAttemptResponse,
+    TaskOfferBriefResponse,
+    ProviderOfferResponse,
 )
+from app.features.services.schemas import CategoryResponse, ServiceResponse
 from app.features.tasks.celery.completion import complete_task_assignment
 from app.features.tasks.dispatch_service import (
     DispatchEventService,
@@ -175,6 +179,109 @@ async def get_my_assignments(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while retrieving assignments.",
+        )
+
+
+@router.get(
+    "/offers",
+    response_model=BaseAPIResponse[PaginatedData[ProviderOfferResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_my_offers(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    current_user: UserResponse = Depends(
+        GetCurrentUser(
+            required_type=UserType.PROVIDER,
+            required_phone_verified=True,
+            required_email_verified=True,
+        )
+    ),
+    attempt_repo: Repository[TaskDispatchAttempt] = Depends(
+        GetRepository(TaskDispatchAttempt)
+    ),
+    system_logger: LoggerService = Depends(get_logger_service),
+):
+    """Retrieve unexpired pending task dispatch offers for the current provider."""
+    try:
+        timer = Timer()
+        timer.start()
+
+        now = lagos_now()
+        query = (
+            select(TaskDispatchAttempt, Task, Service, ServiceCategory)
+            .join(
+                Task,
+                col(TaskDispatchAttempt.task_id) == col(Task.id),
+            )
+            .join(
+                Service,
+                col(Task.service_id) == col(Service.id),
+                isouter=True,
+            )
+            .join(
+                ServiceCategory,
+                col(Task.category_id) == col(ServiceCategory.id),
+                isouter=True,
+            )
+            .where(
+                col(TaskDispatchAttempt.provider_id) == current_user.id,
+                col(TaskDispatchAttempt.status) == DispatchAttemptStatus.PENDING,
+                or_(
+                    col(TaskDispatchAttempt.expires_at).is_(None),
+                    col(TaskDispatchAttempt.expires_at) > now,
+                ),
+            )
+            .order_by(desc(col(TaskDispatchAttempt.pinged_at)))
+        )
+
+        query = query.offset((page - 1) * per_page).limit(per_page)
+
+        result = await attempt_repo.execute(query)
+        rows = result.all()
+
+        items = []
+        for attempt_model, task_model, service_model, category_model in rows:
+            offer_data = ProviderOfferResponse.model_validate(attempt_model)
+            task_brief = TaskOfferBriefResponse.model_validate(task_model)
+            if service_model:
+                task_brief.service = ServiceResponse.model_validate(service_model)
+            if category_model:
+                task_brief.category = CategoryResponse.model_validate(category_model)
+            offer_data.task = task_brief
+            items.append(offer_data)
+
+        data = PaginatedData[ProviderOfferResponse](
+            items=items,
+            total=len(items),
+            page=page,
+            per_page=per_page,
+        )
+
+        await system_logger.metric(
+            "get_my_offers", timer.stop(), source="assignments.get_my_offers"
+        )
+        return BaseAPIResponse[PaginatedData[ProviderOfferResponse]](
+            data=data,
+            detail="Offers retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as e:
+        await system_logger.warn(
+            "get_my_offers failed",
+            source="assignments.get_my_offers",
+            metadata={"detail": e.detail if hasattr(e, "detail") else str(e)},
+        )
+        raise
+    except Exception as e:
+        await system_logger.error(
+            f"get_my_offers error: {str(e)}",
+            source="assignments.get_my_offers",
+        )
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving provider offers.",
         )
 
 
