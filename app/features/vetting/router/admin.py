@@ -391,16 +391,13 @@ async def list_interviews(
         else:
             stmt = stmt.order_by(col(sort_attr).desc())
 
-        all_interviews = (await session.exec(stmt)).all()
-        total = len(all_interviews)
+        stmt = stmt.offset((page - 1) * per_page).limit(per_page)
+        interviews = (await session.exec(stmt)).all()
 
-        offset = (page - 1) * per_page
-        paged_interviews = all_interviews[offset : offset + per_page]
-
-        items = [InterviewResponse.model_validate(i) for i in paged_interviews]
+        items = [InterviewResponse.model_validate(i) for i in interviews]
         paginated_data = PaginatedData[InterviewResponse](
             items=items,
-            total=total,
+            total=len(items),
             page=page,
             per_page=per_page,
         )
@@ -490,16 +487,13 @@ async def list_guarantors(
         else:
             stmt = stmt.order_by(col(sort_attr).desc())
 
-        all_guarantors = (await session.exec(stmt)).all()
-        total = len(all_guarantors)
+        stmt = stmt.offset((page - 1) * per_page).limit(per_page)
+        guarantors = (await session.exec(stmt)).all()
 
-        offset = (page - 1) * per_page
-        paged_guarantors = all_guarantors[offset : offset + per_page]
-
-        items = [GuarantorResponse.model_validate(g) for g in paged_guarantors]
+        items = [GuarantorResponse.model_validate(g) for g in guarantors]
         paginated_data = PaginatedData[GuarantorResponse](
             items=items,
-            total=total,
+            total=len(items),
             page=page,
             per_page=per_page,
         )
@@ -598,16 +592,13 @@ async def list_kyc_documents(
         else:
             stmt = stmt.order_by(col(sort_attr).desc())
 
-        all_documents = (await session.exec(stmt)).all()
-        total = len(all_documents)
+        stmt = stmt.offset((page - 1) * per_page).limit(per_page)
+        documents = (await session.exec(stmt)).all()
 
-        offset = (page - 1) * per_page
-        paged_documents = all_documents[offset : offset + per_page]
-
-        items = [KYCDocumentResponse.model_validate(doc) for doc in paged_documents]
+        items = [KYCDocumentResponse.model_validate(doc) for doc in documents]
         paginated_data = PaginatedData[KYCDocumentResponse](
             items=items,
-            total=total,
+            total=len(items),
             page=page,
             per_page=per_page,
         )

@@ -75,9 +75,6 @@ async def list_users(
         if region_id:
             stmt = stmt.where(col(User.region_id) == region_id)
 
-        count_stmt = select(func.count()).select_from(stmt.subquery())
-        total = (await session.exec(count_stmt)).one()
-
         stmt = (
             stmt.order_by(col(User.created_at).desc())
             .offset((page - 1) * per_page)
@@ -88,7 +85,7 @@ async def list_users(
         items = [UserLiteResponse.from_user(u) for u in users]
         paginated_data = PaginatedData[UserLiteResponse](
             items=items,
-            total=total,
+            total=len(items),
             page=page,
             per_page=per_page,
         )
