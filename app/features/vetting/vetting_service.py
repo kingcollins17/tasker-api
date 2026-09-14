@@ -1,8 +1,10 @@
 """VettingService managing provider guarantor submissions, resubmissions, approvals, and rejections."""
 
 import secrets
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Optional, Tuple
 from fastapi import Depends, HTTPException, status
+from sqlmodel import col, func, or_, select
 
 from app.core.logging import log_error
 from app.core.models.users import (
@@ -250,6 +252,7 @@ class VettingService:
             "meta_data": meta_data,
         }
         await self.guarantor_repo.update(guarantor_id, updates)
+        return guarantor
 
 
 def get_vetting_service(

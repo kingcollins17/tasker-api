@@ -50,7 +50,7 @@ enugu region id=8a1cda28-f1ac-469b-b27a-514197170a41
   "scheduled_start_at": null,
   "locations": [
     {
-      "location_type": "service",
+      "location_type": "SERVICE",
       "latitude": 6.8631846,
       "longitude": 7.4106546,
       "address": "VC57+M7M, James Africanus Norton Rd, Ihe Nsukka, Nsukka 410105, Enugu, Nigeria, Ihe Nsukka, Nsukka, Enugu, Nigeria",

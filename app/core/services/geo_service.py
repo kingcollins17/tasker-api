@@ -9,7 +9,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.database import get_session
-from app.core.models.services import ProviderServiceLink
+from app.core.models.services import ProviderServiceLink, Service
 from app.core.models.tasks import TaskDispatchAttempt
 from app.core.models.users import (
     DutyStatus,
@@ -122,11 +122,19 @@ class GeoService:
         )
 
         if service_id:
-            stmt = stmt.join(
-                ProviderServiceLink,
-                col(ProviderServiceLink.provider_id) == col(ProviderProfile.user_id),  # type: ignore
-            ).where(
-                col(ProviderServiceLink.service_id) == service_id,
+            stmt = (
+                stmt.join(
+                    ProviderServiceLink,
+                    col(ProviderServiceLink.provider_id) == col(ProviderProfile.user_id),  # type: ignore
+                )
+                .join(
+                    Service,
+                    col(Service.id) == col(ProviderServiceLink.service_id),
+                )
+                .where(
+                    col(ProviderServiceLink.service_id) == service_id,
+                    func.coalesce(col(UserStats.current_tier), 1) >= col(Service.min_tier_required),
+                )
             )
 
         stmt = (

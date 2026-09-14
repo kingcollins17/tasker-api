@@ -75,3 +75,17 @@ class AdminAuditLogResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class AdminDashboardOverviewResponse(BaseModel):
+    total_users: int = Field(description="Total registered users count")
+    total_customers: int = Field(description="Total registered customers count")
+    total_providers: int = Field(description="Total registered service providers count")
+    total_tasks: int = Field(description="Total created tasks count")
+    total_completed_tasks: int = Field(description="Total successfully completed tasks count")
+    total_in_progress_tasks: int = Field(description="Total currently in-progress tasks count")
+    total_open_tasks: int = Field(description="Total open, searching, or assigned tasks count")
+    total_cancelled_tasks: int = Field(description="Total cancelled tasks count")
+    total_revenue_amount: float = Field(description="Total revenue amount summed from transactions table")
+    total_processed_payouts_amount: float = Field(description="Total processed payouts amount summed from payout queue table with status COMPLETED")
+

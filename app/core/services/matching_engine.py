@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.config import IS_LOCAL
 from app.core.logging import logger
 from app.core.models.notifications import NotificationType
-from app.core.models.services import ProviderServiceLink
+from app.core.models.services import ProviderServiceLink, Service
 from app.core.models.tasks import (
     DispatchAttemptStatus,
     DispatchSession,
@@ -26,6 +26,7 @@ from app.core.models.users import (
     ProviderProfile,
     User,
     UserLocation,
+    UserStats,
 )
 from app.core.services.dispatch_policy import DispatchPolicy
 from app.core.services.logger_service import (
@@ -44,6 +45,14 @@ from app.features.notifications.notification_service import (
 )
 
 _LOG_SOURCE = "core.MatchingEngine"
+
+
+def _debug_log(message: str, data: Any = None) -> None:
+    """Prints debug data directly to console/terminal to trace matching engine execution flow."""
+    if data is not None:
+        print(f"[MATCHING_ENGINE_DEBUG] {message}: {data}")
+    else:
+        print(f"[MATCHING_ENGINE_DEBUG] {message}")
 
 
 @dataclass
@@ -105,11 +114,16 @@ class CandidateFetcher:
     async def validate_task(self, task: Task) -> Optional[TaskLocation]:
         """Validates if task is fit for matching and returns TaskLocation without extra DB queries if loaded."""
         if not task.service_id:
+            _debug_log(f"validate_task failed for task {task.id}: missing service_id")
             return None
 
         if task.locations:
             for loc in task.locations:
                 if loc.latitude is not None and loc.longitude is not None:
+                    _debug_log(
+                        f"validate_task found loaded location for task {task.id}",
+                        f"lat={loc.latitude}, lng={loc.longitude}",
+                    )
                     return loc
 
         stmt_loc = (
@@ -118,8 +132,15 @@ class CandidateFetcher:
         res_loc = await self.session.exec(stmt_loc)
         task_loc: Optional[TaskLocation] = res_loc.one_or_none()
         if not task_loc or task_loc.latitude is None or task_loc.longitude is None:
+            _debug_log(
+                f"validate_task failed for task {task.id}: location DB query returned None or missing coordinates"
+            )
             return None
 
+        _debug_log(
+            f"validate_task fetched location from DB for task {task.id}",
+            f"lat={task_loc.latitude}, lng={task_loc.longitude}",
+        )
         return task_loc
 
     async def get_eligible(
@@ -128,6 +149,10 @@ class CandidateFetcher:
         service_id: str,
     ) -> List[Tuple[User, ProviderProfile]]:
         """Queries DB for active, verified, online providers matching service_id (retained for compatibility)."""
+        _debug_log(
+            f"get_eligible checking providers",
+            f"provider_ids={provider_ids}, service_id={service_id}",
+        )
         if not provider_ids:
             return []
 
@@ -138,6 +163,14 @@ class CandidateFetcher:
                 ProviderServiceLink,
                 col(ProviderServiceLink.provider_id) == col(ProviderProfile.user_id),  # type: ignore
             )
+            .join(
+                Service,
+                col(Service.id) == col(ProviderServiceLink.service_id),
+            )
+            .outerjoin(
+                UserStats,
+                col(UserStats.user_id) == col(User.id),
+            )
             .where(
                 col(User.id).in_(provider_ids),  # type: ignore
                 col(User.is_active) == True,  # noqa: E712
@@ -145,12 +178,15 @@ class CandidateFetcher:
                 col(ProviderServiceLink.service_id) == service_id,
                 col(ProviderProfile.is_online) == True,  # noqa: E712
                 col(ProviderProfile.duty_status) == DutyStatus.ONLINE_AVAILABLE,
+                func.coalesce(col(UserStats.current_tier), 1) >= col(Service.min_tier_required),
             )
         )
 
         res_eligibility = await self.session.exec(stmt_eligibility)
         # pyrefly: ignore [missing-attribute]
-        return res_eligibility.unique().all()
+        rows = res_eligibility.unique().all()
+        _debug_log(f"get_eligible returned {len(rows)} provider row(s)")
+        return rows
 
     async def fetch(
         self,
@@ -159,14 +195,22 @@ class CandidateFetcher:
         dispatch_session: Optional[DispatchSession] = None,
     ) -> List[NearbyProviderResult]:
         """Discovers nearby eligible providers in a single PostGIS DB query with NOT EXISTS exclusion."""
+        _debug_log(
+            f"fetch starting candidate discovery for task={task.id}, service_id={task.service_id}"
+        )
         task_loc = await self.validate_task(task)
         if not task_loc:
+            _debug_log(f"fetch aborted for task={task.id}: invalid task location")
             return []
 
         explicit_excluded = await self.get_excluded_ids(
             task_id=task.id,
             excluded_provider_ids=excluded_provider_ids,
             dispatch_session=dispatch_session,
+        )
+        _debug_log(
+            f"fetch combined excluded provider count={len(explicit_excluded)}",
+            explicit_excluded,
         )
 
         current_radius: float = (
@@ -185,7 +229,7 @@ class CandidateFetcher:
         )
 
         assert task.service_id, "Task service id must not be null"
-        return await self.geo_service.search_nearby_providers(
+        results = await self.geo_service.search_nearby_providers(
             latitude=task_loc.latitude,
             longitude=task_loc.longitude,
             radius_km=current_radius,
@@ -196,6 +240,10 @@ class CandidateFetcher:
             exclude_previous_sessions=self.exclude_previous_sessions,
             dispatch_session_id=dispatch_session.id if dispatch_session else None,
         )
+        _debug_log(
+            f"fetch geo_service.search_nearby_providers returned {len(results)} raw candidate(s)"
+        )
+        return results
 
 
 class CandidateScorer:
@@ -207,6 +255,10 @@ class CandidateScorer:
         batch_size: int,
         current_radius: float,
     ) -> List[ScoredCandidate]:
+        _debug_log(
+            f"CandidateScorer.score ranking {len(candidates)} candidate(s)",
+            f"batch_size={batch_size}, radius_km={current_radius}",
+        )
         scored: List[ScoredCandidate] = []
         for c in candidates:
             if not c.provider_id:
@@ -240,7 +292,12 @@ class CandidateScorer:
             )
 
         scored.sort(key=lambda item: item.score, reverse=True)
-        return scored[:batch_size]
+        top_batch = scored[:batch_size]
+        _debug_log(
+            f"CandidateScorer.score top batch selected ({len(top_batch)})",
+            top_batch,
+        )
+        return top_batch
 
 
 class CandidatePinger:
@@ -283,9 +340,15 @@ class CandidatePinger:
                 .values(duty_status=DutyStatus.ONLINE_AVAILABLE)
             )
             await self.session.commit()
+            _debug_log(
+                f"CandidatePinger.recover_stale_attempts recovered {len(stale_provider_ids)} stale attempt(s) for task {task.id}",
+                stale_provider_ids,
+            )
             logger.info(
                 f"CandidatePinger: Recovered {len(stale_provider_ids)} stale attempts for task {task.id}"
             )
+        else:
+            _debug_log(f"CandidatePinger.recover_stale_attempts no stale attempts found for task {task.id}")
 
     async def ping_candidate(
         self,
@@ -296,6 +359,10 @@ class CandidatePinger:
         ping_duration: Optional[int] = None,
     ) -> Optional[TaskDispatchAttempt]:
         """Creates dispatch attempt, updates provider duty status to ON_DISPATCH, and returns attempt."""
+        _debug_log(
+            f"CandidatePinger.ping_candidate pinging single candidate provider_id={candidate.user_id}",
+            f"score={candidate.score}, task_id={task.id}",
+        )
         effective_ping_duration = (
             ping_duration if ping_duration is not None else self.ping_duration
         )
@@ -312,6 +379,9 @@ class CandidatePinger:
         )
         res_update = await self.session.exec(stmt_update)
         if res_update.rowcount == 0:
+            _debug_log(
+                f"CandidatePinger.ping_candidate candidate {candidate.user_id} lost race (duty status modified)"
+            )
             logger.debug(
                 f"CandidatePinger: Candidate {candidate.user_id} is no longer ONLINE_AVAILABLE (lost race). Skipping."
             )
@@ -329,6 +399,10 @@ class CandidatePinger:
             status=DispatchAttemptStatus.PENDING,
         )
         self.session.add(attempt)
+        _debug_log(
+            f"CandidatePinger.ping_candidate created attempt for provider_id={candidate.user_id}",
+            f"expires_at={attempt.expires_at}",
+        )
         return attempt
 
     async def send_batch_notification(
@@ -340,6 +414,10 @@ class CandidatePinger:
         expires_at: Optional[str] = None,
     ) -> None:
         """Sends a single notification to all candidate providers in the batch at once."""
+        _debug_log(
+            f"CandidatePinger.send_batch_notification notifying {len(user_ids)} provider(s) for task {task.id}",
+            f"user_ids={user_ids}, payout={offered_payout}",
+        )
         payout_fmt = to_naira(offered_payout) if offered_payout > 0 else "offered price"
         if self.ping_duration >= 60 and self.ping_duration % 60 == 0:
             mins = self.ping_duration // 60
@@ -373,6 +451,9 @@ class CandidatePinger:
         seq_start: int,
     ) -> List[TaskDispatchAttempt]:
         """Dispatches ping attempts to candidate batch using atomic UPDATE RETURNING and bulk INSERT."""
+        _debug_log(
+            f"CandidatePinger.ping_batch starting ping for {len(batch)} candidate(s), seq_start={seq_start}"
+        )
         if not batch:
             return []
 
@@ -388,8 +469,13 @@ class CandidatePinger:
         )
         res_lock = await self.session.exec(stmt_lock)
         winning_provider_ids = set(res_lock.scalars().all())
+        _debug_log(
+            f"CandidatePinger.ping_batch duty status lock acquired for {len(winning_provider_ids)} provider(s)",
+            winning_provider_ids,
+        )
 
         if not winning_provider_ids:
+            _debug_log("CandidatePinger.ping_batch lost race for all candidates in batch")
             return []
 
         now = lagos_now()
@@ -421,6 +507,7 @@ class CandidatePinger:
             dispatched_user_ids.append(candidate.user_id)
 
         if not attempts:
+            _debug_log("CandidatePinger.ping_batch no attempt objects created")
             return []
 
         self.session.add_all(attempts)
@@ -436,10 +523,17 @@ class CandidatePinger:
                 expires_at=last_expires_at,
             )
         except Exception as e:
+            _debug_log(
+                f"CandidatePinger.ping_batch notification ERROR: {e}"
+            )
             logger.error(
                 f"CandidatePinger: Failed to send batch ping notification for task {task.id}: {e}"
             )
 
+        _debug_log(
+            f"CandidatePinger.ping_batch created and saved {len(attempts)} attempt(s)",
+            dispatched_user_ids,
+        )
         return attempts
 
 
@@ -592,10 +686,12 @@ class MatchingEngine:
         Returns:
             MatchingResult: Result containing matched status, candidate count, attempts created, and optional reason.
         """
+        _debug_log(f"MatchingEngine.run STARTING for session_id={self.session_id}")
         logger.debug(f"MatchingEngine.run starting for session {self.session_id}")
 
         dispatch_session = await self.session.get(DispatchSession, self.session_id)
         if not dispatch_session:
+            _debug_log(f"MatchingEngine.run SESSION_NOT_FOUND for session_id={self.session_id}")
             return MatchingResult(
                 matched=False,
                 candidates_count=0,
@@ -603,12 +699,19 @@ class MatchingEngine:
                 reason="SESSION_NOT_FOUND",
             )
 
+        _debug_log(
+            f"MatchingEngine.run loaded dispatch_session",
+            f"status={dispatch_session.status}, lock_version={dispatch_session.lock_version}, task_id={dispatch_session.task_id}",
+        )
+
         if dispatch_session.status != DispatchSessionStatus.RUNNING:
+            reason_str = f"SESSION_NOT_ACTIVE ({dispatch_session.status.value if hasattr(dispatch_session.status, 'value') else dispatch_session.status})"
+            _debug_log(f"MatchingEngine.run ABORTED: {reason_str}")
             return MatchingResult(
                 matched=False,
                 candidates_count=0,
                 attempts_created=0,
-                reason=f"SESSION_NOT_ACTIVE ({dispatch_session.status.value if hasattr(dispatch_session.status, 'value') else dispatch_session.status})",
+                reason=reason_str,
             )
 
         lock_version = dispatch_session.lock_version
@@ -625,6 +728,7 @@ class MatchingEngine:
         )
         res_opt = await self.session.exec(stmt_opt)
         if res_opt.rowcount == 0:
+            _debug_log(f"MatchingEngine.run LOCKING_CONFLICT on session {self.session_id}")
             return MatchingResult(
                 matched=False,
                 candidates_count=0,
@@ -633,15 +737,22 @@ class MatchingEngine:
             )
 
         dispatch_session.lock_version = lock_version + 1
+        _debug_log(f"MatchingEngine.run lock_version updated to {dispatch_session.lock_version}")
 
         task = await self.session.get(Task, dispatch_session.task_id)
         if not task:
+            _debug_log(f"MatchingEngine.run TASK_NOT_FOUND for task_id={dispatch_session.task_id}")
             return MatchingResult(
                 matched=False,
                 candidates_count=0,
                 attempts_created=0,
                 reason="TASK_NOT_FOUND",
             )
+
+        _debug_log(
+            f"MatchingEngine.run loaded task {task.id}",
+            f"title='{task.title}', service_id={task.service_id}, status={task.status}",
+        )
 
         combined_excluded: Set[str] = set(self.excluded_provider_ids)
         if dispatch_session.excluded_provider_ids:
@@ -657,12 +768,15 @@ class MatchingEngine:
         )
 
         if not batch:
+            _debug_log(f"MatchingEngine.run NO_CANDIDATES found for session {self.session_id}")
             return MatchingResult(
                 matched=False,
                 candidates_count=0,
                 attempts_created=0,
                 reason="NO_CANDIDATES",
             )
+
+        _debug_log(f"MatchingEngine.run batch ready for ping: {len(batch)} candidate(s)")
 
         stmt_attempts_count = select(
             func.max(TaskDispatchAttempt.sequence_order)
@@ -680,6 +794,7 @@ class MatchingEngine:
         )
 
         if not attempts:
+            _debug_log(f"MatchingEngine.run ALL_RACE_LOST for session {self.session_id}")
             return MatchingResult(
                 matched=False,
                 candidates_count=len(batch),
@@ -687,8 +802,10 @@ class MatchingEngine:
                 reason="ALL_RACE_LOST",
             )
 
-        return MatchingResult(
+        res_final = MatchingResult(
             matched=True,
             candidates_count=len(batch),
             attempts_created=len(attempts),
         )
+        _debug_log(f"MatchingEngine.run COMPLETED successfully for session {self.session_id}", res_final)
+        return res_final
