@@ -4,10 +4,12 @@ from typing import Optional, Dict, Any
 from uuid import uuid4
 from sqlalchemy import Column, JSON
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, Relationship
 from app.core.utils.datetime_helper import lagos_now
+from app.core.models.regions import Region
 
 class AdminRole(str, enum.Enum):
+
     """Administrative role defining authority tier and operational permissions."""
     ROOT_ADMIN = "ROOT_ADMIN"
     SUPER_ADMIN = "SUPER_ADMIN"
@@ -38,7 +40,9 @@ class AdminUser(SQLModel, table=True):
     is_email_verified: bool = Field(default=False, description="Flag indicating if the administrator's email address has been verified")
     last_login_at: Optional[datetime] = Field(default=None, description="Timestamp of the administrator's most recent successful login")
     region_id: Optional[str] = Field(default=None, foreign_key="regions.id", nullable=True, index=True, description="Optional foreign key referencing a specific regional operational zone")
+    region: Optional["Region"] = Relationship(sa_relationship_kwargs={"lazy": "joined"})
     created_at: datetime = Field(default_factory=lagos_now, description="Timestamp when the administrator account was created")
+
     updated_at: datetime = Field(default_factory=lagos_now, description="Timestamp when the administrator account was last updated")
 
 class AdminInvitation(SQLModel, table=True):

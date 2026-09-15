@@ -246,3 +246,7 @@ class GetCurrentAdmin:
             )
 
         return admin
+
+
+get_current_admin = GetCurrentAdmin()
+

@@ -165,3 +165,24 @@ async def accept_invitation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred accepting the invitation.",
         )
+
+
+@router.get("/me", response_model=BaseAPIResponse[AdminUserResponse])
+async def get_me(
+    current_admin: AdminUser = Depends(GetCurrentAdmin()),
+):
+    """Retrieve details of the currently authenticated administrator."""
+    try:
+        return BaseAPIResponse.success_response(
+            data=AdminUserResponse.model_validate(current_admin),
+            message="Current admin details retrieved successfully.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred retrieving current admin details.",
+        )
+

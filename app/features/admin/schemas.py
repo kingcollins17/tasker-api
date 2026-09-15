@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field
 from app.core.models.admins import AdminRole, AdminInvitationStatus
+from app.features.regions.schemas import RegionResponse
 
 
 class AdminLoginRequest(BaseModel):
@@ -42,12 +43,16 @@ class AdminUserResponse(BaseModel):
     role: AdminRole
     parent_admin_id: Optional[str] = None
     created_by_id: Optional[str] = None
+    region_id: Optional[str] = None
+    region: Optional[RegionResponse] = None
     is_active: bool
     last_login_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
 
 
 class AdminInvitationResponse(BaseModel):
