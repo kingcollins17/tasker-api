@@ -1,6 +1,6 @@
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from app.core.models.users import VerificationStatus
 from app.core.models.vetting import InterviewStatus
 
@@ -28,6 +28,8 @@ class RejectGuarantorRequest(BaseModel):
 
 
 class GuarantorResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     provider_id: str
     guarantor_name: str
@@ -40,6 +42,8 @@ class GuarantorResponse(BaseModel):
 
 
 class AddGuarantorResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: Optional[str] = None
     status: Optional[str] = None
     message: Optional[str] = None
@@ -61,6 +65,8 @@ class UpdateInterviewStatusRequest(BaseModel):
 
 
 class InterviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     user_id: str
     admin_id: Optional[str] = None
@@ -85,6 +91,8 @@ class RejectKYCRequest(BaseModel):
 
 
 class KYCDocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     user_id: str
     id_type: str

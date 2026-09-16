@@ -47,14 +47,6 @@ class KYCService:
         )
 
     @log_error()
-    async def get_latest_kyc(self, user_id: str) -> Optional[KYCDocument]:
-        """Fetch the most recent KYC submission attempt for a user."""
-        docs = await self.kyc_repo.get_all(
-            QueryOptions(filters={"user_id": user_id}, order_by="attempt_number", descending=True, limit=1)
-        )
-        return docs[0] if docs else None
-
-    @log_error()
     async def submit_kyc(
         self,
         user_id: str,
@@ -211,7 +203,10 @@ class KYCService:
         if document_id:
             doc = await self.kyc_repo.get(document_id)
         else:
-            doc = await self.get_latest_kyc(user_id)
+            docs = await self.kyc_repo.get_all(
+                QueryOptions(filters={"user_id": user_id}, order_by="attempt_number", descending=True, limit=1)
+            )
+            doc = docs[0] if docs else None
 
         if not doc or doc.user_id != user_id:
             raise HTTPException(
@@ -312,7 +307,10 @@ class KYCService:
         if document_id:
             doc = await self.kyc_repo.get(document_id)
         else:
-            doc = await self.get_latest_kyc(user_id)
+            docs = await self.kyc_repo.get_all(
+                QueryOptions(filters={"user_id": user_id}, order_by="attempt_number", descending=True, limit=1)
+            )
+            doc = docs[0] if docs else None
 
         if not doc or doc.user_id != user_id:
             raise HTTPException(

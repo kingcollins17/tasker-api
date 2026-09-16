@@ -94,3 +94,37 @@ class AdminDashboardOverviewResponse(BaseModel):
     total_revenue_amount: float = Field(description="Total revenue amount summed from transactions table")
     total_processed_payouts_amount: float = Field(description="Total processed payouts amount summed from payout queue table with status COMPLETED")
 
+
+class AdminUserStatsResponse(BaseModel):
+    total_users: int = Field(description="Total registered users count")
+    total_active: int = Field(description="Total active users count")
+    total_inactive: int = Field(description="Total inactive users count")
+    total_customers: int = Field(description="Total customer users count")
+    total_providers: int = Field(description="Total provider users count")
+
+
+class AdminKYCStatsResponse(BaseModel):
+    total_documents: int = Field(description="Total KYC document submissions count")
+    total_verified: int = Field(description="Total verified KYC documents count")
+    total_rejected: int = Field(description="Total failed/rejected KYC documents count")
+    total_pending: int = Field(description="Total pending KYC documents count (submitted or under review)")
+    total_submitted: int = Field(description="Total submitted KYC documents count")
+    total_under_review: int = Field(description="Total under review KYC documents count")
+
+
+class AdminGuarantorStatsResponse(BaseModel):
+    total_guarantors: int = Field(description="Total guarantors count")
+    total_passed: int = Field(description="Total passed/verified guarantors count")
+    total_failed: int = Field(description="Total failed/rejected guarantors count")
+    total_pending: int = Field(description="Total pending guarantors count")
+    total_under_review: int = Field(description="Total under review guarantors count")
+
+
+class AdminInterviewStatsResponse(BaseModel):
+    total_interviews: int = Field(description="Total provider interviews count")
+    total_scheduled: int = Field(description="Total scheduled interviews count")
+    total_passed: int = Field(description="Total passed interviews count")
+    total_failed: int = Field(description="Total failed interviews count")
+    total_cancelled: int = Field(description="Total cancelled interviews count")
+    total_rescheduled: int = Field(description="Total rescheduled interviews count")
+

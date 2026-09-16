@@ -1,12 +1,14 @@
+from typing import Optional
 from app.core.utils.timer import Timer
 from app.core.services.logger_service import LoggerService, get_logger_service
 from fastapi import APIRouter, Depends, status, UploadFile, File, Form, HTTPException
 from app.core.error_handler import AppErrorHandler
 from app.core.api_response import BaseAPIResponse
 from app.core.deps import GetCurrentUser
-from app.core.models.users import UserType, KYCStatus
-from app.features.users.schemas import ProviderProfileResponse, UserResponse
-from app.features.users.services import ProviderProfileService, get_provider_profile_service, KYCService, get_kyc_service
+from app.core.models.users import UserType, KYCStatus, KYCDocument
+from app.core.repository import Repository, GetRepository, QueryOptions
+from app.features.users.schemas import KYCDocumentResponse, ProviderProfileResponse, UserResponse
+from app.features.users.services import ProviderProfileService, get_provider_profile_service
 from app.core.services.storage import StorageService, get_storage_service
 
 router = APIRouter()
@@ -114,28 +116,30 @@ async def submit_kyc_document(
 
 @router.get(
     "/kyc",
-    response_model=BaseAPIResponse[ProviderProfileResponse],
+    response_model=BaseAPIResponse[Optional[KYCDocumentResponse]],
     status_code=status.HTTP_200_OK,
 )
 async def get_kyc_status(
     current_user: UserResponse = Depends(
         GetCurrentUser(required_type=UserType.PROVIDER)
     ),
+    kyc_repo: Repository[KYCDocument] = Depends(GetRepository(KYCDocument)),
     system_logger: LoggerService = Depends(get_logger_service)
 ):
-    """Retrieve the KYC status and submission details of the current provider."""
+    """Retrieve the most recent KYC document submission of the authenticated provider."""
     try:
         timer = Timer()
         timer.start()
-        if not current_user.provider_profile:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Provider profile not found.",
-            )
+        docs = await kyc_repo.get_all(
+            QueryOptions(filters={"user_id": current_user.id}, order_by="attempt_number", descending=True, limit=1)
+        )
+        latest_kyc = docs[0] if docs else None
+        doc_response = KYCDocumentResponse.model_validate(latest_kyc) if latest_kyc else None
+
         await system_logger.metric('get_kyc_status', timer.stop(), source='kyc.get_kyc_status')
-        return BaseAPIResponse[ProviderProfileResponse](
-            data=current_user.provider_profile,
-            detail="KYC details retrieved successfully.",
+        return BaseAPIResponse[Optional[KYCDocumentResponse]](
+            data=doc_response,
+            detail="KYC details retrieved successfully." if latest_kyc else "No KYC document submission found.",
             status_code=status.HTTP_200_OK,
         )
     except HTTPException as e:

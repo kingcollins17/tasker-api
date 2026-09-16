@@ -10,9 +10,16 @@ from app.core.models.admins import AdminUser
 from app.core.models.payments import PayoutQueue, PayoutStatus
 from app.core.models.tasks import Task, TaskStatus
 from app.core.models.transactions import Transaction
-from app.core.models.users import User, UserType
+from app.core.models.users import User, UserType, KYCDocument, KYCStatus, VerificationStatus
+from app.core.models.vetting import ProviderGuarantor, ProviderInterview, InterviewStatus
 from app.core.services.cache import CacheService, get_cache_service
-from app.features.admin.schemas import AdminDashboardOverviewResponse
+from app.features.admin.schemas import (
+    AdminDashboardOverviewResponse,
+    AdminUserStatsResponse,
+    AdminKYCStatsResponse,
+    AdminGuarantorStatsResponse,
+    AdminInterviewStatsResponse,
+)
 
 router = APIRouter(prefix="/dashboard", tags=["Admin Dashboard"])
 
@@ -97,4 +104,238 @@ async def get_dashboard_overview(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred fetching dashboard overview.",
+        )
+
+
+@router.get(
+    "/user-stats",
+    response_model=BaseAPIResponse[AdminUserStatsResponse],
+    summary="Get platform user statistics",
+)
+async def get_user_stats(
+    current_admin: AdminUser = Depends(GetCurrentAdmin()),
+    session: AsyncSession = Depends(get_session),
+    cs: CacheService = Depends(get_cache_service),
+):
+    """Fetches platform user statistics (total, active, inactive, customers, providers) in one DB query using GROUP BY."""
+    try:
+        cache_key = "admin:dashboard:user-stats"
+        cached_data = await cs.get_json(cache_key)
+        if cached_data:
+            return BaseAPIResponse.success_response(
+                data=AdminUserStatsResponse(**cached_data),
+                message="User statistics retrieved successfully.",
+            )
+
+        stmt = select(User.type, User.is_active, func.count(col(User.id))).group_by(col(User.type), col(User.is_active))
+        results = (await session.exec(stmt)).all()
+
+        total_users = 0
+        total_active = 0
+        total_inactive = 0
+        total_customers = 0
+        total_providers = 0
+
+        for user_type, is_active, count in results:
+            total_users += count
+            if is_active:
+                total_active += count
+            else:
+                total_inactive += count
+
+            if user_type == UserType.CUSTOMER:
+                total_customers += count
+            elif user_type == UserType.PROVIDER:
+                total_providers += count
+
+        stats = AdminUserStatsResponse(
+            total_users=total_users,
+            total_active=total_active,
+            total_inactive=total_inactive,
+            total_customers=total_customers,
+            total_providers=total_providers,
+        )
+
+        await cs.set_json(cache_key, stats.model_dump(mode="json"), expire=300)
+
+        return BaseAPIResponse.success_response(
+            data=stats,
+            message="User statistics retrieved successfully.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred fetching user statistics.",
+        )
+
+
+@router.get(
+    "/kyc-stats",
+    response_model=BaseAPIResponse[AdminKYCStatsResponse],
+    summary="Get platform KYC verification statistics",
+)
+async def get_kyc_stats(
+    current_admin: AdminUser = Depends(GetCurrentAdmin()),
+    session: AsyncSession = Depends(get_session),
+    cs: CacheService = Depends(get_cache_service),
+):
+    """Fetches platform KYC verification statistics in one DB query using GROUP BY."""
+    try:
+        cache_key = "admin:dashboard:kyc-stats"
+        cached_data = await cs.get_json(cache_key)
+        if cached_data:
+            return BaseAPIResponse.success_response(
+                data=AdminKYCStatsResponse(**cached_data),
+                message="KYC statistics retrieved successfully.",
+            )
+
+        stmt = select(KYCDocument.status, func.count(col(KYCDocument.id))).group_by(col(KYCDocument.status))
+        results = (await session.exec(stmt)).all()
+
+        counts = {kyc_status: count for kyc_status, count in results}
+
+        total_documents = sum(counts.values())
+        total_verified = counts.get(KYCStatus.VERIFIED, 0)
+        total_rejected = counts.get(KYCStatus.FAILED, 0)
+        total_submitted = counts.get(KYCStatus.SUBMITTED, 0)
+        total_under_review = counts.get(KYCStatus.UNDER_REVIEW, 0)
+        total_pending = counts.get(KYCStatus.PENDING_SUBMISSION, 0) + total_submitted + total_under_review
+
+        stats = AdminKYCStatsResponse(
+            total_documents=total_documents,
+            total_verified=total_verified,
+            total_rejected=total_rejected,
+            total_pending=total_pending,
+            total_submitted=total_submitted,
+            total_under_review=total_under_review,
+        )
+
+        await cs.set_json(cache_key, stats.model_dump(mode="json"), expire=300)
+
+        return BaseAPIResponse.success_response(
+            data=stats,
+            message="KYC statistics retrieved successfully.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred fetching KYC statistics.",
+        )
+
+
+@router.get(
+    "/guarantor-stats",
+    response_model=BaseAPIResponse[AdminGuarantorStatsResponse],
+    summary="Get platform guarantor verification statistics",
+)
+async def get_guarantor_stats(
+    current_admin: AdminUser = Depends(GetCurrentAdmin()),
+    session: AsyncSession = Depends(get_session),
+    cs: CacheService = Depends(get_cache_service),
+):
+    """Fetches platform guarantor verification statistics in one DB query using GROUP BY."""
+    try:
+        cache_key = "admin:dashboard:guarantor-stats"
+        cached_data = await cs.get_json(cache_key)
+        if cached_data:
+            return BaseAPIResponse.success_response(
+                data=AdminGuarantorStatsResponse(**cached_data),
+                message="Guarantor statistics retrieved successfully.",
+            )
+
+        stmt = select(ProviderGuarantor.status, func.count(col(ProviderGuarantor.id))).group_by(col(ProviderGuarantor.status))
+        results = (await session.exec(stmt)).all()
+
+        counts = {status_val: count for status_val, count in results}
+
+        total_guarantors = sum(counts.values())
+        total_passed = counts.get(VerificationStatus.PASSED, 0)
+        total_failed = counts.get(VerificationStatus.FAILED, 0)
+        total_pending = counts.get(VerificationStatus.PENDING, 0)
+        total_under_review = counts.get(VerificationStatus.UNDER_REVIEW, 0)
+
+        stats = AdminGuarantorStatsResponse(
+            total_guarantors=total_guarantors,
+            total_passed=total_passed,
+            total_failed=total_failed,
+            total_pending=total_pending,
+            total_under_review=total_under_review,
+        )
+
+        await cs.set_json(cache_key, stats.model_dump(mode="json"), expire=300)
+
+        return BaseAPIResponse.success_response(
+            data=stats,
+            message="Guarantor statistics retrieved successfully.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred fetching guarantor statistics.",
+        )
+
+
+@router.get(
+    "/interview-stats",
+    response_model=BaseAPIResponse[AdminInterviewStatsResponse],
+    summary="Get platform interview statistics",
+)
+async def get_interview_stats(
+    current_admin: AdminUser = Depends(GetCurrentAdmin()),
+    session: AsyncSession = Depends(get_session),
+    cs: CacheService = Depends(get_cache_service),
+):
+    """Fetches platform interview statistics in one DB query using GROUP BY."""
+    try:
+        cache_key = "admin:dashboard:interview-stats"
+        cached_data = await cs.get_json(cache_key)
+        if cached_data:
+            return BaseAPIResponse.success_response(
+                data=AdminInterviewStatsResponse(**cached_data),
+                message="Interview statistics retrieved successfully.",
+            )
+
+        stmt = select(ProviderInterview.status, func.count(col(ProviderInterview.id))).group_by(col(ProviderInterview.status))
+        results = (await session.exec(stmt)).all()
+
+        counts = {status_val: count for status_val, count in results}
+
+        total_interviews = sum(counts.values())
+        total_scheduled = counts.get(InterviewStatus.SCHEDULED, 0)
+        total_passed = counts.get(InterviewStatus.PASSED, 0)
+        total_failed = counts.get(InterviewStatus.FAILED, 0)
+        total_cancelled = counts.get(InterviewStatus.CANCELLED, 0)
+        total_rescheduled = counts.get(InterviewStatus.RESCHEDULED, 0)
+
+        stats = AdminInterviewStatsResponse(
+            total_interviews=total_interviews,
+            total_scheduled=total_scheduled,
+            total_passed=total_passed,
+            total_failed=total_failed,
+            total_cancelled=total_cancelled,
+            total_rescheduled=total_rescheduled,
+        )
+
+        await cs.set_json(cache_key, stats.model_dump(mode="json"), expire=300)
+
+        return BaseAPIResponse.success_response(
+            data=stats,
+            message="Interview statistics retrieved successfully.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred fetching interview statistics.",
         )
