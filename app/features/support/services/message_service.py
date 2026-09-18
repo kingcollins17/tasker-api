@@ -1,9 +1,12 @@
 from typing import List, Optional, Tuple
 
-from sqlmodel import col, select, or_
+from fastapi import Depends
+from sqlmodel import col, select, update, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.database import get_session
 from app.core.models.support import (
+    CaseAttachment,
     CaseEvent,
     CaseEventType,
     CaseMessage,
@@ -31,6 +34,8 @@ class CaseMessageService:
         channel: MessageChannel = MessageChannel.IN_APP,
         visibility: MessageVisibility = MessageVisibility.PUBLIC,
         email_message_id: Optional[str] = None,
+        status_update: Optional[CaseStatus] = None,
+        attachment_ids: Optional[List[str]] = None,
     ) -> Tuple[Optional[CaseMessage], Optional[SupportCase]]:
         # Idempotency check if email_message_id is provided
         if email_message_id:
@@ -63,15 +68,27 @@ class CaseMessageService:
             created_at=now,
         )
         self.session.add(message)
+        await self.session.flush()
+
+        # Link attachments if provided
+        if attachment_ids:
+            stmt_att = (
+                update(CaseAttachment)
+                .where(col(CaseAttachment.id).in_(attachment_ids))
+                .values(message_id=message.id)
+            )
+            await self.session.exec(stmt_att)
 
         # Status & timestamp updates
-        if sender_type == MessageSenderType.AGENT:
+        if status_update:
+            case.status = status_update
+        elif sender_type == MessageSenderType.AGENT:
             if visibility == MessageVisibility.PUBLIC and not case.first_responded_at:
                 case.first_responded_at = now
             if case.status == CaseStatus.WAITING_FOR_INTERNAL:
                 case.status = CaseStatus.IN_PROGRESS
         elif sender_type in (MessageSenderType.CUSTOMER, MessageSenderType.PROVIDER):
-            if case.status == CaseStatus.WAITING_FOR_USER:
+            if case.status in (CaseStatus.WAITING_FOR_CUSTOMER, CaseStatus.WAITING_FOR_PROVIDER):
                 case.status = CaseStatus.IN_PROGRESS
 
         case.updated_at = now
@@ -92,6 +109,7 @@ class CaseMessageService:
                 "message_id": message.id,
                 "channel": channel.value,
                 "visibility": visibility.value,
+                "attachment_count": len(attachment_ids) if attachment_ids else 0,
             },
             created_at=now,
         )
@@ -116,32 +134,6 @@ class CaseMessageService:
             channel=MessageChannel.IN_APP,
             visibility=MessageVisibility.INTERNAL,
         )
-
-    async def get_messages(
-        self,
-        case_id: str,
-        is_admin: bool = False,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[CaseMessage]:
-        stmt_case = select(SupportCase).where(
-            or_(
-                col(SupportCase.id) == case_id,
-                col(SupportCase.case_number) == case_id,
-            )
-        )
-        res_case = await self.session.exec(stmt_case)
-        case = res_case.first()
-        if not case:
-            return []
-
-        stmt = select(CaseMessage).where(col(CaseMessage.case_id) == case.id)
-        if not is_admin:
-            stmt = stmt.where(col(CaseMessage.visibility) == MessageVisibility.PUBLIC)
-
-        stmt = stmt.order_by(col(CaseMessage.created_at).asc()).limit(limit).offset(offset)
-        res = await self.session.exec(stmt)
-        return res.all()
 
     async def process_email_webhook(
         self,
@@ -171,3 +163,7 @@ class CaseMessageService:
             email_message_id=email_message_id,
         )
         return msg
+
+
+def get_case_message_service(session: AsyncSession = Depends(get_session)) -> CaseMessageService:
+    return CaseMessageService(session)

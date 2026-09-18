@@ -19,8 +19,8 @@ class SupportCaseCreate(BaseModel):
     type: CaseType = Field(default=CaseType.GENERAL, description="Support ticket category")
     priority: CasePriority = Field(default=CasePriority.NORMAL, description="Ticket priority level")
     task_id: Optional[str] = Field(default=None, description="Optional associated task ID")
-    booking_id: Optional[str] = Field(default=None, description="Optional associated booking ID")
-    payment_id: Optional[str] = Field(default=None, description="Optional associated payment transaction ID")
+    assignment_id: Optional[str] = Field(default=None, description="Optional associated assignment ID")
+    payout_id: Optional[str] = Field(default=None, description="Optional associated payout ID")
 
 
 class SupportCaseUpdate(BaseModel):
@@ -39,8 +39,8 @@ class SupportCaseResponse(BaseModel):
     customer_id: Optional[str] = None
     provider_id: Optional[str] = None
     task_id: Optional[str] = None
-    booking_id: Optional[str] = None
-    payment_id: Optional[str] = None
+    assignment_id: Optional[str] = None
+    payout_id: Optional[str] = None
     subject: str
     description: str
     assigned_agent_id: Optional[str] = None
@@ -54,9 +54,25 @@ class SupportCaseResponse(BaseModel):
     updated_at: datetime
 
 
+class SupportCaseDetailResponse(SupportCaseResponse):
+    customer: Optional[Dict[str, Any]] = None
+    provider: Optional[Dict[str, Any]] = None
+    task: Optional[Dict[str, Any]] = None
+    assignment: Optional[Dict[str, Any]] = None
+    payout: Optional[Dict[str, Any]] = None
+
+
 class CaseMessageCreate(BaseModel):
     body: str = Field(..., min_length=1, description="Message body content")
     channel: MessageChannel = Field(default=MessageChannel.IN_APP, description="Communication channel")
+
+
+class AdminCaseMessageCreate(BaseModel):
+    body: str = Field(..., min_length=1, description="Message body content")
+    channel: MessageChannel = Field(default=MessageChannel.IN_APP, description="Communication channel")
+    visibility: MessageVisibility = Field(default=MessageVisibility.PUBLIC, description="Visibility of message")
+    status_update: Optional[CaseStatus] = Field(default=None, description="Optional updated ticket status (e.g. WAITING_FOR_USER, WAITING_FOR_PROVIDER)")
+    attachment_ids: Optional[List[str]] = Field(default=None, description="Optional IDs of uploaded attachments to link to this message")
 
 
 class InternalNoteCreate(BaseModel):
@@ -80,14 +96,16 @@ class DisputeCreate(BaseModel):
     reason: str = Field(..., min_length=5, description="Detailed dispute explanation")
     amount_disputed: Optional[float] = Field(default=None, ge=0.0, description="Optional disputed monetary amount")
     requested_resolution: Optional[str] = Field(default=None, description="Desired outcome requested by user")
-    booking_id: Optional[str] = None
+    assignment_id: Optional[str] = Field(default=None, description="Optional associated assignment ID")
+    payout_id: Optional[str] = Field(default=None, description="Optional associated payout ID")
 
 
 class DisputeResponse(BaseModel):
     id: str
     case_id: str
     task_id: Optional[str] = None
-    booking_id: Optional[str] = None
+    assignment_id: Optional[str] = None
+    payout_id: Optional[str] = None
     initiated_by: str
     reason: str
     amount_disputed: Optional[float] = None
@@ -127,3 +145,14 @@ class TimelineItemResponse(BaseModel):
     actor_type: Optional[str] = None
     actor_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+class CaseAuditLogResponse(BaseModel):
+    id: str
+    case_id: str
+    event_type: CaseEventType
+    actor_type: str
+    actor_id: Optional[str] = None
+    event_metadata: Optional[Dict[str, Any]] = None
+    created_at: datetime
+

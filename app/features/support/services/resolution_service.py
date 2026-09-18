@@ -1,8 +1,10 @@
 from typing import Optional, Tuple
 
+from fastapi import Depends
 from sqlmodel import col, select, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.database import get_session
 from app.core.models.support import (
     CaseEvent,
     CaseEventType,
@@ -71,18 +73,6 @@ class CaseResolutionService:
         await self.session.refresh(case)
         return case, resolution
 
-    async def get_resolution(self, case_id: str) -> Optional[CaseResolution]:
-        stmt_case = select(SupportCase).where(
-            or_(
-                col(SupportCase.id) == case_id,
-                col(SupportCase.case_number) == case_id,
-            )
-        )
-        res_case = await self.session.exec(stmt_case)
-        case = res_case.first()
-        if not case:
-            return None
 
-        stmt = select(CaseResolution).where(col(CaseResolution.case_id) == case.id)
-        res = await self.session.exec(stmt)
-        return res.first()
+def get_case_resolution_service(session: AsyncSession = Depends(get_session)) -> CaseResolutionService:
+    return CaseResolutionService(session)

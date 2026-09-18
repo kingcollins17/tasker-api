@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict
 from pydantic import BaseModel, EmailStr, Field
 from app.core.models.admins import AdminRole, AdminInvitationStatus
 from app.features.regions.schemas import RegionResponse
@@ -127,4 +127,19 @@ class AdminInterviewStatsResponse(BaseModel):
     total_failed: int = Field(description="Total failed interviews count")
     total_cancelled: int = Field(description="Total cancelled interviews count")
     total_rescheduled: int = Field(description="Total rescheduled interviews count")
+
+
+class AdminTaskStatsResponse(BaseModel):
+    total_tasks: int = Field(description="Total tasks count")
+    total_draft: int = Field(default=0, description="Total draft tasks count")
+    total_under_review: int = Field(default=0, description="Total under review tasks count")
+    total_open: int = Field(default=0, description="Total open tasks count")
+    total_searching: int = Field(default=0, description="Total searching tasks count")
+    total_assigned: int = Field(default=0, description="Total assigned tasks count")
+    total_in_progress: int = Field(default=0, description="Total in-progress tasks count")
+    total_completed: int = Field(default=0, description="Total completed tasks count")
+    total_cancelled: int = Field(default=0, description="Total cancelled tasks count")
+    total_no_match: int = Field(default=0, description="Total no-match tasks count")
+    by_status: Dict[str, int] = Field(default_factory=dict, description="Counts grouped by task status")
+
 

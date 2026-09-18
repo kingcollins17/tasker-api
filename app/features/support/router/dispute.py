@@ -1,15 +1,18 @@
-from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import col, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.api_response import BaseAPIResponse
 from app.core.database import get_session
 from app.core.deps import GetCurrentUser
 from app.core.error_handler import AppErrorHandler
+from app.core.models.support import Dispute, SupportCase
 from app.core.models.users import UserType
-from app.features.support.schemas import DisputeCreate, DisputeResponse, SupportCaseResponse
-from app.features.support.services.case_service import SupportCaseService
-from app.features.support.services.dispute_service import DisputeService
+from app.features.support.schemas import DisputeCreate, DisputeResponse
+from app.features.support.services.dispute_service import (
+    DisputeService,
+    get_dispute_service,
+)
 from app.features.users.schemas import UserResponse
 
 router = APIRouter()
@@ -19,10 +22,9 @@ router = APIRouter()
 async def open_dispute(
     schema: DisputeCreate,
     current_user: UserResponse = Depends(GetCurrentUser()),
-    session: AsyncSession = Depends(get_session),
+    service: DisputeService = Depends(get_dispute_service),
 ):
     try:
-        service = DisputeService(session)
         is_customer = current_user.type == UserType.CUSTOMER
         case, dispute = await service.open_dispute(
             user_id=current_user.id,
@@ -33,8 +35,8 @@ async def open_dispute(
             data=DisputeResponse.model_validate(dispute),
             message="Dispute opened successfully",
         )
-    except HTTPException as e:
-        raise e
+    except HTTPException:
+        raise
     except Exception as error:
         AppErrorHandler.handleError(error)
         raise HTTPException(
@@ -50,11 +52,21 @@ async def get_dispute(
     session: AsyncSession = Depends(get_session),
 ):
     try:
-        case_service = SupportCaseService(session)
-        case = await case_service.get_case(case_id)
+        stmt_case = select(SupportCase).where(
+            or_(
+                col(SupportCase.id) == case_id,
+                col(SupportCase.case_number) == case_id,
+            )
+        )
+        case = (await session.exec(stmt_case)).first()
 
-        dispute_service = DisputeService(session)
-        dispute = await dispute_service.get_dispute(case_id)
+        stmt_disp = select(Dispute).where(
+            or_(
+                col(Dispute.case_id) == case_id,
+                col(Dispute.id) == case_id,
+            )
+        )
+        dispute = (await session.exec(stmt_disp)).first()
         if not dispute:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -71,8 +83,8 @@ async def get_dispute(
             data=DisputeResponse.model_validate(dispute),
             message="Dispute details retrieved successfully",
         )
-    except HTTPException as e:
-        raise e
+    except HTTPException:
+        raise
     except Exception as error:
         AppErrorHandler.handleError(error)
         raise HTTPException(

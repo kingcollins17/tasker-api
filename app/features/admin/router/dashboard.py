@@ -1,3 +1,4 @@
+from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -19,6 +20,7 @@ from app.features.admin.schemas import (
     AdminKYCStatsResponse,
     AdminGuarantorStatsResponse,
     AdminInterviewStatsResponse,
+    AdminTaskStatsResponse,
 )
 
 router = APIRouter(prefix="/dashboard", tags=["Admin Dashboard"])
@@ -339,3 +341,81 @@ async def get_interview_stats(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred fetching interview statistics.",
         )
+
+
+@router.get(
+    "/task-stats",
+    response_model=BaseAPIResponse[AdminTaskStatsResponse],
+    summary="Get platform task statistics",
+)
+@router.get(
+    "/tasks-stats",
+    response_model=BaseAPIResponse[AdminTaskStatsResponse],
+    summary="Get platform task statistics",
+    include_in_schema=False,
+)
+async def get_task_stats(
+    current_admin: AdminUser = Depends(GetCurrentAdmin()),
+    session: AsyncSession = Depends(get_session),
+    cs: CacheService = Depends(get_cache_service),
+):
+    """Fetches platform task statistics grouped by status (draft, open, searching, assigned, in progress, completed, cancelled, etc.)."""
+    try:
+        cache_key = "admin:dashboard:task-stats"
+        cached_data = await cs.get_json(cache_key)
+        if cached_data:
+            return BaseAPIResponse.success_response(
+                data=AdminTaskStatsResponse(**cached_data),
+                message="Task statistics retrieved successfully.",
+            )
+
+        stmt = select(Task.status, func.count(col(Task.id))).group_by(col(Task.status))
+        results = (await session.exec(stmt)).all()
+
+        counts: Dict[str, int] = {}
+        for status_val, count in results:
+            key = status_val.value if hasattr(status_val, "value") else str(status_val)
+            counts[key] = count
+
+        total_tasks = sum(counts.values())
+        total_draft = counts.get(TaskStatus.DRAFT.value, 0)
+        total_under_review = counts.get(TaskStatus.UNDER_REVIEW.value, 0)
+        total_open = counts.get(TaskStatus.OPEN.value, 0)
+        total_searching = counts.get(TaskStatus.SEARCHING.value, 0)
+        total_assigned = counts.get(TaskStatus.ASSIGNED.value, 0)
+        total_in_progress = counts.get(TaskStatus.IN_PROGRESS.value, 0)
+        total_completed = counts.get(TaskStatus.COMPLETED.value, 0)
+        total_cancelled = counts.get(TaskStatus.CANCELLED.value, 0)
+        total_no_match = counts.get(TaskStatus.NO_MATCH.value, 0)
+
+        by_status = {status_item.value: counts.get(status_item.value, 0) for status_item in TaskStatus}
+
+        stats = AdminTaskStatsResponse(
+            total_tasks=total_tasks,
+            total_draft=total_draft,
+            total_under_review=total_under_review,
+            total_open=total_open,
+            total_searching=total_searching,
+            total_assigned=total_assigned,
+            total_in_progress=total_in_progress,
+            total_completed=total_completed,
+            total_cancelled=total_cancelled,
+            total_no_match=total_no_match,
+            by_status=by_status,
+        )
+
+        await cs.set_json(cache_key, stats.model_dump(mode="json"), expire=300)
+
+        return BaseAPIResponse.success_response(
+            data=stats,
+            message="Task statistics retrieved successfully.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred fetching task statistics.",
+        )
+

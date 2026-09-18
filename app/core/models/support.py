@@ -26,10 +26,12 @@ class CaseType(str, enum.Enum):
 class CaseStatus(str, enum.Enum):
     OPEN = "OPEN"
     IN_PROGRESS = "IN_PROGRESS"
-    WAITING_FOR_USER = "WAITING_FOR_USER"
+    WAITING_FOR_CUSTOMER = "WAITING_FOR_USER"
+    WAITING_FOR_PROVIDER = "WAITING_FOR_PROVIDER"
     WAITING_FOR_INTERNAL = "WAITING_FOR_INTERNAL"
     RESOLVED = "RESOLVED"
     CLOSED = "CLOSED"
+    AUTO_CLOSED= "AUTO_CLOSED"
 
 
 class CasePriority(str, enum.Enum):
@@ -54,6 +56,8 @@ class MessageChannel(str, enum.Enum):
 class MessageVisibility(str, enum.Enum):
     PUBLIC = "PUBLIC"
     INTERNAL = "INTERNAL"
+    CUSTOMER_ONLY = "CUSTOMER_ONLY"
+    PROVIDER_ONLY= "PROVIDER_ONLY"
 
 
 class CaseEventType(str, enum.Enum):
@@ -81,14 +85,14 @@ class SupportCase(SQLModel, table=True):
     status: CaseStatus = Field(default=CaseStatus.OPEN, index=True)
     priority: CasePriority = Field(default=CasePriority.NORMAL, index=True)
 
-    customer_id: Optional[str] = Field(default=None, index=True, nullable=True)
-    provider_id: Optional[str] = Field(default=None, index=True, nullable=True)
-    task_id: Optional[str] = Field(default=None, index=True, nullable=True)
-    booking_id: Optional[str] = Field(default=None, nullable=True)
-    payment_id: Optional[str] = Field(default=None, nullable=True)
+    customer_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True)
+    provider_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True)
+    task_id: Optional[str] = Field(default=None, foreign_key="tasks.id", index=True, nullable=True)
+    assignment_id: Optional[str] = Field(default=None, nullable=True)
+    payout_id: Optional[str] = Field(default=None, nullable=True)
 
     subject: str = Field(index=True)
-    description: str
+    description: Optional[str]=Field(default=None)
     assigned_agent_id: Optional[str] = Field(default=None, index=True, nullable=True)
     reply_token: Optional[str] = Field(default=None, index=True, nullable=True)
 
@@ -106,8 +110,9 @@ class Dispute(SQLModel, table=True):
     """Dispute entity linked to a SupportCase."""
     id: str = Field(default_factory=generate_uuid_str, primary_key=True)
     case_id: str = Field(foreign_key="supportcase.id", index=True)
-    task_id: Optional[str] = Field(default=None, index=True, nullable=True)
-    booking_id: Optional[str] = Field(default=None, nullable=True)
+    task_id: Optional[str] = Field(default=None, foreign_key="tasks.id", index=True, nullable=True)
+    assignment_id: Optional[str] = Field(default=None, nullable=True)
+    payout_id: Optional[str] = Field(default=None, nullable=True)
 
     initiated_by: str = Field(index=True)
     reason: str

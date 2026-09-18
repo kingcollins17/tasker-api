@@ -127,6 +127,7 @@ class TaskResponse(BaseModel):
 
     id: Optional[str] = None
     customer_id: Optional[str] = None
+    assigned_provider_id: Optional[str] = None
     region_id: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None

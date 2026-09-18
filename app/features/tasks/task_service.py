@@ -294,28 +294,22 @@ class TaskService:
                 detail="Not authorized to cancel this task",
             )
         
-        # Only ASSIGNED or IN_PROGRESS tasks can be cancelled
-        if task.status not in [TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]:
+        # Check task status: COMPLETED or CANCELLED tasks cannot be cancelled
+        if task.status in [TaskStatus.COMPLETED, TaskStatus.CANCELLED]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot cancel task with status {task.status.value}. Only ASSIGNED or IN_PROGRESS tasks can be cancelled.",
+                detail=f"Cannot cancel task with status {task.status.value}.",
             )
         
-        # Get assignment details
+        # Get assignment details if available
         assignment = task.assignment
-        if not assignment:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No assignment found for this task",
-            )
-        
-        provider_id = assignment.provider_id
+        provider_id = assignment.provider_id if assignment else None
         was_in_progress = task.status == TaskStatus.IN_PROGRESS
         pin_provided = cancellation_pin is not None and cancellation_pin.strip() != ""
         pin_valid = False
         
-        # For IN_PROGRESS tasks, validate cancellation_pin
-        if was_in_progress:
+        # For IN_PROGRESS tasks with an assignment, validate cancellation_pin
+        if was_in_progress and assignment:
             if pin_provided:
                 # Check if pin matches the assignment's cancellation_pin
                 pin_valid = assignment.cancellation_pin == cancellation_pin
@@ -335,12 +329,13 @@ class TaskService:
         }
         await self.task_repo.update(task_id, task_updates)
         
-        # Update assignment status
-        assignment_updates = {
-            "status": TaskAssignmentStatus.CANCELLED,
-            "updated_at": lagos_now(),
-        }
-        await self.assignment_repo.update(assignment.id, assignment_updates)
+        # Update assignment status if assignment exists
+        if assignment:
+            assignment_updates = {
+                "status": TaskAssignmentStatus.CANCELLED,
+                "updated_at": lagos_now(),
+            }
+            await self.assignment_repo.update(assignment.id, assignment_updates)
         
         # Log event
         event_data = {
@@ -348,8 +343,9 @@ class TaskService:
             "to_status": TaskStatus.CANCELLED.value,
             "cancelled_by": CancelledBy.CUSTOMER.value,
             "user_id": current_user_id,
-            "provider_id": provider_id,
         }
+        if provider_id:
+            event_data["provider_id"] = provider_id
         
         if was_in_progress:
             event_data["pin_provided"] = str(pin_provided)
@@ -364,32 +360,33 @@ class TaskService:
             **event_data,
         )
         
-        # Send notification to provider
-        provider = await self.user_repo.get(provider_id)
-        if provider:
-            notification_title = "Task Cancelled"
-            if was_in_progress:
-                if pin_valid:
-                    notification_body = f"The customer has cancelled the task '{task.title}' by mutual agreement."
+        # Send notification to provider if assigned
+        if provider_id:
+            provider = await self.user_repo.get(provider_id)
+            if provider:
+                notification_title = "Task Cancelled"
+                if was_in_progress:
+                    if pin_valid:
+                        notification_body = f"The customer has cancelled the task '{task.title}' by mutual agreement."
+                    else:
+                        notification_body = f"The customer has cancelled the task '{task.title}' they started. This may result in a penalty charge."
                 else:
-                    notification_body = f"The customer has cancelled the task '{task.title}' they started. This may result in a penalty charge."
-            else:
-                notification_body = f"The customer has cancelled the assigned task '{task.title}'."
-            
-            await self.notification_service.notify(
-                recepients=[provider_id],
-                title=notification_title,
-                body=notification_body,
-                type=NotificationType.SYSTEM_ALERT,
-                data={
-                    "task_id": task.id,
-                    "task_title": task.title,
-                    "cancelled_by": CancelledBy.CUSTOMER.value,
-                    "agreement_pin_used": pin_valid,
-                },
-                channels=["push"],
-                expires_at=None,
-            )
+                    notification_body = f"The customer has cancelled the assigned task '{task.title}'."
+                
+                await self.notification_service.notify(
+                    recepients=[provider_id],
+                    title=notification_title,
+                    body=notification_body,
+                    type=NotificationType.SYSTEM_ALERT,
+                    data={
+                        "task_id": task.id,
+                        "task_title": task.title,
+                        "cancelled_by": CancelledBy.CUSTOMER.value,
+                        "agreement_pin_used": pin_valid,
+                    },
+                    channels=["push"],
+                    expires_at=None,
+                )
         
         # Refresh task to return updated state
         await self.task_repo.refresh(task)

@@ -1,8 +1,10 @@
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
-from sqlmodel import col, select, or_
+from fastapi import Depends
+from sqlmodel import col, select, update, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.database import get_session
 from app.core.models.support import (
     CaseAssignment,
     CaseEvent,
@@ -41,15 +43,15 @@ class CaseAssignmentService:
 
         # Mark existing active assignment as unassigned
         if previous_agent_id:
-            stmt_active = select(CaseAssignment).where(
-                col(CaseAssignment.case_id) == case.id,
-                col(CaseAssignment.unassigned_at) == None,  # noqa: E711
+            stmt_unassign = (
+                update(CaseAssignment)
+                .where(
+                    col(CaseAssignment.case_id) == case.id,
+                    col(CaseAssignment.unassigned_at) == None,  # noqa: E711
+                )
+                .values(unassigned_at=now)
             )
-            res_active = await self.session.exec(stmt_active)
-            active_assignments = res_active.all()
-            for active in active_assignments:
-                active.unassigned_at = now
-                self.session.add(active)
+            await self.session.exec(stmt_unassign)
 
         # Create new assignment
         assignment = CaseAssignment(
@@ -85,18 +87,6 @@ class CaseAssignmentService:
         await self.session.refresh(case)
         return case, assignment
 
-    async def get_assignment_history(self, case_id: str) -> List[CaseAssignment]:
-        stmt_case = select(SupportCase).where(
-            or_(
-                col(SupportCase.id) == case_id,
-                col(SupportCase.case_number) == case_id,
-            )
-        )
-        res_case = await self.session.exec(stmt_case)
-        case = res_case.first()
-        if not case:
-            return []
 
-        stmt = select(CaseAssignment).where(col(CaseAssignment.case_id) == case.id).order_by(col(CaseAssignment.assigned_at).asc())
-        res = await self.session.exec(stmt)
-        return res.all()
+def get_case_assignment_service(session: AsyncSession = Depends(get_session)) -> CaseAssignmentService:
+    return CaseAssignmentService(session)

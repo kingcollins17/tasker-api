@@ -1,30 +1,29 @@
 import random
 from datetime import timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Optional
 
-from sqlmodel import col, select, func, or_, and_
+from fastapi import Depends
+from sqlmodel import col, select, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.database import get_session
 from app.core.models.support import (
     CaseEvent,
     CaseEventType,
-    CaseMessage,
     CasePriority,
     CaseStatus,
     CaseType,
-    MessageVisibility,
     SupportCase,
 )
 from app.core.utils.datetime_helper import lagos_now
 from app.features.support.schemas import (
     SupportCaseCreate,
     SupportCaseUpdate,
-    TimelineItemResponse,
 )
 
 
 class SupportCaseService:
-    """Service handling support case lifecycle, querying, state transitions, and timeline compilation."""
+    """Service handling support case lifecycle and state transitions."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -40,7 +39,7 @@ class SupportCaseService:
         schema: SupportCaseCreate,
     ) -> SupportCase:
         now = lagos_now()
-        case_num = self. _generate_case_number()
+        case_num = self._generate_case_number()
         reply_token = f"reply-{case_num}-{random.randint(1000, 9999)}"
 
         first_response_due = now + timedelta(hours=4)
@@ -57,8 +56,8 @@ class SupportCaseService:
             customer_id=customer_id,
             provider_id=provider_id,
             task_id=schema.task_id,
-            booking_id=schema.booking_id,
-            payment_id=schema.payment_id,
+            assignment_id=schema.assignment_id,
+            payout_id=schema.payout_id,
             subject=schema.subject,
             description=schema.description,
             reply_token=reply_token,
@@ -87,67 +86,6 @@ class SupportCaseService:
         await self.session.refresh(case)
         return case
 
-    async def get_case(self, case_id: str) -> Optional[SupportCase]:
-        # Try fetching by UUID primary key or by case_number
-        stmt = select(SupportCase).where(
-            or_(
-                col(SupportCase.id) == case_id,
-                col(SupportCase.case_number) == case_id,
-            )
-        )
-        res = await self.session.exec(stmt)
-        return res.first()
-
-    async def list_cases(
-        self,
-        customer_id: Optional[str] = None,
-        provider_id: Optional[str] = None,
-        assigned_agent_id: Optional[str] = None,
-        task_id: Optional[str] = None,
-        status: Optional[CaseStatus] = None,
-        priority: Optional[CasePriority] = None,
-        type: Optional[CaseType] = None,
-        search: Optional[str] = None,
-        limit: int = 20,
-        offset: int = 0,
-    ) -> Tuple[List[SupportCase], int]:
-        stmt = select(SupportCase)
-        count_stmt = select(func.count()).select_from(SupportCase)
-
-        filters = []
-        if customer_id:
-            filters.append(col(SupportCase.customer_id) == customer_id)
-        if provider_id:
-            filters.append(col(SupportCase.provider_id) == provider_id)
-        if assigned_agent_id:
-            filters.append(col(SupportCase.assigned_agent_id) == assigned_agent_id)
-        if task_id:
-            filters.append(col(SupportCase.task_id) == task_id)
-        if status:
-            filters.append(col(SupportCase.status) == status)
-        if priority:
-            filters.append(col(SupportCase.priority) == priority)
-        if type:
-            filters.append(col(SupportCase.type) == type)
-        if search:
-            filters.append(
-                or_(
-                    col(SupportCase.subject).ilike(f"%{search}%"),
-                    col(SupportCase.case_number).ilike(f"%{search}%"),
-                )
-            )
-
-        if filters:
-            stmt = stmt.where(and_(*filters))
-            count_stmt = count_stmt.where(and_(*filters))
-
-        total_res = await self.session.exec(count_stmt)
-        total = total_res.one() or 0
-
-        stmt = stmt.order_by(col(SupportCase.updated_at).desc()).limit(limit).offset(offset)
-        res = await self.session.exec(stmt)
-        return res.all(), total
-
     async def update_case(
         self,
         case_id: str,
@@ -155,7 +93,14 @@ class SupportCaseService:
         actor_id: str,
         actor_type: str,
     ) -> Optional[SupportCase]:
-        case = await self.get_case(case_id)
+        stmt = select(SupportCase).where(
+            or_(
+                col(SupportCase.id) == case_id,
+                col(SupportCase.case_number) == case_id,
+            )
+        )
+        res = await self.session.exec(stmt)
+        case = res.first()
         if not case:
             return None
 
@@ -198,7 +143,14 @@ class SupportCaseService:
         return case
 
     async def close_case(self, case_id: str, actor_id: str, actor_type: str) -> Optional[SupportCase]:
-        case = await self.get_case(case_id)
+        stmt = select(SupportCase).where(
+            or_(
+                col(SupportCase.id) == case_id,
+                col(SupportCase.case_number) == case_id,
+            )
+        )
+        res = await self.session.exec(stmt)
+        case = res.first()
         if not case:
             return None
 
@@ -221,7 +173,14 @@ class SupportCaseService:
         return case
 
     async def reopen_case(self, case_id: str, actor_id: str, actor_type: str) -> Optional[SupportCase]:
-        case = await self.get_case(case_id)
+        stmt = select(SupportCase).where(
+            or_(
+                col(SupportCase.id) == case_id,
+                col(SupportCase.case_number) == case_id,
+            )
+        )
+        res = await self.session.exec(stmt)
+        case = res.first()
         if not case:
             return None
 
@@ -242,56 +201,6 @@ class SupportCaseService:
         await self.session.refresh(case)
         return case
 
-    async def get_timeline(
-        self,
-        case_id: str,
-        is_admin: bool = False,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[TimelineItemResponse]:
-        case = await self.get_case(case_id)
-        if not case:
-            return []
 
-        # Query events
-        stmt_events = select(CaseEvent).where(col(CaseEvent.case_id) == case.id)
-        res_events = await self.session.exec(stmt_events)
-        events = res_events.all()
-
-        # Query messages
-        stmt_msgs = select(CaseMessage).where(col(CaseMessage.case_id) == case.id)
-        if not is_admin:
-            stmt_msgs = stmt_msgs.where(col(CaseMessage.visibility) == MessageVisibility.PUBLIC)
-        res_msgs = await self.session.exec(stmt_msgs)
-        messages = res_msgs.all()
-
-        items: List[TimelineItemResponse] = []
-        for e in events:
-            items.append(
-                TimelineItemResponse(
-                    id=e.id,
-                    item_type="EVENT",
-                    timestamp=e.created_at,
-                    title=f"Event: {e.event_type.value}",
-                    description=None,
-                    actor_type=e.actor_type,
-                    actor_id=e.actor_id,
-                    metadata=e.event_metadata,
-                )
-            )
-        for m in messages:
-            items.append(
-                TimelineItemResponse(
-                    id=m.id,
-                    item_type="MESSAGE",
-                    timestamp=m.created_at,
-                    title=f"Message ({m.sender_type.value})",
-                    description=m.body,
-                    actor_type=m.sender_type.value,
-                    actor_id=m.sender_id,
-                    metadata={"channel": m.channel.value, "visibility": m.visibility.value},
-                )
-            )
-
-        items.sort(key=lambda x: x.timestamp)
-        return items[offset : offset + limit]
+def get_support_case_service(session: AsyncSession = Depends(get_session)) -> SupportCaseService:
+    return SupportCaseService(session)

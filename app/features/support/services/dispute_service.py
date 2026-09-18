@@ -2,9 +2,11 @@ import random
 from datetime import timedelta
 from typing import Optional, Tuple
 
+from fastapi import Depends
 from sqlmodel import col, select, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.database import get_session
 from app.core.models.support import (
     CaseEvent,
     CaseEventType,
@@ -49,7 +51,8 @@ class DisputeService:
             customer_id=customer_id,
             provider_id=provider_id,
             task_id=schema.task_id,
-            booking_id=schema.booking_id,
+            assignment_id=schema.assignment_id,
+            payout_id=schema.payout_id,
             subject=f"Dispute on Task #{schema.task_id[:8]}",
             description=schema.reason,
             reply_token=reply_token,
@@ -64,7 +67,8 @@ class DisputeService:
         dispute = Dispute(
             case_id=case.id,
             task_id=schema.task_id,
-            booking_id=schema.booking_id,
+            assignment_id=schema.assignment_id,
+            payout_id=schema.payout_id,
             initiated_by=user_id,
             reason=schema.reason,
             amount_disputed=schema.amount_disputed,
@@ -92,17 +96,6 @@ class DisputeService:
         await self.session.refresh(case)
         await self.session.refresh(dispute)
         return case, dispute
-
-    async def get_dispute(self, case_id: str) -> Optional[Dispute]:
-        # Case ID or direct dispute ID query
-        stmt = select(Dispute).where(
-            or_(
-                col(Dispute.case_id) == case_id,
-                col(Dispute.id) == case_id,
-            )
-        )
-        res = await self.session.exec(stmt)
-        return res.first()
 
     async def escalate_dispute(self, case_id: str, agent_id: str) -> Optional[SupportCase]:
         stmt = select(SupportCase).where(
@@ -134,3 +127,7 @@ class DisputeService:
         await self.session.commit()
         await self.session.refresh(case)
         return case
+
+
+def get_dispute_service(session: AsyncSession = Depends(get_session)) -> DisputeService:
+    return DisputeService(session)

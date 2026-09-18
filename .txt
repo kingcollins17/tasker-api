@@ -66,67 +66,9 @@ wscat -c "ws://127.0.0.1:8000/api/v1/notifications/ws?token=eyJhbGciOiJIUzI1NiIs
 JWT TOKENS
 baker@yopmail.com - eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA4Y2Q2NmZlLTQ0NjEtNDI3OC05NmYzLTZhMTZmOTk3ZTE0MyIsImVtYWlsIjoiYmFrZXJAeW9wbWFpbC5jb20iLCJpc19hY3RpdmUiOnRydWUsImV4cCI6MTc5MDI1ODAyOH0.BL3sUHKVZa_D9jAXYJRxx4NmTXMiOk2q6xkrtcYbUUo
 
-//
 {
-  "data": [
-    {
-      "id": "s202b222-1111-2222-3333-444444444201",
-      "name": "Standard Home Cleaning",
-      "image_url": null,
-      "take_rate": 0.15,
-      "is_active": true,
-      "category_id": "c101a111-2222-3333-4444-555555555502",
-      "category": {
-        "id": "c101a111-2222-3333-4444-555555555502",
-        "name": "Cleaning & Housekeeping",
-        "description": "Professional residential, commercial, and deep cleaning services.",
-        "image_url": null,
-        "is_active": true,
-        "created_at": "2026-08-17T09:50:19.977697",
-        "updated_at": "2026-08-17T09:50:19.977697"
-      },
-      "created_at": "2026-08-17T09:50:19.977697",
-      "updated_at": "2026-08-17T09:50:19.977697"
-    },
-    {
-      "id": "s202b222-1111-2222-3333-444444444203",
-      "name": "Office & Commercial Cleaning",
-      "image_url": null,
-      "take_rate": 0.15,
-      "is_active": true,
-      "category_id": "c101a111-2222-3333-4444-555555555502",
-      "category": {
-        "id": "c101a111-2222-3333-4444-555555555502",
-        "name": "Cleaning & Housekeeping",
-        "description": "Professional residential, commercial, and deep cleaning services.",
-        "image_url": null,
-        "is_active": true,
-        "created_at": "2026-08-17T09:50:19.977697",
-        "updated_at": "2026-08-17T09:50:19.977697"
-      },
-      "created_at": "2026-08-17T09:50:19.977697",
-      "updated_at": "2026-08-17T09:50:19.977697"
-    },
-    {
-      "id": "s202b222-1111-2222-3333-444444444204",
-      "name": "Carpet & Upholstery Cleaning",
-      "image_url": null,
-      "take_rate": 0.15,
-      "is_active": true,
-      "category_id": "c101a111-2222-3333-4444-555555555502",
-      "category": {
-        "id": "c101a111-2222-3333-4444-555555555502",
-        "name": "Cleaning & Housekeeping",
-        "description": "Professional residential, commercial, and deep cleaning services.",
-        "image_url": null,
-        "is_active": true,
-        "created_at": "2026-08-17T09:50:19.977697",
-        "updated_at": "2026-08-17T09:50:19.977697"
-      },
-      "created_at": "2026-08-17T09:50:19.977697",
-      "updated_at": "2026-08-17T09:50:19.977697"
-    }
-  ],
-  "detail": "Top services retrieved successfully.",
-  "status_code": 200
+  "user_id": "3ac5f266-0677-43fc-b5d2-6810bda53803",
+  "scheduled_at": "2026-09-24 11:20:00",
+  "meeting_link": "https://meet.google.com/seirjhoisdf",
+  "notes": "Come prepared"
 }

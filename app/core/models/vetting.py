@@ -11,7 +11,6 @@ from .users import VerificationStatus
 class InterviewStatus(str, enum.Enum):
     """Status for provider interview sessions."""
     SCHEDULED = "SCHEDULED"
-    COMPLETED = "COMPLETED"
     PASSED = "PASSED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
