@@ -78,6 +78,96 @@ async def _execute_matching_engine_async(
         return result.matched
 
 
+async def _execute_batch_ping_async(
+    session_id: str,
+    task_id: str,
+    candidate_ids: List[str],
+    batch_index: int,
+    is_last_batch: bool,
+    seq_start: int,
+    ping_duration: int = 180,
+) -> bool:
+    """Executes a single batch ping for session_id asynchronously after its scheduled delay."""
+    async with celery_session_factory() as session:
+        task = await session.get(Task, task_id)
+        dispatch_session = await session.get(DispatchSession, session_id)
+
+        if not task or task.status != TaskStatus.SEARCHING or not dispatch_session or dispatch_session.status != DispatchSessionStatus.RUNNING:
+            logger.info(
+                f"_execute_batch_ping_async: task {task_id} or session {session_id} is no longer SEARCHING/RUNNING before batch {batch_index + 1}. Aborting."
+            )
+            return False
+
+        from app.core.services.matching_engine import CandidatePinger, ScoredCandidate
+        from app.features.notifications.notification_service import get_notification_service_manual
+
+        pinger = CandidatePinger(
+            session=session,
+            notification_service=get_notification_service_manual(session),
+            ping_duration=ping_duration,
+        )
+
+        await pinger.recover_stale_attempts(task)
+
+        await session.refresh(task)
+        if task.status != TaskStatus.SEARCHING or dispatch_session.status != DispatchSessionStatus.RUNNING:
+            return False
+
+        dummy_candidates = [
+            ScoredCandidate(user_id=cid, distance_km=0.0, score=100.0)
+            for cid in candidate_ids
+        ]
+
+        attempts = await pinger.ping_batch(
+            batch=dummy_candidates,
+            task=task,
+            dispatch_session_id=session_id,
+            seq_start=seq_start,
+        )
+
+        await session.commit()
+        logger.info(
+            f"_execute_batch_ping_async: batch {batch_index + 1} pinged ({len(attempts)} attempt(s)) for task {task_id}"
+        )
+
+        if is_last_batch:
+            # pyrefly: ignore [not-callable]
+            check_session_exhaustion.apply_async(
+                kwargs={
+                    "session_id": session_id,
+                    "task_id": task_id,
+                },
+                countdown=ping_duration,
+            )
+
+        return True
+
+
+async def _check_session_exhaustion_async(session_id: str, task_id: str) -> None:
+    """Checks if dispatch session exhausted candidate pool after final batch ping window expires."""
+    from app.features.tasks.dispatch_service import DispatchService
+
+    async with celery_session_factory() as session:
+        task = await session.get(Task, task_id)
+        dispatch_session = await session.get(DispatchSession, session_id)
+
+        if task and task.status == TaskStatus.SEARCHING and dispatch_session and dispatch_session.status == DispatchSessionStatus.RUNNING:
+            logger.info(
+                f"_check_session_exhaustion_async: task {task_id} unassigned after final batch. Marking session {session_id} exhausted."
+            )
+            dispatch_service = DispatchService(
+                session=session,
+                system_logger=None,  # type: ignore
+                notification_service=get_notification_service_manual(session),
+                credibility_service=get_credibility_service_manual(session),
+            )
+            await dispatch_service.handle_no_match(
+                task_id=task_id,
+                session_id=session_id,
+                reason="ALL_DECLINED_OR_TIMED_OUT",
+            )
+
+
 # ---------------------------------------------------------------------------
 # Public Celery tasks
 # ---------------------------------------------------------------------------
@@ -196,3 +286,41 @@ def execute_matching_engine(
             excluded_provider_ids=excluded_provider_ids,
         )
     )
+
+
+@shared_task(name="tasks.execute_batch_ping")
+def execute_batch_ping(
+    session_id: str,
+    task_id: str,
+    candidate_ids: List[str],
+    batch_index: int,
+    is_last_batch: bool,
+    seq_start: int,
+    ping_duration: int = 180,
+):
+    """Celery worker entrypoint to execute a single candidate batch ping."""
+    logger.info(f"execute_batch_ping: batch {batch_index + 1} running for session {session_id}")
+    return run_async(
+        _execute_batch_ping_async(
+            session_id=session_id,
+            task_id=task_id,
+            candidate_ids=candidate_ids,
+            batch_index=batch_index,
+            is_last_batch=is_last_batch,
+            seq_start=seq_start,
+            ping_duration=ping_duration,
+        )
+    )
+
+
+@shared_task(name="tasks.check_session_exhaustion")
+def check_session_exhaustion(session_id: str, task_id: str):
+    """Celery worker entrypoint to check if session exhausted candidate pool."""
+    logger.info(f"check_session_exhaustion: checking session {session_id} for task {task_id}")
+    return run_async(
+        _check_session_exhaustion_async(
+            session_id=session_id,
+            task_id=task_id,
+        )
+    )
+

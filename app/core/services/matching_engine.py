@@ -831,111 +831,41 @@ class MatchingEngine:
         ]
 
         _debug_log(
-            f"MatchingEngine.run found {len(candidates)} candidate(s) split into {len(batches)} batch(es)"
+            f"MatchingEngine.run found {len(candidates)} candidate(s) split into {len(batches)} batch(es). Enqueuing asynchronous batch pings."
         )
 
-        total_attempts_created = 0
-        matched_any = False
+        from app.features.tasks.celery.dispatch import execute_batch_ping
+
         seq_start = 1
-
         for batch_index, batch in enumerate(batches):
-            task_current = await self.session.get(Task, task.id)
-            session_current = await self.session.get(DispatchSession, self.session_id)
+            is_last = (batch_index == len(batches) - 1)
+            candidate_ids = [c.user_id for c in batch]
+            countdown = batch_index * self.ping_duration
 
-            if (
-                not task_current
-                or task_current.status != TaskStatus.SEARCHING
-                or not session_current
-                or session_current.status != DispatchSessionStatus.RUNNING
-            ):
-                _debug_log(
-                    f"MatchingEngine.run task or session no longer SEARCHING/RUNNING before batch {batch_index + 1}. Halting."
-                )
-                if task_current and task_current.status == TaskStatus.ASSIGNED:
-                    matched_any = True
-                break
-
-            attempts = await self.pinger.ping_batch(
-                batch=batch,
-                task=task_current,
-                dispatch_session_id=dispatch_session.id,
-                seq_start=seq_start,
-            )
-
-            if not attempts:
-                _debug_log(f"MatchingEngine.run ALL_RACE_LOST for batch {batch_index + 1}")
-                continue
-
-            seq_start += len(attempts)
-            total_attempts_created += len(attempts)
-
-            if batch_index < len(batches) - 1:
-                _debug_log(
-                    f"MatchingEngine.run batch {batch_index + 1} pinged ({len(attempts)} attempt(s)). Waiting {self.ping_duration}s for response before next batch."
-                )
-                sleep_elapsed = 0.0
-                check_interval = 2.0
-                while sleep_elapsed < self.ping_duration:
-                    await asyncio.sleep(check_interval)
-                    sleep_elapsed += check_interval
-
-                    task_check = await self.session.get(Task, task.id)
-                    session_check = await self.session.get(DispatchSession, self.session_id)
-                    if (
-                        not task_check
-                        or task_check.status != TaskStatus.SEARCHING
-                        or not session_check
-                        or session_check.status != DispatchSessionStatus.RUNNING
-                    ):
-                        if task_check and task_check.status == TaskStatus.ASSIGNED:
-                            matched_any = True
-                        break
-
-                if matched_any:
-                    break
-
-                await self.pinger.recover_stale_attempts(task)
-
-                task_post = await self.session.get(Task, task.id)
-                session_post = await self.session.get(DispatchSession, self.session_id)
-                if (
-                    not task_post
-                    or task_post.status != TaskStatus.SEARCHING
-                    or not session_post
-                    or session_post.status != DispatchSessionStatus.RUNNING
-                ):
-                    if task_post and task_post.status == TaskStatus.ASSIGNED:
-                        matched_any = True
-                    break
-
-        final_task = await self.session.get(Task, task.id)
-        if final_task and final_task.status == TaskStatus.ASSIGNED:
-            matched_any = True
-
-        if matched_any:
-            res_final = MatchingResult(
-                matched=True,
-                candidates_count=len(candidates),
-                attempts_created=total_attempts_created,
-            )
-            _debug_log(f"MatchingEngine.run COMPLETED MATCHED for session {self.session_id}", res_final)
-            return res_final
-        elif total_attempts_created > 0:
-            res_final = MatchingResult(
-                matched=False,
-                candidates_count=len(candidates),
-                attempts_created=total_attempts_created,
-                reason="ALL_DECLINED_OR_TIMED_OUT",
-            )
             _debug_log(
-                f"MatchingEngine.run COMPLETED UNMATCHED (ALL_DECLINED_OR_TIMED_OUT) for session {self.session_id}",
-                res_final,
+                f"MatchingEngine.run enqueuing batch {batch_index + 1}/{len(batches)} ({len(candidate_ids)} candidate(s)) with countdown {countdown}s"
             )
-            return res_final
-        else:
-            return MatchingResult(
-                matched=False,
-                candidates_count=len(candidates),
-                attempts_created=0,
-                reason="ALL_RACE_LOST",
+
+            # pyrefly: ignore [not-callable]
+            execute_batch_ping.apply_async(
+                kwargs={
+                    "session_id": self.session_id,
+                    "task_id": task.id,
+                    "candidate_ids": candidate_ids,
+                    "batch_index": batch_index,
+                    "is_last_batch": is_last,
+                    "seq_start": seq_start,
+                    "ping_duration": self.ping_duration,
+                },
+                countdown=countdown,
             )
+
+            seq_start += len(candidate_ids)
+
+        res_final = MatchingResult(
+            matched=True,
+            candidates_count=len(candidates),
+            attempts_created=len(candidates),
+        )
+        _debug_log(f"MatchingEngine.run COMPLETED ENQUEUED for session {self.session_id}", res_final)
+        return res_final
