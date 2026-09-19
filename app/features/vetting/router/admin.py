@@ -13,6 +13,7 @@ from app.core.models.admins import AdminUser
 from app.core.models.notifications import NotificationType
 from app.core.models.users import KYCDocument, KYCStatus, VerificationStatus
 from app.core.models.vetting import InterviewStatus, ProviderGuarantor, ProviderInterview
+from app.core.utils.datetime_helper import to_lagos_naive
 from app.features.notifications.notification_service import (
     NotificationService,
     get_notification_service,
@@ -370,17 +371,17 @@ async def list_interviews(
             )
 
         if scheduled_from:
-            stmt = stmt.where(col(ProviderInterview.scheduled_at) >= scheduled_from)
+            stmt = stmt.where(col(ProviderInterview.scheduled_at) >= to_lagos_naive(scheduled_from))
         if scheduled_to:
-            stmt = stmt.where(col(ProviderInterview.scheduled_at) <= scheduled_to)
+            stmt = stmt.where(col(ProviderInterview.scheduled_at) <= to_lagos_naive(scheduled_to))
         if passed_from:
-            stmt = stmt.where(col(ProviderInterview.passed_at) >= passed_from)
+            stmt = stmt.where(col(ProviderInterview.passed_at) >= to_lagos_naive(passed_from))
         if passed_to:
-            stmt = stmt.where(col(ProviderInterview.passed_at) <= passed_to)
+            stmt = stmt.where(col(ProviderInterview.passed_at) <= to_lagos_naive(passed_to))
         if created_from:
-            stmt = stmt.where(col(ProviderInterview.created_at) >= created_from)
+            stmt = stmt.where(col(ProviderInterview.created_at) >= to_lagos_naive(created_from))
         if created_to:
-            stmt = stmt.where(col(ProviderInterview.created_at) <= created_to)
+            stmt = stmt.where(col(ProviderInterview.created_at) <= to_lagos_naive(created_to))
 
         valid_sort_fields = {"scheduled_at", "created_at", "passed_at", "status"}
         actual_sort = sort_by if sort_by in valid_sort_fields else "scheduled_at"
@@ -470,13 +471,13 @@ async def list_guarantors(
             )
 
         if created_from:
-            stmt = stmt.where(col(ProviderGuarantor.created_at) >= created_from)
+            stmt = stmt.where(col(ProviderGuarantor.created_at) >= to_lagos_naive(created_from))
         if created_to:
-            stmt = stmt.where(col(ProviderGuarantor.created_at) <= created_to)
+            stmt = stmt.where(col(ProviderGuarantor.created_at) <= to_lagos_naive(created_to))
         if verified_from:
-            stmt = stmt.where(col(ProviderGuarantor.verified_at) >= verified_from)
+            stmt = stmt.where(col(ProviderGuarantor.verified_at) >= to_lagos_naive(verified_from))
         if verified_to:
-            stmt = stmt.where(col(ProviderGuarantor.verified_at) <= verified_to)
+            stmt = stmt.where(col(ProviderGuarantor.verified_at) <= to_lagos_naive(verified_to))
 
         valid_sort_fields = {"created_at", "verified_at", "guarantor_name", "status"}
         actual_sort = sort_by if sort_by in valid_sort_fields else "created_at"
@@ -571,17 +572,17 @@ async def list_kyc_documents(
             )
 
         if submitted_from:
-            stmt = stmt.where(col(KYCDocument.submitted_at) >= submitted_from)
+            stmt = stmt.where(col(KYCDocument.submitted_at) >= to_lagos_naive(submitted_from))
         if submitted_to:
-            stmt = stmt.where(col(KYCDocument.submitted_at) <= submitted_to)
+            stmt = stmt.where(col(KYCDocument.submitted_at) <= to_lagos_naive(submitted_to))
         if reviewed_from:
-            stmt = stmt.where(col(KYCDocument.reviewed_at) >= reviewed_from)
+            stmt = stmt.where(col(KYCDocument.reviewed_at) >= to_lagos_naive(reviewed_from))
         if reviewed_to:
-            stmt = stmt.where(col(KYCDocument.reviewed_at) <= reviewed_to)
+            stmt = stmt.where(col(KYCDocument.reviewed_at) <= to_lagos_naive(reviewed_to))
         if created_from:
-            stmt = stmt.where(col(KYCDocument.created_at) >= created_from)
+            stmt = stmt.where(col(KYCDocument.created_at) >= to_lagos_naive(created_from))
         if created_to:
-            stmt = stmt.where(col(KYCDocument.created_at) <= created_to)
+            stmt = stmt.where(col(KYCDocument.created_at) <= to_lagos_naive(created_to))
 
         valid_sort_fields = {"submitted_at", "reviewed_at", "created_at", "status", "id_type"}
         actual_sort = sort_by if sort_by in valid_sort_fields else "submitted_at"

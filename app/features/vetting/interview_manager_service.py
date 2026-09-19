@@ -12,7 +12,7 @@ from app.core.models.users import (
 )
 from app.core.models.vetting import InterviewStatus, ProviderInterview
 from app.core.repository import GetRepository, QueryOptions, Repository
-from app.core.utils.datetime_helper import lagos_now
+from app.core.utils.datetime_helper import lagos_now, to_lagos_naive
 
 
 class InterviewManagerService:
@@ -67,7 +67,8 @@ class InterviewManagerService:
         interview_data = ProviderInterview(
             user_id=user_id,
             admin_id=admin_id,
-            scheduled_at=scheduled_at,
+            # pyrefly: ignore [bad-argument-type]
+            scheduled_at=to_lagos_naive(scheduled_at),
             meeting_link=meeting_link,
             status=InterviewStatus.SCHEDULED,
             notes=notes,
@@ -114,7 +115,7 @@ class InterviewManagerService:
         if meeting_link is not None:
             updates["meeting_link"] = meeting_link
         if scheduled_at is not None:
-            updates["scheduled_at"] = scheduled_at
+            updates["scheduled_at"] = to_lagos_naive(scheduled_at)
         if admin_id is not None:
             updates["admin_id"] = admin_id
 
