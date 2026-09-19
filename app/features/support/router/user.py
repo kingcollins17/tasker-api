@@ -8,6 +8,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from sqlalchemy.orm import aliased
 from sqlmodel import and_, col, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -19,16 +20,18 @@ from app.core.models.support import (
     CaseAttachment,
     CaseEvent,
     CaseMessage,
+    CaseStatus,
     MessageSenderType,
     MessageVisibility,
     SupportCase,
 )
-from app.core.models.users import UserType
+from app.core.models.users import CustomerProfile, ProviderProfile, User, UserType
 from app.core.services.storage import StorageService, get_storage_service
 from app.features.support.schemas import (
     CaseAttachmentResponse,
     CaseMessageCreate,
     CaseMessageResponse,
+    InitiatorResponse,
     SupportCaseCreate,
     SupportCaseResponse,
     TimelineItemResponse,
@@ -44,6 +47,30 @@ from app.features.support.services.message_service import (
 from app.features.users.schemas import UserResponse
 
 router = APIRouter()
+
+InitiatorUser = aliased(User, name="initiator_user")
+InitiatorCustomerProfile = aliased(CustomerProfile, name="initiator_customer_profile")
+InitiatorProviderProfile = aliased(ProviderProfile, name="initiator_provider_profile")
+
+
+def _map_case_with_initiator(
+    case_obj: SupportCase,
+    init_user_obj: Optional[User],
+    init_cust_prof: Optional[CustomerProfile],
+    init_prov_prof: Optional[ProviderProfile],
+) -> SupportCaseResponse:
+    resp = SupportCaseResponse.model_validate(case_obj)
+    if init_user_obj:
+        first_name = (init_cust_prof.first_name if init_cust_prof else None) or (init_prov_prof.first_name if init_prov_prof else None)
+        last_name = (init_cust_prof.last_name if init_cust_prof else None) or (init_prov_prof.last_name if init_prov_prof else None)
+        resp.initiator = InitiatorResponse(
+            id=init_user_obj.id,
+            first_name=first_name,
+            last_name=last_name,
+            email=init_user_obj.email,
+            phone_number=init_user_obj.phone_number,
+        )
+    return resp
 
 
 @router.post("/cases", response_model=BaseAPIResponse[SupportCaseResponse], status_code=status.HTTP_201_CREATED)
@@ -77,6 +104,7 @@ async def create_support_case(
 async def list_user_cases(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
+    status_filter: Optional[List[str]] = Query(default=None, alias="status", description="Filter cases by status category ('open', 'closed') or list of CaseStatus values"),
     task_id: Optional[str] = Query(default=None),
     current_user: UserResponse = Depends(GetCurrentUser()),
     session: AsyncSession = Depends(get_session),
@@ -87,7 +115,14 @@ async def list_user_cases(
         provider_id = current_user.id if not is_customer else None
 
         offset = (page - 1) * per_page
-        stmt = select(SupportCase)
+        init_user_id = func.coalesce(col(SupportCase.initiated_by), col(SupportCase.customer_id), col(SupportCase.provider_id))
+
+        stmt = (
+            select(SupportCase, InitiatorUser, InitiatorCustomerProfile, InitiatorProviderProfile)
+            .outerjoin(InitiatorUser, init_user_id == col(InitiatorUser.id))
+            .outerjoin(InitiatorCustomerProfile, col(InitiatorUser.id) == col(InitiatorCustomerProfile.user_id))
+            .outerjoin(InitiatorProviderProfile, col(InitiatorUser.id) == col(InitiatorProviderProfile.user_id))
+        )
         count_stmt = select(func.count()).select_from(SupportCase)
 
         filters = []
@@ -97,6 +132,45 @@ async def list_user_cases(
             filters.append(col(SupportCase.provider_id) == provider_id)
         if task_id:
             filters.append(col(SupportCase.task_id) == task_id)
+        if status_filter:
+            expanded_items = []
+            for item in status_filter:
+                if "," in item:
+                    expanded_items.extend([s.strip() for s in item.split(",") if s.strip()])
+                elif item.strip():
+                    expanded_items.append(item.strip())
+
+            target_statuses = set()
+            open_statuses = {
+                CaseStatus.OPEN,
+                CaseStatus.IN_PROGRESS,
+                CaseStatus.WAITING_FOR_CUSTOMER,
+                CaseStatus.WAITING_FOR_PROVIDER,
+                CaseStatus.WAITING_FOR_INTERNAL,
+            }
+            closed_statuses = {
+                CaseStatus.RESOLVED,
+                CaseStatus.CLOSED,
+                CaseStatus.AUTO_CLOSED,
+            }
+
+            for item in expanded_items:
+                item_lower = item.lower()
+                if item_lower == "open":
+                    target_statuses.update(open_statuses)
+                elif item_lower == "closed":
+                    target_statuses.update(closed_statuses)
+                else:
+                    try:
+                        target_statuses.add(CaseStatus(item.upper()))
+                    except ValueError:
+                        try:
+                            target_statuses.add(CaseStatus(item))
+                        except ValueError:
+                            pass
+
+            if target_statuses:
+                filters.append(col(SupportCase.status).in_(list(target_statuses)))
 
         if filters:
             stmt = stmt.where(and_(*filters))
@@ -107,9 +181,9 @@ async def list_user_cases(
 
         stmt = stmt.order_by(col(SupportCase.updated_at).desc()).limit(per_page).offset(offset)
         res = await session.exec(stmt)
-        cases = res.all()
+        rows = res.all()
 
-        items = [SupportCaseResponse.model_validate(c) for c in cases]
+        items = [_map_case_with_initiator(c, u, cp, pp) for c, u, cp, pp in rows]
         return BaseAPIResponse.success_response(
             data=PaginatedData(items=items, total=total, page=page, per_page=per_page),
             message="Support cases retrieved successfully",
@@ -131,21 +205,35 @@ async def get_user_case(
     session: AsyncSession = Depends(get_session),
 ):
     try:
-        stmt = select(SupportCase).where(
-            or_(
-                col(SupportCase.id) == case_id,
-                col(SupportCase.case_number) == case_id,
+        init_user_id = func.coalesce(col(SupportCase.initiated_by), col(SupportCase.customer_id), col(SupportCase.provider_id))
+
+        stmt = (
+            select(SupportCase, InitiatorUser, InitiatorCustomerProfile, InitiatorProviderProfile)
+            .outerjoin(InitiatorUser, init_user_id == col(InitiatorUser.id))
+            .outerjoin(InitiatorCustomerProfile, col(InitiatorUser.id) == col(InitiatorCustomerProfile.user_id))
+            .outerjoin(InitiatorProviderProfile, col(InitiatorUser.id) == col(InitiatorProviderProfile.user_id))
+            .where(
+                or_(
+                    col(SupportCase.id) == case_id,
+                    col(SupportCase.case_number) == case_id,
+                )
             )
         )
         res = await session.exec(stmt)
-        case = res.first()
-        if not case or (case.customer_id != current_user.id and case.provider_id != current_user.id):
+        row = res.first()
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Support case not found",
+            )
+        case_obj, init_user_obj, init_cust_prof, init_prov_prof = row
+        if case_obj.customer_id != current_user.id and case_obj.provider_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Support case not found",
             )
         return BaseAPIResponse.success_response(
-            data=SupportCaseResponse.model_validate(case),
+            data=_map_case_with_initiator(case_obj, init_user_obj, init_cust_prof, init_prov_prof),
             message="Support case retrieved successfully",
         )
     except HTTPException:

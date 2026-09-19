@@ -55,6 +55,7 @@ class SupportCaseService:
             priority=schema.priority,
             customer_id=customer_id,
             provider_id=provider_id,
+            initiated_by=user_id,
             task_id=schema.task_id,
             assignment_id=schema.assignment_id,
             payout_id=schema.payout_id,

@@ -22,6 +22,8 @@ async def main():
             "ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS 'PAYMENT_REQUESTED';",
             "ALTER TABLE admins ADD COLUMN IF NOT EXISTS region_id VARCHAR REFERENCES regions(id);",
             "CREATE INDEX IF NOT EXISTS ix_admins_region_id ON admins (region_id);",
+            "ALTER TABLE supportcase ADD COLUMN IF NOT EXISTS initiated_by VARCHAR REFERENCES users(id);",
+            "CREATE INDEX IF NOT EXISTS ix_supportcase_initiated_by ON supportcase (initiated_by);",
 
         ]:
             try:

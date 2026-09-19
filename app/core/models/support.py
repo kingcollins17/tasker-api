@@ -87,6 +87,7 @@ class SupportCase(SQLModel, table=True):
 
     customer_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True)
     provider_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True)
+    initiated_by: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True)
     task_id: Optional[str] = Field(default=None, foreign_key="tasks.id", index=True, nullable=True)
     assignment_id: Optional[str] = Field(default=None, nullable=True)
     payout_id: Optional[str] = Field(default=None, nullable=True)

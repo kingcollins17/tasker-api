@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.core.models.support import (
     CaseType,
@@ -30,7 +30,19 @@ class SupportCaseUpdate(BaseModel):
     description: Optional[str] = None
 
 
+class InitiatorResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+
+
 class SupportCaseResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     case_number: str
     type: CaseType
@@ -38,6 +50,8 @@ class SupportCaseResponse(BaseModel):
     priority: CasePriority
     customer_id: Optional[str] = None
     provider_id: Optional[str] = None
+    initiated_by: Optional[str] = None
+    initiator: Optional[InitiatorResponse] = None
     task_id: Optional[str] = None
     assignment_id: Optional[str] = None
     payout_id: Optional[str] = None
@@ -80,6 +94,8 @@ class InternalNoteCreate(BaseModel):
 
 
 class CaseMessageResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     case_id: str
     sender_type: MessageSenderType
@@ -101,6 +117,8 @@ class DisputeCreate(BaseModel):
 
 
 class DisputeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     case_id: str
     task_id: Optional[str] = None
@@ -125,6 +143,8 @@ class CaseResolutionCreate(BaseModel):
 
 
 class CaseAttachmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     case_id: str
     message_id: Optional[str] = None
@@ -137,6 +157,8 @@ class CaseAttachmentResponse(BaseModel):
 
 
 class TimelineItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     item_type: str  # "EVENT" or "MESSAGE"
     timestamp: datetime
@@ -148,6 +170,8 @@ class TimelineItemResponse(BaseModel):
 
 
 class CaseAuditLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     case_id: str
     event_type: CaseEventType

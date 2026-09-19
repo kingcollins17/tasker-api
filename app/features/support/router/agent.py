@@ -24,7 +24,7 @@ from app.core.models.support import (
     SupportCase,
 )
 from app.core.models.tasks import Task
-from app.core.models.users import User
+from app.core.models.users import CustomerProfile, ProviderProfile, User
 from app.core.services.storage import StorageService, get_storage_service
 from app.features.support.celery import send_support_email_task
 from app.features.support.schemas import (
@@ -34,6 +34,7 @@ from app.features.support.schemas import (
     CaseMessageCreate,
     CaseMessageResponse,
     CaseResolutionCreate,
+    InitiatorResponse,
     InternalNoteCreate,
     SupportCaseDetailResponse,
     SupportCaseResponse,
@@ -65,6 +66,29 @@ router = APIRouter()
 
 CustomerUser = aliased(User, name="customer_user")
 ProviderUser = aliased(User, name="provider_user")
+InitiatorUser = aliased(User, name="initiator_user")
+InitiatorCustomerProfile = aliased(CustomerProfile, name="initiator_customer_profile")
+InitiatorProviderProfile = aliased(ProviderProfile, name="initiator_provider_profile")
+
+
+def _map_case_with_initiator(
+    case_obj: SupportCase,
+    init_user_obj: Optional[User],
+    init_cust_prof: Optional[CustomerProfile],
+    init_prov_prof: Optional[ProviderProfile],
+) -> SupportCaseResponse:
+    resp = SupportCaseResponse.model_validate(case_obj)
+    if init_user_obj:
+        first_name = (init_cust_prof.first_name if init_cust_prof else None) or (init_prov_prof.first_name if init_prov_prof else None)
+        last_name = (init_cust_prof.last_name if init_cust_prof else None) or (init_prov_prof.last_name if init_prov_prof else None)
+        resp.initiator = InitiatorResponse(
+            id=init_user_obj.id,
+            first_name=first_name,
+            last_name=last_name,
+            email=init_user_obj.email,
+            phone_number=init_user_obj.phone_number,
+        )
+    return resp
 
 
 @router.get("", response_model=BaseAPIResponse[PaginatedData[SupportCaseResponse]])
@@ -72,7 +96,7 @@ ProviderUser = aliased(User, name="provider_user")
 async def admin_list_cases(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
-    status_filter: Optional[CaseStatus] = Query(default=None, alias="status"),
+    status_filter: Optional[List[CaseStatus]] = Query(default=None, alias="status"),
     priority: Optional[CasePriority] = Query(default=None),
     type: Optional[CaseType] = Query(default=None),
     assigned_agent_id: Optional[str] = Query(default=None),
@@ -86,7 +110,14 @@ async def admin_list_cases(
     """Lists all support cases with extensive filtering and pagination."""
     try:
         offset = (page - 1) * per_page
-        stmt = select(SupportCase)
+        init_user_id = func.coalesce(col(SupportCase.initiated_by), col(SupportCase.customer_id), col(SupportCase.provider_id))
+
+        stmt = (
+            select(SupportCase, InitiatorUser, InitiatorCustomerProfile, InitiatorProviderProfile)
+            .outerjoin(InitiatorUser, init_user_id == col(InitiatorUser.id))
+            .outerjoin(InitiatorCustomerProfile, col(InitiatorUser.id) == col(InitiatorCustomerProfile.user_id))
+            .outerjoin(InitiatorProviderProfile, col(InitiatorUser.id) == col(InitiatorProviderProfile.user_id))
+        )
         count_stmt = select(func.count()).select_from(SupportCase)
 
         filters = []
@@ -99,7 +130,7 @@ async def admin_list_cases(
         if task_id:
             filters.append(col(SupportCase.task_id) == task_id)
         if status_filter:
-            filters.append(col(SupportCase.status) == status_filter)
+            filters.append(col(SupportCase.status).in_(status_filter))
         if priority:
             filters.append(col(SupportCase.priority) == priority)
         if type:
@@ -121,9 +152,9 @@ async def admin_list_cases(
 
         stmt = stmt.order_by(col(SupportCase.updated_at).desc()).limit(per_page).offset(offset)
         res = await session.exec(stmt)
-        cases = res.all()
+        rows = res.all()
 
-        items = [SupportCaseResponse.model_validate(c) for c in cases]
+        items = [_map_case_with_initiator(c, u, cp, pp) for c, u, cp, pp in rows]
         return BaseAPIResponse.success_response(
             data=PaginatedData(items=items, total=total, page=page, per_page=per_page),
             message="Support cases retrieved successfully",
@@ -143,7 +174,7 @@ async def admin_list_cases(
 async def admin_list_assigned_cases(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
-    status_filter: Optional[CaseStatus] = Query(default=None, alias="status"),
+    status_filter: Optional[List[CaseStatus]] = Query(default=None, alias="status"),
     priority: Optional[CasePriority] = Query(default=None),
     type: Optional[CaseType] = Query(default=None),
     search: Optional[str] = Query(default=None),
@@ -153,12 +184,20 @@ async def admin_list_assigned_cases(
     """Lists support tickets assigned to the requesting admin."""
     try:
         offset = (page - 1) * per_page
-        stmt = select(SupportCase).where(col(SupportCase.assigned_agent_id) == admin.id)
+        init_user_id = func.coalesce(col(SupportCase.initiated_by), col(SupportCase.customer_id), col(SupportCase.provider_id))
+
+        stmt = (
+            select(SupportCase, InitiatorUser, InitiatorCustomerProfile, InitiatorProviderProfile)
+            .outerjoin(InitiatorUser, init_user_id == col(InitiatorUser.id))
+            .outerjoin(InitiatorCustomerProfile, col(InitiatorUser.id) == col(InitiatorCustomerProfile.user_id))
+            .outerjoin(InitiatorProviderProfile, col(InitiatorUser.id) == col(InitiatorProviderProfile.user_id))
+            .where(col(SupportCase.assigned_agent_id) == admin.id)
+        )
         count_stmt = select(func.count()).select_from(SupportCase).where(col(SupportCase.assigned_agent_id) == admin.id)
 
         filters = []
         if status_filter:
-            filters.append(col(SupportCase.status) == status_filter)
+            filters.append(col(SupportCase.status).in_(status_filter))
         if priority:
             filters.append(col(SupportCase.priority) == priority)
         if type:
@@ -180,9 +219,9 @@ async def admin_list_assigned_cases(
 
         stmt = stmt.order_by(col(SupportCase.updated_at).desc()).limit(per_page).offset(offset)
         res = await session.exec(stmt)
-        cases = res.all()
+        rows = res.all()
 
-        items = [SupportCaseResponse.model_validate(c) for c in cases]
+        items = [_map_case_with_initiator(c, u, cp, pp) for c, u, cp, pp in rows]
         return BaseAPIResponse.success_response(
             data=PaginatedData(items=items, total=total, page=page, per_page=per_page),
             message="Assigned support cases retrieved successfully",
@@ -203,14 +242,29 @@ async def admin_get_case(
     admin: AdminUser = Depends(GetCurrentAdmin()),
     session: AsyncSession = Depends(get_session),
 ):
-    """Retrieves a single support case with stitched related entities (task, customer, provider, assignment, payout) via LEFT JOIN."""
+    """Retrieves a single support case with stitched related entities (task, customer, provider, initiator, assignment, payout) via LEFT JOIN."""
     try:
+        init_user_id = func.coalesce(col(SupportCase.initiated_by), col(SupportCase.customer_id), col(SupportCase.provider_id))
+
         stmt = (
             # pyrefly: ignore [no-matching-overload]
-            select(SupportCase, Task, CustomerUser, ProviderUser, CaseAssignment, PayoutQueue)
+            select(
+                SupportCase,
+                Task,
+                CustomerUser,
+                ProviderUser,
+                InitiatorUser,
+                InitiatorCustomerProfile,
+                InitiatorProviderProfile,
+                CaseAssignment,
+                PayoutQueue,
+            )
             .outerjoin(Task, col(SupportCase.task_id) == col(Task.id))
             .outerjoin(CustomerUser, col(SupportCase.customer_id) == col(CustomerUser.id))
             .outerjoin(ProviderUser, col(SupportCase.provider_id) == col(ProviderUser.id))
+            .outerjoin(InitiatorUser, init_user_id == col(InitiatorUser.id))
+            .outerjoin(InitiatorCustomerProfile, col(InitiatorUser.id) == col(InitiatorCustomerProfile.user_id))
+            .outerjoin(InitiatorProviderProfile, col(InitiatorUser.id) == col(InitiatorProviderProfile.user_id))
             .outerjoin(CaseAssignment, or_(col(SupportCase.assignment_id) == col(CaseAssignment.id), col(SupportCase.id) == col(CaseAssignment.case_id)))
             .outerjoin(PayoutQueue, col(SupportCase.payout_id) == col(PayoutQueue.id))
             .where(
@@ -228,13 +282,26 @@ async def admin_get_case(
                 detail="Support case not found",
             )
 
-        case_obj, task_obj, customer_obj, provider_obj, assignment_obj, payout_obj = row
+        case_obj, task_obj, customer_obj, provider_obj, init_user_obj, init_cust_prof, init_prov_prof, assignment_obj, payout_obj = row
+
+        initiator_data = None
+        if init_user_obj:
+            first_name = (init_cust_prof.first_name if init_cust_prof else None) or (init_prov_prof.first_name if init_prov_prof else None)
+            last_name = (init_cust_prof.last_name if init_cust_prof else None) or (init_prov_prof.last_name if init_prov_prof else None)
+            initiator_data = InitiatorResponse(
+                id=init_user_obj.id,
+                first_name=first_name,
+                last_name=last_name,
+                email=init_user_obj.email,
+                phone_number=init_user_obj.phone_number,
+            )
 
         detail = SupportCaseDetailResponse(
             **case_obj.model_dump(),
             task=task_obj.model_dump() if task_obj else None,
             customer=customer_obj.model_dump() if customer_obj else None,
             provider=provider_obj.model_dump() if provider_obj else None,
+            initiator=initiator_data,
             assignment=assignment_obj.model_dump() if assignment_obj else None,
             payout=payout_obj.model_dump() if payout_obj else None,
         )
