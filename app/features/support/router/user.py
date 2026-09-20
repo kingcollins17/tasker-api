@@ -16,6 +16,7 @@ from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.database import get_session
 from app.core.deps import GetCurrentUser
 from app.core.error_handler import AppErrorHandler
+from app.core.repository import GetRepository, QueryOptions, Repository
 from app.core.models.support import (
     CaseAttachment,
     CaseEvent,
@@ -307,6 +308,50 @@ async def get_case_messages(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve case messages",
+        )
+
+
+@router.get("/cases/{case_id}/attachments", response_model=BaseAPIResponse[PaginatedData[CaseAttachmentResponse]])
+async def get_user_case_attachments(
+    case_id: str,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+    current_user: UserResponse = Depends(GetCurrentUser()),
+    case_repo: Repository[SupportCase] = Depends(GetRepository(SupportCase)),
+    attachment_repo: Repository[CaseAttachment] = Depends(GetRepository(CaseAttachment)),
+):
+    """Retrieves all file attachments for a user's support case."""
+    try:
+        case = await case_repo.get(case_id)
+        if not case or (case.customer_id != current_user.id and case.provider_id != current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Support case not found",
+            )
+
+        offset = (page - 1) * per_page
+        all_attachments = await attachment_repo.get_all(
+            QueryOptions(
+                filters={"case_id": case.id},
+                order_by="created_at",
+                descending=True,
+            )
+        )
+        total = len(all_attachments)
+        paginated_attachments = all_attachments[offset : offset + per_page]
+
+        items = [CaseAttachmentResponse.model_validate(a) for a in paginated_attachments]
+        return BaseAPIResponse.success_response(
+            data=PaginatedData(items=items, total=total, page=page, per_page=per_page),
+            message="Case attachments retrieved successfully",
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        AppErrorHandler.handleError(error)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve case attachments",
         )
 
 

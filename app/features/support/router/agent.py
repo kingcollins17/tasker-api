@@ -8,7 +8,8 @@ from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.database import get_session
 from app.core.deps import GetCurrentAdmin
 from app.core.error_handler import AppErrorHandler
-from app.core.models.admins import AdminUser
+from app.core.repository import GetRepository, QueryOptions, Repository
+from app.core.models.admins import AdminRole, AdminUser
 from app.core.models.payments import PayoutQueue
 from app.core.models.support import (
     CaseAssignment,
@@ -451,6 +452,50 @@ async def admin_get_timeline(
         )
 
 
+@router.get("/{case_id}/attachments", response_model=BaseAPIResponse[PaginatedData[CaseAttachmentResponse]])
+async def admin_get_case_attachments(
+    case_id: str,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=100, ge=1, le=100),
+    admin: AdminUser = Depends(GetCurrentAdmin()),
+    case_repo: Repository[SupportCase] = Depends(GetRepository(SupportCase)),
+    attachment_repo: Repository[CaseAttachment] = Depends(GetRepository(CaseAttachment)),
+):
+    """Retrieves all file attachments for a specific support case."""
+    try:
+        case = await case_repo.get(case_id)
+        if not case:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Support case not found",
+            )
+
+        offset = (page - 1) * per_page
+        all_attachments = await attachment_repo.get_all(
+            QueryOptions(
+                filters={"case_id": case.id},
+                order_by="created_at",
+                descending=True,
+            )
+        )
+        total = len(all_attachments)
+        paginated_attachments = all_attachments[offset : offset + per_page]
+
+        items = [CaseAttachmentResponse.model_validate(a) for a in paginated_attachments]
+        return BaseAPIResponse.success_response(
+            data=PaginatedData(items=items, total=total, page=page, per_page=per_page),
+            message="Case attachments retrieved successfully",
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        AppErrorHandler.handleError(error)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve case attachments",
+        )
+
+
 @router.post("/{case_id}/claim", response_model=BaseAPIResponse[SupportCaseResponse])
 async def admin_claim_case(
     case_id: str,
@@ -464,13 +509,13 @@ async def admin_claim_case(
             agent_id=admin.id,
             assigned_by=admin.id,
             reason="Claimed by admin",
+            overwrite_existing_assignment=False,
         )
         if not case:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Support case not found",
             )
-        case.status = CaseStatus.IN_PROGRESS
         return BaseAPIResponse.success_response(
             data=SupportCaseResponse.model_validate(case),
             message="Support case claimed successfully",
@@ -494,11 +539,13 @@ async def admin_assign_case(
 ):
     """Assigns a support case to a specific agent."""
     try:
+        is_super_admin = admin.role in [AdminRole.SUPER_ADMIN, AdminRole.ROOT_ADMIN]
         case, _ = await assignment_service.assign_case(
             case_id=case_id,
             agent_id=schema.agent_id,
             assigned_by=admin.id,
             reason=schema.reason,
+            overwrite_existing_assignment=is_super_admin,
         )
         if not case:
             raise HTTPException(
