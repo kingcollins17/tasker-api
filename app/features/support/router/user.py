@@ -78,9 +78,32 @@ def _map_case_with_initiator(
 async def create_support_case(
     schema: SupportCaseCreate,
     current_user: UserResponse = Depends(GetCurrentUser()),
+    session: AsyncSession = Depends(get_session),
     service: SupportCaseService = Depends(get_support_case_service),
 ):
     try:
+        if schema.task_id:
+            closed_statuses = [
+                CaseStatus.CLOSED,
+                CaseStatus.AUTO_CLOSED,
+                CaseStatus.RESOLVED,
+            ]
+            stmt_existing = select(SupportCase).where(
+                col(SupportCase.task_id) == schema.task_id,
+                or_(
+                    col(SupportCase.customer_id) == current_user.id,
+                    col(SupportCase.provider_id) == current_user.id,
+                    col(SupportCase.initiated_by) == current_user.id,
+                ),
+                col(SupportCase.status).notin_(closed_statuses),
+            )
+            res_existing = await session.exec(stmt_existing)
+            if res_existing.first():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="You already have an open support ticket for this task.",
+                )
+
         is_customer = current_user.type == UserType.CUSTOMER
         case = await service.create_case(
             user_id=current_user.id,
