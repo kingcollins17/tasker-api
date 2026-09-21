@@ -85,7 +85,7 @@ async def _execute_batch_ping_async(
     batch_index: int,
     is_last_batch: bool,
     seq_start: int,
-    ping_duration: int = 180,
+    ping_duration: int = DispatchPolicy.PING_DURATION_SECONDS,
 ) -> bool:
     """Executes a single batch ping for session_id asynchronously after its scheduled delay."""
     async with celery_session_factory() as session:
@@ -296,7 +296,7 @@ def execute_batch_ping(
     batch_index: int,
     is_last_batch: bool,
     seq_start: int,
-    ping_duration: int = 180,
+    ping_duration: int = DispatchPolicy.PING_DURATION_SECONDS,
 ):
     """Celery worker entrypoint to execute a single candidate batch ping."""
     logger.info(f"execute_batch_ping: batch {batch_index + 1} running for session {session_id}")

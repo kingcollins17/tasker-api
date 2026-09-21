@@ -181,7 +181,7 @@ class CandidateFetcher:
             (
                 dispatch_session.batch_size
                 if (dispatch_session and dispatch_session.batch_size)
-                else 5
+                else DispatchPolicy.BATCH_SIZE
             ),
         )
 
@@ -589,7 +589,7 @@ class MatchingEngine:
         self,
         session_id: str,
         session: Optional[AsyncSession] = None,
-        ping_duration: int = 180,
+        ping_duration: int = DispatchPolicy.PING_DURATION_SECONDS,
         exclude_previous_sessions: bool = True,
         excluded_provider_ids: Optional[List[str]] = None,
         geo_service: Optional[GeoService] = None,
@@ -676,7 +676,7 @@ class MatchingEngine:
             (
                 dispatch_session.batch_size
                 if (dispatch_session and dispatch_session.batch_size)
-                else 5
+                else DispatchPolicy.BATCH_SIZE
             ),
         )
         return self.scorer.score(
@@ -821,7 +821,7 @@ class MatchingEngine:
             (
                 dispatch_session.batch_size
                 if (dispatch_session and dispatch_session.batch_size)
-                else 5
+                else DispatchPolicy.BATCH_SIZE
             ),
         )
 

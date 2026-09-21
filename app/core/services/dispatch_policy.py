@@ -12,8 +12,12 @@ class DispatchPolicy:
     AUTO_DISPATCH_MAX: int = 5
     MANUAL_DISPATCH_MAX: int = 3
 
+    # Default candidate batch size per dispatch ping step
+    BATCH_SIZE: int = 5
+
     # Ping attempt duration for candidate pings (seconds)
-    PING_DURATION_SECONDS: int = 180
+    PING_DURATION_SECONDS: int = 180 * 3
+    PING_DURATION: int = PING_DURATION_SECONDS
 
     # Delays for retries: 2m, 5m, 10m, 20m, 30m
     RETRY_DELAYS_SECONDS: List[int] = [120, 300, 600, 1200, 1800]
