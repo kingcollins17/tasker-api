@@ -91,6 +91,7 @@ class CandidateFetcher:
         geo_service: GeoService,
         exclude_previous_sessions: bool = True,
         excluded_provider_ids: Optional[List[str]] = None,
+        candidate_pool_size: int=DispatchPolicy.CANDIDATE_POOL_SIZE
     ):
         self.session = session
         self.geo_service = geo_service
@@ -98,6 +99,7 @@ class CandidateFetcher:
         self.excluded_provider_ids = (
             list(excluded_provider_ids) if excluded_provider_ids else []
         )
+        self.candidate_pool_size=candidate_pool_size
 
     async def get_excluded_ids(
         self,
@@ -260,7 +262,9 @@ class CandidateFetcher:
             stmt = stmt.where(~col(UserLocation.user_id).in_(explicit_excluded))
 
         stmt = stmt.order_by(distance_m_expr)
-        stmt = stmt.limit(max(50, batch_size))
+
+        # Limit candidate pool
+        stmt = stmt.limit(self.candidate_pool_size)
 
         result = await self.session.exec(stmt)
         rows = result.all()

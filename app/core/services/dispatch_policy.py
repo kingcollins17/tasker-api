@@ -19,6 +19,8 @@ class DispatchPolicy:
     PING_DURATION_SECONDS: int = 180 * 3
     PING_DURATION: int = PING_DURATION_SECONDS
 
+    CANDIDATE_POOL_SIZE: int = 500
+
     # Delays for retries: 2m, 5m, 10m, 20m, 30m
     RETRY_DELAYS_SECONDS: List[int] = [120, 300, 600, 1200, 1800]
 
