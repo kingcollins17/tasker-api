@@ -238,7 +238,7 @@ async def get_my_offers(
         query = query.offset((page - 1) * per_page).limit(per_page)
 
         result = await attempt_repo.execute(query)
-        rows = result.all()
+        rows = result.unique().all()
 
         items = []
         for attempt_model, task_model, service_model, category_model in rows:
