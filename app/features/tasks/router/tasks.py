@@ -1026,10 +1026,13 @@ async def get_task_price_adjustments(
     current_user: Union[UserResponse, AdminUser, None] = Depends(
         GetCurrentUserOrAdminOptional
     ),
+    adjustment_repo: Repository[TaskPriceAdjustment] = Depends(
+        GetRepository(TaskPriceAdjustment)
+    ),
     task_service: TaskService = Depends(get_task_service),
     system_logger: LoggerService = Depends(get_logger_service),
 ):
-    """Fetch price adjustments for a specific task with optional filters."""
+    """Fetch price adjustments for a specific task for providers and customers with optional filters."""
     try:
         timer = Timer()
         timer.start()
@@ -1069,11 +1072,11 @@ async def get_task_price_adjustments(
             )
 
         if sort_desc:
-            statement = statement.order_by(desc(col(TaskPriceAdjustment.created_at)))
+            statement = statement.order_by(desc(col(TaskPriceAdjustment.updated_at)))
         else:
-            statement = statement.order_by(col(TaskPriceAdjustment.created_at))
+            statement = statement.order_by(col(TaskPriceAdjustment.updated_at))
 
-        result = await task_service.price_adjustment_repo.execute(statement)
+        result = await adjustment_repo.execute(statement)
         adjustments = list(result.all())
 
         data = [TaskPriceAdjustmentResponse.model_validate(a) for a in adjustments]
