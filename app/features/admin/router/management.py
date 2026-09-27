@@ -169,6 +169,8 @@ async def revoke_invitation(
 
 @router.get("", response_model=BaseAPIResponse[PaginatedData[AdminUserResponse]])
 async def list_admins(
+    id: Optional[str] = Query(None, description="Filter by admin ID"),
+    admin_id: Optional[str] = Query(None, description="Filter by admin ID"),
     email: Optional[str] = Query(None, description="Search by email (case-insensitive substring)"),
     fullname: Optional[str] = Query(None, description="Search by full name (case-insensitive substring)"),
     role: Optional[AdminRole] = Query(None, description="Filter by admin role"),
@@ -180,9 +182,13 @@ async def list_admins(
     session: AsyncSession = Depends(get_session),
     admin_service: AdminService = Depends(get_admin_service),
 ):
-    """List administrators with filtering by email, fullname, role, active status, region_id, and hierarchy permissions."""
+    """List administrators with filtering by admin ID, email, fullname, role, active status, region_id, and hierarchy permissions."""
     try:
         stmt = select(AdminUser)
+
+        target_admin_id = id or admin_id
+        if target_admin_id:
+            stmt = stmt.where(col(AdminUser.id) == target_admin_id.strip())
 
         if email:
             stmt = stmt.where(col(AdminUser.email).ilike(f"%{email.strip()}%"))

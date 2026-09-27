@@ -1,11 +1,19 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, Query, status, HTTPException
-from sqlmodel import select, func, asc, desc, col
+from typing import Dict, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlmodel import asc, col, desc, func, select
+
 from app.core.api_response import BaseAPIResponse, PaginatedData
-from app.core.repository import GetRepository, Repository
-from app.core.models.services import ServiceCategory
+from app.core.deps.auth import GetCurrentAdmin
 from app.core.error_handler import AppErrorHandler
-from app.features.services.schemas import CategoryResponse
+from app.core.models.admins import AdminRole, AdminUser
+from app.core.models.services import ServiceCategory
+from app.core.repository import GetRepository, Repository
+from app.features.services.category_service import CategoryService, get_category_service
+from app.features.services.schemas import (
+    CategoryResponse,
+    CreateCategoryRequest,
+    UpdateCategoryRequest,
+)
 
 router = APIRouter(prefix="/categories", tags=["Service Categories"])
 
@@ -70,6 +78,31 @@ async def get_categories(
             detail="An unexpected error occurred while retrieving categories."
         )
 
+
+@router.post("", response_model=BaseAPIResponse[CategoryResponse], status_code=status.HTTP_201_CREATED)
+async def create_category(
+    payload: CreateCategoryRequest,
+    current_admin: AdminUser = Depends(GetCurrentAdmin(required_roles=[AdminRole.ROOT_ADMIN, AdminRole.SUPER_ADMIN])),
+    category_service: CategoryService = Depends(get_category_service),
+):
+    """Create a new service category. Accessible only by ROOT_ADMIN or SUPER_ADMIN."""
+    try:
+        category = await category_service.create_category(payload)
+        return BaseAPIResponse[CategoryResponse](
+            data=CategoryResponse.model_validate(category),
+            detail="Category created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while creating the category.",
+        )
+
+
 @router.get("/{category_id}", response_model=BaseAPIResponse[CategoryResponse], status_code=status.HTTP_200_OK)
 async def get_category(
     category_id: str,
@@ -96,4 +129,53 @@ async def get_category(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while retrieving the category."
+        )
+
+
+@router.put("/{category_id}", response_model=BaseAPIResponse[CategoryResponse], status_code=status.HTTP_200_OK)
+async def update_category(
+    category_id: str,
+    payload: UpdateCategoryRequest,
+    current_admin: AdminUser = Depends(GetCurrentAdmin(required_roles=[AdminRole.ROOT_ADMIN, AdminRole.SUPER_ADMIN])),
+    category_service: CategoryService = Depends(get_category_service),
+):
+    """Update a service category. Accessible only by ROOT_ADMIN or SUPER_ADMIN."""
+    try:
+        category = await category_service.update_category(category_id, payload)
+        return BaseAPIResponse[CategoryResponse](
+            data=CategoryResponse.model_validate(category),
+            detail="Category updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while updating the category.",
+        )
+
+
+@router.delete("/{category_id}", response_model=BaseAPIResponse[Dict[str, str]], status_code=status.HTTP_200_OK)
+async def delete_category(
+    category_id: str,
+    current_admin: AdminUser = Depends(GetCurrentAdmin(required_roles=[AdminRole.ROOT_ADMIN, AdminRole.SUPER_ADMIN])),
+    category_service: CategoryService = Depends(get_category_service),
+):
+    """Delete a service category. Accessible only by ROOT_ADMIN or SUPER_ADMIN."""
+    try:
+        await category_service.delete_category(category_id)
+        return BaseAPIResponse[Dict[str, str]](
+            data={"category_id": category_id},
+            detail="Category deleted successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while deleting the category.",
         )

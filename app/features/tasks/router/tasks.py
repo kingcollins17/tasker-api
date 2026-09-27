@@ -267,6 +267,8 @@ async def cancel_draft(
     status_code=status.HTTP_200_OK,
 )
 async def list_tasks(
+    id: Optional[str] = Query(None, description="Filter by task ID"),
+    task_id: Optional[str] = Query(None, description="Filter by task ID"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     status_filter: Optional[List[TaskStatus]] = Query(None, alias="status"),
@@ -291,6 +293,10 @@ async def list_tasks(
         timer.start()
 
         statement = select(Task)
+
+        target_task_id = id or task_id
+        if target_task_id:
+            statement = statement.where(Task.id == target_task_id.strip())
 
         if status_filter:
             statement = statement.where(col(Task.status).in_(status_filter))

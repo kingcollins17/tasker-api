@@ -24,6 +24,8 @@ router = APIRouter(prefix="/admin", tags=["Admin - User Management"])
 
 @router.get("", response_model=BaseAPIResponse[PaginatedData[UserLiteResponse]])
 async def list_users(
+    id: Optional[str] = Query(None, description="Filter by user ID"),
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
     email: Optional[str] = Query(
         None, description="Search by user email (case-insensitive substring)"
     ),
@@ -41,13 +43,17 @@ async def list_users(
     current_admin: AdminUser = Depends(GetCurrentAdmin()),
     session: AsyncSession = Depends(get_session),
 ):
-    """List and search platform users with inlined retrieval queries, region filter, and pagination."""
+    """List and search platform users with inlined retrieval queries, user ID filter, region filter, and pagination."""
     try:
         stmt = (
             select(User)
             .outerjoin(CustomerProfile, col(CustomerProfile.user_id) == col(User.id))
             .outerjoin(ProviderProfile, col(ProviderProfile.user_id) == col(User.id))
         )
+
+        target_user_id = id or user_id
+        if target_user_id:
+            stmt = stmt.where(col(User.id) == target_user_id.strip())
 
         if email:
             stmt = stmt.where(col(User.email).ilike(f"%{email.strip()}%"))
@@ -75,6 +81,10 @@ async def list_users(
         if region_id:
             stmt = stmt.where(col(User.region_id) == region_id)
 
+        count_stmt = select(func.count(col(User.id).distinct())).select_from(stmt.subquery())
+        total_result = await session.exec(count_stmt)
+        total = total_result.one_or_none() or 0
+
         stmt = (
             stmt.order_by(col(User.created_at).desc())
             .offset((page - 1) * per_page)
@@ -85,7 +95,7 @@ async def list_users(
         items = [UserLiteResponse.from_user(u) for u in users]
         paginated_data = PaginatedData[UserLiteResponse](
             items=items,
-            total=len(items),
+            total=total,
             page=page,
             per_page=per_page,
         )

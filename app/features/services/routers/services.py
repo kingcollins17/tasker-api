@@ -1,21 +1,26 @@
-from typing import Optional, List
+from typing import Optional, List, Dict
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlmodel import select, func, asc, desc, col
 from sqlalchemy.orm import selectinload
 from sqlalchemy import cast
 from geoalchemy2 import Geography
 from app.core.api_response import BaseAPIResponse, PaginatedData
+from app.core.deps.auth import GetCurrentAdmin
 from app.core.repository import GetRepository, Repository
+from app.core.models.admins import AdminRole, AdminUser
 from app.core.models.services import Service, ProviderServiceLink, ServiceCategory
 from app.core.models.tasks import Task
 from app.core.models.users import User, UserLocation
 from app.core.error_handler import AppErrorHandler
+from app.features.services.service_service import ServiceService, get_service_service
 from app.features.services.schemas import (
     ServiceResponse,
     ServiceAvailabilityResponse,
     BulkServiceAvailabilityItem,
     AvailableServiceResponse,
     CategoryResponse,
+    CreateServiceRequest,
+    UpdateServiceRequest,
 )
 from app.core.schemas.users import MinimalProviderResponse
 from app.features.users.schemas import UserResponse
@@ -137,12 +142,42 @@ async def get_top_services(
         )
 
 
+@router.post(
+    "",
+    response_model=BaseAPIResponse[ServiceResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_service(
+    payload: CreateServiceRequest,
+    current_admin: AdminUser = Depends(GetCurrentAdmin(required_roles=[AdminRole.ROOT_ADMIN, AdminRole.SUPER_ADMIN])),
+    service_service: ServiceService = Depends(get_service_service),
+):
+    """Create a new service. Accessible only by ROOT_ADMIN or SUPER_ADMIN."""
+    try:
+        service = await service_service.create_service(payload)
+        return BaseAPIResponse[ServiceResponse](
+            data=ServiceResponse.model_validate(service),
+            detail="Service created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while creating the service.",
+        )
+
+
 @router.get(
     "",
     response_model=BaseAPIResponse[PaginatedData[ServiceResponse]],
     status_code=status.HTTP_200_OK,
 )
 async def get_services(
+    id: Optional[str] = Query(None, description="Filter by service ID"),
+    service_id: Optional[str] = Query(None, description="Filter by service ID"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     search: Optional[str] = Query(None, description="Search by service name"),
@@ -156,6 +191,11 @@ async def get_services(
     try:
         statement = select(Service).options(selectinload(Service.category))  # type: ignore
         count_statement = select(func.count()).select_from(Service)
+
+        target_service_id = id or service_id
+        if target_service_id:
+            statement = statement.where(Service.id == target_service_id.strip())
+            count_statement = count_statement.where(Service.id == target_service_id.strip())
 
         if search:
             search_filter = col(Service.name).ilike(f"%{search}%")
@@ -480,6 +520,63 @@ async def get_service(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while retrieving the service.",
+        )
+
+
+@router.put(
+    "/{service_id}",
+    response_model=BaseAPIResponse[ServiceResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def update_service(
+    service_id: str,
+    payload: UpdateServiceRequest,
+    current_admin: AdminUser = Depends(GetCurrentAdmin(required_roles=[AdminRole.ROOT_ADMIN, AdminRole.SUPER_ADMIN])),
+    service_service: ServiceService = Depends(get_service_service),
+):
+    """Update a service. Accessible only by ROOT_ADMIN or SUPER_ADMIN."""
+    try:
+        service = await service_service.update_service(service_id, payload)
+        return BaseAPIResponse[ServiceResponse](
+            data=ServiceResponse.model_validate(service),
+            detail="Service updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while updating the service.",
+        )
+
+
+@router.delete(
+    "/{service_id}",
+    response_model=BaseAPIResponse[Dict[str, str]],
+    status_code=status.HTTP_200_OK,
+)
+async def delete_service(
+    service_id: str,
+    current_admin: AdminUser = Depends(GetCurrentAdmin(required_roles=[AdminRole.ROOT_ADMIN, AdminRole.SUPER_ADMIN])),
+    service_service: ServiceService = Depends(get_service_service),
+):
+    """Delete a service. Accessible only by ROOT_ADMIN or SUPER_ADMIN."""
+    try:
+        await service_service.delete_service(service_id)
+        return BaseAPIResponse[Dict[str, str]](
+            data={"service_id": service_id},
+            detail="Service deleted successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        AppErrorHandler.handleError(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while deleting the service.",
         )
 
 
