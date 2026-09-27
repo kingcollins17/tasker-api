@@ -16,7 +16,7 @@ from app.core.models.tasks import (
     TaskAssignmentStatus,
     TaskStatus,
 )
-from app.core.models.users import DutyStatus, ProviderProfile
+from app.core.models.users import DutyStatus, ProviderProfile, UserStats
 from app.core.repository import Repository
 from app.core.services.logger_service import get_logger_service_manual
 from app.core.utils.celery import run_async
@@ -33,7 +33,7 @@ from app.features.tasks.celery.metrics import (
 async def _complete_task_assignment_async(
     task_id: str,
     provider_id: str,
-    payment_mode: str = "cash",
+    payment_mode: str = PaymentMode.CASH.value,
 ) -> Any:
     """Async handler for task completion.
 
@@ -58,6 +58,7 @@ async def _complete_task_assignment_async(
             task_repo = Repository(Task, session)
             assignment_repo = Repository(TaskAssignment, session)
             provider_profile_repo = Repository(ProviderProfile, session)
+            user_stats_repo = Repository(UserStats, session)
 
             # 1. Update task assignment status to COMPLETED and set completion timestamp
             stmt_assign = select(TaskAssignment).where(
@@ -80,16 +81,24 @@ async def _complete_task_assignment_async(
                 service_id = task.service_id
                 category_id = task.category_id
 
-            # 3. Direct SQL update to increment provider's total_tasks_completed and set duty_status to ONLINE_AVAILABLE
+            # 3. Direct SQL updates: set provider duty_status to ONLINE_AVAILABLE and increment total_tasks_completed in UserStats
             stmt_prof_update = (
                 update(ProviderProfile)
                 .where(col(ProviderProfile.user_id) == provider_id)
                 .values(
-                    total_tasks_completed=func.coalesce(col(ProviderProfile.total_tasks_completed), 0) + 1,
                     duty_status=DutyStatus.ONLINE_AVAILABLE,
                 )
             )
             await provider_profile_repo.execute(stmt_prof_update)
+
+            stmt_stats_update = (
+                update(UserStats)
+                .where(col(UserStats.user_id) == provider_id)
+                .values(
+                    total_tasks_completed=func.coalesce(col(UserStats.total_tasks_completed), 0) + 1,
+                )
+            )
+            await user_stats_repo.execute(stmt_stats_update)
 
             logger.info(
                 f"complete_task_assignment: task {task_id} completed by provider {provider_id} (payment_mode={payment_mode})"
@@ -122,7 +131,7 @@ async def _complete_task_assignment_async(
 
 @shared_task(name="tasks.complete_task_assignment")
 def complete_task_assignment(
-    task_id: str, provider_id: str, payment_mode: str = "cash"
+    task_id: str, provider_id: str, payment_mode: str = PaymentMode.CASH.value
 ):
     """Celery task to finalize task assignment completion.
 

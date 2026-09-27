@@ -1,16 +1,16 @@
-from app.core.utils.timer import Timer
-from app.core.services.logger_service import get_logger_service_manual
-
 from celery import shared_task
 
 from app.core.celery_database import celery_session_factory
 from app.core.logging import logger
+from app.core.models.tasks import PaymentMode
+from app.core.services.logger_service import get_logger_service_manual
 from app.core.utils.celery import run_async
+from app.core.utils.timer import Timer
 from app.features.payments.payment_service import get_payment_service_manual
 
 
 @shared_task(name="payments.process_task_payment")
-def process_task_payment(task_id: str, provider_id: str, payment_mode: str = "cash"):
+def process_task_payment(task_id: str, provider_id: str, payment_mode: str = PaymentMode.CASH.value):
     """Celery task to handle task payment processing (cash debt ledger entry vs online link generation)."""
     logger.info(
         f"process_task_payment: task_id={task_id}, provider_id={provider_id}, payment_mode={payment_mode}"

@@ -5,7 +5,7 @@ from app.core.services.logger_service import LoggerService, get_logger_service
 from app.core.models.users import KYCStatus
 from fastapi import APIRouter, Depends, status, HTTPException, Query
 from typing import Optional, List, Any 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import select, func, col
 from sqlalchemy import desc, or_
 
@@ -60,6 +60,16 @@ class TaskCompleteBody(BaseModel):
 
     pin: str
     payment_mode: PaymentMode = PaymentMode.CASH
+
+    @field_validator("payment_mode", mode="before")
+    @classmethod
+    def parse_payment_mode(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            try:
+                return PaymentMode(v.upper())
+            except ValueError:
+                pass
+        return v
 
 
 router = APIRouter(tags=["Assignments"])

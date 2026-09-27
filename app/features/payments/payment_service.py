@@ -79,11 +79,13 @@ class PaymentService:
             logger.error(f"process_task_payment: task {task_id} not found")
             return
 
-        mode = (
-            PaymentMode(payment_mode)
-            if payment_mode in ("cash", "online")
-            else PaymentMode.CASH
-        )
+        if isinstance(payment_mode, PaymentMode):
+            mode = payment_mode
+        else:
+            try:
+                mode = PaymentMode(str(payment_mode).upper())
+            except ValueError:
+                mode = PaymentMode.CASH
         task.payment_mode = mode
 
         if mode == PaymentMode.CASH:
@@ -243,12 +245,17 @@ class PaymentService:
                 f"Recorded cash debt entry (+{to_naira(platform_fee)}) for provider {provider_id} on task {task.id}"
             )
 
-        if task.provider_payout and task.provider_payout > 0:
+        payout_amount = (
+            task.provider_payout
+            if task.provider_payout and task.provider_payout > 0
+            else max(0.0, (task.customer_total_price or 0.0) - platform_fee)
+        )
+        if payout_amount > 0:
             payout = PayoutQueue(
                 provider_id=provider_id,
                 task_id=task.id,
                 customer_id=task.customer_id,
-                payout_amount=task.provider_payout,
+                payout_amount=payout_amount,
                 customer_payment_amount=task.customer_total_price or 0.0,
                 status=PayoutStatus.COMPLETED,
                 description=f"Automated payout queue (CASH) for task {task.id}",
