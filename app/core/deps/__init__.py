@@ -1,6 +1,7 @@
 from .auth import (
     GetCurrentUser,
     GetCurrentAdmin,
+    GetCurrentUserOrAdmin,
     GetCurrentUserOrAdminOptional,
     get_current_admin,
 )
@@ -8,6 +9,7 @@ from .auth import (
 __all__ = [
     "GetCurrentUser",
     "GetCurrentAdmin",
+    "GetCurrentUserOrAdmin",
     "GetCurrentUserOrAdminOptional",
     "get_current_admin",
 ]

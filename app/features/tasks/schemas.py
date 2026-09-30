@@ -26,6 +26,15 @@ class LocationCreate(BaseModel):
     country: Optional[str] = Field(default=None, description="Country")
 
 
+class AttachmentCreate(BaseModel):
+    url: str = Field(..., description="The public-facing URL or uploaded file location")
+    storage_key: Optional[str] = Field(default=None, description="The unique object key/path inside cloud storage")
+    file_name: Optional[str] = Field(default=None, description="The original name of the uploaded file")
+    file_size: Optional[int] = Field(default=None, description="The size of the file in bytes")
+    mime_type: Optional[str] = Field(default=None, description="The standard internet media type of the file (e.g. 'image/jpeg')")
+    type: Optional[str] = Field(default=None, description="Semantic category of the attachment (e.g. 'before_photo', 'document')")
+
+
 class TaskCreate(BaseModel):
     title: str = Field(..., min_length=1, description="Title of the task")
     description: str = Field(..., min_length=1, description="Detailed description of the task")
@@ -34,6 +43,7 @@ class TaskCreate(BaseModel):
     expires_at: Optional[datetime] = Field(default=None, description="Expiration date/time of the task")
     scheduled_start_at: Optional[datetime] = Field(default=None, description="When the user would like the task to start")
     locations: List[LocationCreate] = Field(..., min_length=1, max_length=2, description="List of task locations (1 or 2)")
+    attachments: Optional[List[AttachmentCreate]] = Field(default=None, description="Optional list of file attachments created with the task")
 
 
 class TaskPriceEstimateRequest(BaseModel):

@@ -1,5 +1,5 @@
 from app.core.models import User
-from typing import List, Optional
+from typing import List, Optional, Union
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
 
@@ -176,6 +176,85 @@ class GetCurrentUserOrAdminOptional:
             return admin
             
         return None
+
+
+class GetCurrentUserOrAdmin:
+    """Dependency class to retrieve and validate the currently authenticated user OR admin."""
+
+    async def __call__(
+        self,
+        token_oauth: str | None = Depends(oauth2_scheme),
+        token_bearer: HTTPAuthorizationCredentials | None = Depends(http_bearer),
+        user_service: UserService = Depends(get_user_service),
+        admin_repo: Repository[AdminUser] = Depends(GetRepository(AdminUser)),
+    ) -> Union[UserResponse, AdminUser]:
+        token = None
+        if token_bearer:
+            token = token_bearer.credentials
+        elif token_oauth:
+            token = token_oauth
+
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        payload = security.decode_access_token(token)
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        user_id = payload.get("id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        token_type = payload.get("type")
+        if token_type == "admin":
+            admin = await admin_repo.get(user_id)
+            if not admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin user not found or unauthorized",
+                )
+            if not admin.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Administrator account is deactivated",
+                )
+            return admin
+
+        user = await user_service.get_user(user_id)
+        if user:
+            if not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User account is inactive",
+                )
+            return UserResponse.model_validate(user)
+
+        admin = await admin_repo.get(user_id)
+        if admin:
+            if not admin.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Administrator account is deactivated",
+                )
+            return admin
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User or admin not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 class GetCurrentAdmin:

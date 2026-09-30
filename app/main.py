@@ -22,6 +22,7 @@ from app.features.system.router import router as system_router
 from app.features.vetting.router import router as vetting_router
 from app.features.support.router import router as support_router
 from app.features.admin import router as admin_router
+from app.features.utils import router as utils_router
 
 
 @asynccontextmanager
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(system_router, prefix=f"{API_V1_PREFIX}/system", tags=["System"])
     app.include_router(vetting_router, prefix=f"{API_V1_PREFIX}/vetting")
     app.include_router(support_router, prefix=f"{API_V1_PREFIX}")
+    app.include_router(utils_router, prefix=f"{API_V1_PREFIX}")
 
     @app.get("/")
     async def read_root():

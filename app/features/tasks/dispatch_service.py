@@ -173,29 +173,38 @@ class DispatchService:
         task_id: str,
         current_user_id: str,
         feedback: Optional[str] = None,
+        is_admin: bool = False,
     ) -> Task:
-        """Triggers customer-initiated manual redispatch for a task."""
-        stmt_lock = select(Task).where(Task.id == task_id).with_for_update(of=Task)
+        """Triggers manual redispatch for a task (customer or admin initiated)."""
+        stmt_lock = select(Task).where(col(Task.id) == task_id).with_for_update(of=Task)
         res_task = await self.session.exec(stmt_lock)
         task: Optional[Task] = res_task.unique().one_or_none()
 
         if not task:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
-        if task.customer_id != current_user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to redispatch this task",
-            )
+        if not is_admin:
+            if task.customer_id != current_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized to redispatch this task",
+                )
 
-        current_manual_count = task.manual_dispatch_count or 0
-        if not DispatchPolicy.can_manual_redispatch(current_manual_count):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Maximum allowed customer redispatches ({DispatchPolicy.MANUAL_DISPATCH_MAX}) reached for this task.",
-            )
+            current_manual_count = task.manual_dispatch_count or 0
+            if not DispatchPolicy.can_manual_redispatch(current_manual_count):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Maximum allowed customer redispatches ({DispatchPolicy.MANUAL_DISPATCH_MAX}) reached for this task.",
+                )
+        else:
+            if task.status in (TaskStatus.COMPLETED, TaskStatus.CANCELLED):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot redispatch task in '{task.status.value}' status.",
+                )
 
         now = lagos_now()
+        current_manual_count = task.manual_dispatch_count or 0
 
         # If currently assigned, cancel assignment and release provider
         if task.status == TaskStatus.ASSIGNED and task.assignment:
@@ -224,12 +233,21 @@ class DispatchService:
             trigger=DispatchSessionTrigger.MANUAL,
             sequence=seq,
             status=DispatchSessionStatus.RUNNING,
-            reason=feedback,
+            reason=feedback or (f"Admin redispatch initiated by {current_user_id}" if is_admin else None),
             started_at=now,
             created_at=now,
             updated_at=now,
         )
         dispatch_session = await self._save(dispatch_session)
+
+        if is_admin:
+            await self._log_task_event(
+                task_id=task.id,
+                event="admin_redispatch",
+                reason=feedback or "Admin initiated task redispatch",
+                admin_id=current_user_id,
+                dispatch_session_id=dispatch_session.id,
+            )
 
         # pyrefly: ignore [not-callable]
         execute_matching_engine.delay(dispatch_session.id)

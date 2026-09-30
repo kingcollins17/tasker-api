@@ -1,11 +1,39 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.models.tasks import PaymentStatus, TaskAssignmentStatus, TaskStatus, TaskDispatchStatus, DispatchAttemptStatus, CancelledBy
+from app.core.models.tasks import (
+    CancelledBy,
+    DispatchAttemptStatus,
+    DispatchSessionStatus,
+    DispatchSessionTrigger,
+    PaymentStatus,
+    TaskAssignmentStatus,
+    TaskDispatchStatus,
+    TaskStatus,
+)
 from app.core.schemas.users import MinimalCustomerResponse, MinimalProviderResponse
 from app.features.services.schemas import CategoryResponse, ServiceResponse
 from app.features.payments.schemas import PayoutQueueResponse
+
+
+class DispatchSessionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    task_id: Optional[str] = None
+    trigger: Optional[DispatchSessionTrigger] = None
+    status: Optional[DispatchSessionStatus] = None
+    sequence: Optional[int] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    reason: Optional[str] = None
+    session_metadata: Optional[Dict[str, Any]] = None
+    batch_size: Optional[int] = None
+    search_radius_km: Optional[float] = None
+    excluded_provider_ids: Optional[List[str]] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 class TaskLocationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -163,11 +191,22 @@ class TaskResponse(BaseModel):
     payout: Optional[PayoutQueueResponse] = None
 
 
+class DispatchAttemptProviderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+
+
 class TaskDispatchAttemptResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: Optional[str] = None
     task_id: Optional[str] = None
+    dispatch_session_id: Optional[str] = None
     provider_id: Optional[str] = None
     sequence_order: Optional[int] = None
     match_score: Optional[float] = None
@@ -176,7 +215,7 @@ class TaskDispatchAttemptResponse(BaseModel):
     expires_at: Optional[datetime] = None
     responded_at: Optional[datetime] = None
     status: Optional[DispatchAttemptStatus] = None
-    provider: Optional[MinimalProviderResponse] = None
+    provider: Optional[DispatchAttemptProviderResponse] = None
 
 
 class TaskOfferBriefResponse(BaseModel):
