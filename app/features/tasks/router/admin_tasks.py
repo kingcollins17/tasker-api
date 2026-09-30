@@ -103,6 +103,7 @@ async def list_dispatch_attempts(
     """List dispatch attempts for a task or dispatch session with query filtering and provider details. Inlined SQLModel query."""
     try:
         stmt = (
+            # pyrefly: ignore [no-matching-overload]
             select(
                 TaskDispatchAttempt,
                 col(ProviderProfile.first_name),
