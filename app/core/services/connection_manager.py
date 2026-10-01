@@ -48,7 +48,7 @@ class ConnectionManager:
             del self._connections[user_id]
             logger.info(f"[WS] User {user_id} disconnected. Active connections: {len(self._connections)}")
 
-    async def send_to_user(self, user_id: str, message: dict) -> bool:
+    async def send(self, user_id: str, message: dict) -> bool:
         """Send a JSON message to a user's active WebSocket connection.
 
         Args:

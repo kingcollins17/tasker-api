@@ -6,6 +6,8 @@ python3 -m app.cli.bootstrap_admin \
   --password "Password123#" \
   --fullname "Root Admin"
 
+curl -N "http://localhost:8000/api/v1/notifications/stream?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImI4ZjBkYzQxLTg3YzAtNGMwZC04MTIwLTE2Y2FjOWQwMTM2ZiIsImVtYWlsIjoiY2FyYUB5b3BtYWlsLmNvbSIsImlzX2FjdGl2ZSI6dHJ1ZSwiZXhwIjoxODIwODU0NzYxfQ.zyValYxhnPsdIs2HYtdLMeWxAshDfluLO6OZIHgu99U" | jq --unbuffered
+
 
 UPSTASH_REDIS_REST_URL="https://suitable-reindeer-146550.upstash.io"
 UPSTASH_REDIS_REST_TOKEN="gQAAAAAAAjx2AAIgcDJkNTIxZGU5Y2MwYjk0YmM3OWRhYzc1MmQ4MTdlNzVhNw"

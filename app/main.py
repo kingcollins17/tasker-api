@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.database import init_db
 from app.core.services import (
     get_cache_service,
+    get_sse_manager,
     start_notification_listener,
     stop_notification_listener,
 )
@@ -23,6 +24,7 @@ from app.features.vetting.router import router as vetting_router
 from app.features.support.router import router as support_router
 from app.features.admin import router as admin_router
 from app.features.utils import router as utils_router
+from app.features.tests.router import router as tests_router
 
 
 @asynccontextmanager
@@ -38,6 +40,7 @@ async def lifespan(app: FastAPI):
     # Shutdown logic
 
     await stop_notification_listener()
+    get_sse_manager().shutdown()
     await get_cache_service().close()
 
 
@@ -86,6 +89,8 @@ def create_app() -> FastAPI:
     app.include_router(vetting_router, prefix=f"{API_V1_PREFIX}/vetting")
     app.include_router(support_router, prefix=f"{API_V1_PREFIX}")
     app.include_router(utils_router, prefix=f"{API_V1_PREFIX}")
+    app.include_router(tests_router, prefix=f"{API_V1_PREFIX}/tests", tags=["Tests"])
+
 
     @app.get("/")
     async def read_root():

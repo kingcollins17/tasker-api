@@ -29,7 +29,7 @@ class CacheService:
             decode_responses=True,
             socket_keepalive=True,
             health_check_interval=30,
-            max_connections=2
+            max_connections=4,
         )
         self._initialized = True
 

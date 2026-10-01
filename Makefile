@@ -28,7 +28,7 @@ dev:
 	$(FASTAPI) dev app/main.py
 
 celery:
-	$(CELERY) -A app.celery_app.celery_app worker --loglevel=info --pool=threads --concurrency=4
+	$(CELERY) -A app.celery_app.celery_app worker --loglevel=info --pool=threads --concurrency=2
 
 beat:
 	$(CELERY) -A app.celery_app.celery_app beat --loglevel=info

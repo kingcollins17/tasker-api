@@ -22,6 +22,47 @@
     "status_code": 200
   },
   {
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImI4ZjBkYzQxLTg3YzAtNGMwZC04MTIwLTE2Y2FjOWQwMTM2ZiIsImVtYWlsIjoiY2FyYUB5b3BtYWlsLmNvbSIsImlzX2FjdGl2ZSI6dHJ1ZSwiZXhwIjoxODIwODU0NzYxfQ.zyValYxhnPsdIs2HYtdLMeWxAshDfluLO6OZIHgu99U",
+  "token_type": "bearer",
+  "user": {
+    "id": "b8f0dc41-87c0-4c0d-8120-16cac9d0136f",
+    "email": "cara@yopmail.com",
+    "phone_number": "+2348069894898",
+    "type": "CUSTOMER",
+    "is_active": true,
+    "email_verified": true,
+    "phone_verified": true,
+    "created_at": "2026-09-19T12:11:31.282763",
+    "updated_at": "2026-09-19T12:11:31.282782",
+    "region_id": null,
+    "meta_data": {},
+    "stats": {
+      "id": "ebf64b84-1d31-45b8-bc37-f2e167f5c676",
+      "user_id": "b8f0dc41-87c0-4c0d-8120-16cac9d0136f",
+      "credibility_score": 25,
+      "average_ratings": 0,
+      "total_ratings": 0,
+      "acceptance_rate_30d": 100,
+      "completion_rate_30d": 100,
+      "current_tier": 1,
+      "total_tasks_completed": 0,
+      "total_tasks_posted": 0,
+      "consecutive_declines": 0,
+      "cancellation_count": 0
+    },
+    "customer_profile": {
+      "id": "87f98ac7-3564-468e-b327-56a8f36182c9",
+      "first_name": "Cara",
+      "last_name": "Ammel",
+      "address_line": null
+    },
+    "provider_profile": null,
+    "devices": [],
+    "location": null,
+    "payment_account": null
+  }
+},
+  {
     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjI5NjI2Yjg5LTNjMDgtNDIyNS1iNzQ3LTk0NzVlMWU5NDFjOCIsImVtYWlsIjoiY3VzdG9tZXJAZ21haWwuY29tIiwiaXNfYWN0aXZlIjp0cnVlLCJleHAiOjE4MTkzMDU2ODF9.U9S7rDP5fZHAB1le0aCKhxaTCY2T6L8B4G6m0zACgdI",
     "token_type": "bearer",
     "user": {

@@ -1,17 +1,21 @@
 from typing import Optional
+
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
     Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import StreamingResponse
 import json
 from datetime import datetime, timezone
+
 from app.core.services.cache import get_cache_service
-from app.core.services.notification_pubsub import NOTIFICATION_CHANNEL
+from app.core.services.sse_manager import get_sse_manager
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.deps import GetCurrentUser
 from app.core.error_handler import AppErrorHandler
@@ -132,6 +136,69 @@ async def mark_as_read(
         )
 
 
+@router.get("/stream")
+async def notifications_sse(
+    request: Request,
+    token: str = Query(..., description="JWT access token for authentication"),
+):
+    """SSE endpoint for real-time in-app notifications.
+
+    Clients connect with their JWT token as a query parameter::
+
+        GET /api/v1/notifications/stream?token=<jwt>
+
+    The server responds with ``Content-Type: text/event-stream`` and
+    pushes notification payloads as ``data: <json>`` events whenever a
+    new in-app notification is created for the authenticated user.
+
+    Example client (JavaScript)::
+
+        const evtSource = new EventSource(
+            "/api/v1/notifications/stream?token=" + accessToken
+        );
+        evtSource.onmessage = (event) => {
+            const notification = JSON.parse(event.data);
+            console.log("New notification:", notification);
+        };
+    """
+    # Authenticate via JWT query parameter
+    payload = security.decode_access_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
+    user_id = payload.get("id")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
+
+    sse_manager = get_sse_manager()
+    conn = sse_manager.connect(user_id)
+
+    async def event_generator():
+        try:
+            async for notification in sse_manager.subscribe(user_id, conn):
+                if await request.is_disconnected():
+                    break
+                yield json.dumps(notification)
+        finally:
+            sse_manager.disconnect(user_id, conn)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.websocket("/ws")
 async def notifications_websocket(
     websocket: WebSocket,
@@ -176,37 +243,4 @@ async def notifications_websocket(
         manager.disconnect(user_id, websocket)
 
 
-@router.post("/test-in-app/{user_id}")
-async def test_in_app_notification(
-    user_id: str,
-    task_id: Optional[str] = None,
-    type: Optional[str] = "test",
-    title: Optional[str] = "Test Notification",
-    body: Optional[str] = "This is a test in-app notification",
-    data: Optional[dict] = None,
-    priority: Optional[str] = "normal",
 
-    # service: NotificationService = Depends(get_notification_service),
-):
-    """Test endpoint for sending an in-app notification directly via Redis Pub/Sub."""
-    cache = get_cache_service()
-    
-    data = data or {}
-    if task_id:
-        data["task_id"] = task_id
-    if type:
-        data['type']=type
-        
-    notification_payload = {
-        "notification_id": "test-1234",
-        "type": type,
-        "title": title,
-        "body": body,
-        "data": data,
-        "priority": priority,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    message = json.dumps({"user_id": user_id, "notification": notification_payload})
-
-    receivers = await cache.publish(NOTIFICATION_CHANNEL, message)
-    return {"status": "sent", "receivers": receivers, "user_id": user_id}

@@ -3,14 +3,14 @@
 Subscriber side (async, runs in the FastAPI event loop):
     ``start_notification_listener()`` subscribes to the Redis Pub/Sub channel
     via the existing ``CacheService`` and dispatches incoming messages to the
-    local ``ConnectionManager``.
+    local ``ConnectionManager`` and ``SSEManager``.
 
 Publisher side (async, called from Celery async helpers):
     Uses ``CacheService.publish()`` directly in the async task context.
 
 Because every server instance runs its own subscriber, a notification
 published by *any* Celery worker reaches *every* instance. Each instance
-checks whether it holds the target user's WebSocket and only delivers
+checks whether it holds the target user's WebSocket/SSE and only delivers
 locally — no duplicate messages are sent.
 """
 
@@ -23,23 +23,27 @@ from redis.asyncio.client import PubSub
 from app.core.logging import logger
 from app.core.services.cache import get_cache_service
 from app.core.services.connection_manager import get_connection_manager
+from app.core.services.sse_manager import BROADCAST_CHANNEL, get_sse_manager
 
 NOTIFICATION_CHANNEL = "in_app_notifications"
 
-# Background asyncio task handle
+# Background asyncio task handles
 _listener_task: Optional[asyncio.Task] = None
+_broadcast_listener_task: Optional[asyncio.Task] = None
 _pubsub: Optional[PubSub] = None
+_broadcast_pubsub: Optional[PubSub] = None
 
 
 # ── Subscriber (async — runs inside FastAPI event loop) ──────────────────────
 
 
 async def _listen() -> None:
-    """Internal coroutine that subscribes and dispatches messages."""
+    """Internal coroutine that subscribes and dispatches targeted messages."""
     global _pubsub
 
     cache = get_cache_service()
     manager = get_connection_manager()
+    sse_manager = get_sse_manager()
 
     while True:
         try:
@@ -77,14 +81,24 @@ async def _listen() -> None:
                     logger.info(
                         f"[PubSub] Attempting to deliver notification to user_id: {user_id}"
                     )
-                    success = await manager.send_to_user(user_id, notification)
-                    if success:
+
+                    # Deliver via WebSocket
+                    ws_success = await manager.send(user_id, notification)
+                    if ws_success:
                         logger.info(
-                            f"[PubSub] Successfully delivered notification to user_id: {user_id}"
+                            f"[PubSub] WS delivered notification to user_id: {user_id}"
                         )
-                    else:
+
+                    # Deliver via SSE
+                    sse_success = sse_manager.send(user_id, notification)
+                    if sse_success:
                         logger.info(
-                            f"[PubSub] User {user_id} not connected to this instance, message not delivered."
+                            f"[PubSub] SSE delivered notification to user_id: {user_id}"
+                        )
+
+                    if not ws_success and not sse_success:
+                        logger.info(
+                            f"[PubSub] User {user_id} not connected (WS or SSE) on this instance."
                         )
                 except json.JSONDecodeError:
                     logger.warning("[PubSub] Received non-JSON message, skipping.")
@@ -109,27 +123,94 @@ async def _listen() -> None:
             logger.info("[PubSub] Cleaned up subscriber connection.")
 
 
+async def _listen_broadcast() -> None:
+    """Internal coroutine that subscribes to the broadcast channel and
+    delivers to all locally connected SSE and WebSocket users."""
+    global _broadcast_pubsub
+
+    cache = get_cache_service()
+    manager = get_connection_manager()
+    sse_manager = get_sse_manager()
+
+    while True:
+        try:
+            _broadcast_pubsub = cache.pubsub()
+            await _broadcast_pubsub.subscribe(BROADCAST_CHANNEL)
+            logger.info(f"[PubSub] Subscribed to '{BROADCAST_CHANNEL}' channel.")
+
+            while True:
+                message = await _broadcast_pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=60.0
+                )
+                if message is None:
+                    await _broadcast_pubsub.ping()
+                    continue
+
+                if message["type"] != "message":
+                    continue
+
+                try:
+                    data = json.loads(message["data"] or "{}")
+                    notification = data.get("notification")
+                    if not notification:
+                        continue
+
+                    logger.info("[PubSub] Broadcasting notification to all users.")
+                    sse_manager.broadcast(notification)
+                    await manager.broadcast(notification)
+                except json.JSONDecodeError:
+                    logger.warning("[PubSub] Received non-JSON broadcast message, skipping.")
+                except Exception as e:
+                    logger.error(f"[PubSub] Error processing broadcast message: {e}")
+
+        except asyncio.CancelledError:
+            logger.info("[PubSub] Broadcast listener task cancelled.")
+            break
+        except Exception as e:
+            logger.error(
+                f"[PubSub] Broadcast connection error: {e}. Reconnecting in 5s..."
+            )
+            await asyncio.sleep(5)
+        finally:
+            if _broadcast_pubsub:
+                try:
+                    await _broadcast_pubsub.unsubscribe(BROADCAST_CHANNEL)
+                    await _broadcast_pubsub.close()
+                except Exception:
+                    pass
+            logger.info("[PubSub] Cleaned up broadcast subscriber connection.")
+
+
 async def start_notification_listener() -> None:
-    """Start the Redis Pub/Sub listener as a background asyncio task."""
-    global _listener_task
+    """Start the Redis Pub/Sub listeners as background asyncio tasks."""
+    global _listener_task, _broadcast_listener_task
+
     if _listener_task is not None and not _listener_task.done():
         logger.warning("[PubSub] Listener already running.")
-        return
+    else:
+        _listener_task = asyncio.create_task(_listen())
+        logger.info("[PubSub] Notification listener started.")
 
-    _listener_task = asyncio.create_task(_listen())
-    logger.info("[PubSub] Notification listener started.")
+    if _broadcast_listener_task is not None and not _broadcast_listener_task.done():
+        logger.warning("[PubSub] Broadcast listener already running.")
+    else:
+        _broadcast_listener_task = asyncio.create_task(_listen_broadcast())
+        logger.info("[PubSub] Broadcast listener started.")
 
 
 async def stop_notification_listener() -> None:
-    """Stop the background listener task gracefully."""
-    global _listener_task
-    if _listener_task is None or _listener_task.done():
-        return
+    """Stop the background listener tasks gracefully."""
+    global _listener_task, _broadcast_listener_task
 
-    _listener_task.cancel()
-    try:
-        await _listener_task
-    except asyncio.CancelledError:
-        pass
+    for name, task in [("Notification", _listener_task), ("Broadcast", _broadcast_listener_task)]:
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            logger.info(f"[PubSub] {name} listener stopped.")
+
     _listener_task = None
-    logger.info("[PubSub] Notification listener stopped.")
+    _broadcast_listener_task = None
+

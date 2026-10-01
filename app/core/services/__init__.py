@@ -7,6 +7,7 @@ from .cloud_messaging import (
     get_cloud_messaging_service,
 )
 from .connection_manager import ConnectionManager, get_connection_manager
+from .sse_manager import SSEManager, get_sse_manager
 from .email import EmailService
 from .notification_pubsub import (
     start_notification_listener,
@@ -106,6 +107,8 @@ __all__ = [
     "get_storage_service",
     "get_cloud_messaging_service",
     "get_connection_manager",
+    "SSEManager",
+    "get_sse_manager",
     "start_notification_listener",
     "stop_notification_listener",
 ]
