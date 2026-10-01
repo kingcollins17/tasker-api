@@ -1,6 +1,6 @@
 from app.core.config import IS_LOCAL
 import sys
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from fastapi import Depends
 from sqlalchemy import desc, func, select
 from sqlmodel import col
@@ -93,13 +93,33 @@ class LoggerService:
         )
         return await self.repository.get_all(options)
 
+    async def get_logs_count(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        statement = select(func.count(col(SystemLog.id)))
+        if filters:
+            for key, value in filters.items():
+                if hasattr(SystemLog, key):
+                    attr = getattr(SystemLog, key)
+                    if isinstance(value, (list, tuple, set)):
+                        statement = statement.where(col(attr).in_(value))
+                    else:
+                        statement = statement.where(attr == value)
+        result = await self.repository.execute(statement)
+        return result.scalar_one() or 0
+
     async def get_stats(self) -> Dict[str, int]:
         statement = select(col(SystemLog.level), func.count(col(SystemLog.id))).group_by(col(SystemLog.level))
         result = await self.repository.execute(statement)
         stats = {row[0].value: row[1] for row in result.all()}
         return stats
 
-    async def get_metrics_summary(self) -> List[Dict[str, Any]]:
+    async def get_metrics_summary(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         statement = (
             select(
                 col(SystemLog.source),
@@ -112,9 +132,17 @@ class LoggerService:
             .group_by(col(SystemLog.source))
         )
         result = await self.repository.execute(statement)
-        
+        all_rows = result.all()
+        total = len(all_rows)
+
+        selected_rows = all_rows
+        if offset is not None:
+            selected_rows = selected_rows[offset:]
+        if limit is not None:
+            selected_rows = selected_rows[:limit]
+
         summary = []
-        for row in result.all():
+        for row in selected_rows:
             summary.append({
                 "source": row[0],
                 "count": row[1],
@@ -122,7 +150,7 @@ class LoggerService:
                 "max_duration": row[3],
                 "min_duration": row[4],
             })
-        return summary
+        return summary, total
 
 
 SystemLogger = LoggerService
