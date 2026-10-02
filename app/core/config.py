@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     # Database Settings
     DATABASE_URL: str 
 
-    POOL_SIZE: int
+    POOL_SIZE: int = 10
+    MAX_OVERFLOW: int = 20
     # Redis / Celery Settings
     REDIS_URL: str 
 
