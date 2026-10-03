@@ -1,7 +1,7 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc
-from sqlmodel import col, func, select
+from sqlmodel import col, select
 
 from app.core.api_response import BaseAPIResponse, PaginatedData
 from app.core.deps.auth import GetCurrentAdmin
@@ -64,13 +64,10 @@ async def list_admin_transactions(
         if conditions:
             query = query.where(*conditions)
 
-        count_query = select(func.count()).select_from(query.subquery())
-        total_res = await transaction_repo.execute(count_query)
-        total = total_res.scalar() or 0
-
         query = query.order_by(desc(col(Transaction.created_at))).offset((page - 1) * per_page).limit(per_page)
         res = await transaction_repo.execute(query)
-        items = list(res.all())
+        items = list(res.unique().all())
+        total = len(items)
 
         paginated_data = PaginatedData[TransactionResponse](
             items=[TransactionResponse.model_validate(t) for t in items],
@@ -147,13 +144,10 @@ async def list_admin_payouts(
         if conditions:
             query = query.where(*conditions)
 
-        count_query = select(func.count()).select_from(query.subquery())
-        total_res = await payout_queue_repo.execute(count_query)
-        total = total_res.scalar() or 0
-
         query = query.order_by(desc(col(PayoutQueue.created_at))).offset((page - 1) * per_page).limit(per_page)
         res = await payout_queue_repo.execute(query)
-        items = list(res.all())
+        items = list(res.unique().all())
+        total = len(items)
 
         paginated_data = PaginatedData[PayoutQueueResponse](
             items=[PayoutQueueResponse.model_validate(p) for p in items],
