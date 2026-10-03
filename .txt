@@ -6,6 +6,12 @@ python3 -m app.cli.bootstrap_admin \
   --password "Password123#" \
   --fullname "Root Admin"
 
+  I get this error on my app frontend   {
+(13152): ║         "message": "An unexpected error occurred.",
+(13152): ║         "details": "QueuePool limit of size 3 overflow 2 reached, connection timed out, timeout 30.00
+(13152): ║           (Background on this error at: https://sqlalche.me/e/20/3o7r)"
+(13152): ║    }
+
 curl -N "http://localhost:8000/api/v1/notifications/stream?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImI4ZjBkYzQxLTg3YzAtNGMwZC04MTIwLTE2Y2FjOWQwMTM2ZiIsImVtYWlsIjoiY2FyYUB5b3BtYWlsLmNvbSIsImlzX2FjdGl2ZSI6dHJ1ZSwiZXhwIjoxODIwODU0NzYxfQ.zyValYxhnPsdIs2HYtdLMeWxAshDfluLO6OZIHgu99U" | jq --unbuffered
 
 

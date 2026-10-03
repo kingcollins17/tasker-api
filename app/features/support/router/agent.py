@@ -15,6 +15,7 @@ from app.core.models.support import (
     CaseAssignment,
     CaseAttachment,
     CaseEvent,
+    CaseEventType,
     CaseMessage,
     CasePriority,
     CaseStatus,
@@ -25,13 +26,15 @@ from app.core.models.support import (
     SupportCase,
 )
 from app.core.models.tasks import Task
-from app.core.models.users import CustomerProfile, ProviderProfile, User
+from app.core.models.users import CustomerProfile, ProviderProfile, User, UserType
+from app.core.utils.datetime_helper import lagos_now
 from app.core.services.storage import StorageService, get_storage_service
 from app.features.support.celery import send_support_email_task
 from app.features.support.schemas import (
     AdminCaseMessageCreate,
     CaseAssignmentCreate,
     CaseAttachmentResponse,
+    CaseAttachUserCreate,
     CaseMessageCreate,
     CaseMessageResponse,
     CaseResolutionCreate,
@@ -803,4 +806,110 @@ async def admin_escalate_case(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to escalate support case",
+        )
+
+
+@router.post("/{case_id}/attach-user", response_model=BaseAPIResponse[SupportCaseResponse])
+async def admin_attach_user_to_case(
+    case_id: str,
+    schema: CaseAttachUserCreate,
+    admin: AdminUser = Depends(GetCurrentAdmin()),
+    case_repo: Repository[SupportCase] = Depends(GetRepository(SupportCase)),
+    user_repo: Repository[User] = Depends(GetRepository(User)),
+    session: AsyncSession = Depends(get_session),
+):
+    """Attaches a customer or provider to a support case.
+
+    If a customer initiates a ticket concerning a provider, the assigned agent attaches that provider setting case.provider_id.
+    Vice versa, if a provider initiates a ticket concerning a customer, the assigned agent attaches that customer setting case.customer_id.
+    Only the assigned agent for the case can perform this action.
+    """
+    try:
+        case = await case_repo.get(case_id)
+        if not case:
+            stmt = select(SupportCase).where(col(SupportCase.case_number) == case_id)
+            res = await case_repo.execute(stmt)
+            case = res.first()
+
+        if not case:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Support case not found",
+            )
+
+        if case.assigned_agent_id != admin.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the assigned agent for this case can perform this action",
+            )
+
+        user_to_attach = await user_repo.get(schema.user_id)
+        if not user_to_attach:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User to attach not found",
+            )
+
+        now = lagos_now()
+
+        if user_to_attach.type == UserType.PROVIDER:
+            if case.provider_id == user_to_attach.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Provider is already attached to this support case",
+                )
+            if case.customer_id == user_to_attach.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User is already attached as the customer for this support case",
+                )
+            case.provider_id = user_to_attach.id
+            case.updated_at = now
+        elif user_to_attach.type == UserType.CUSTOMER:
+            if case.customer_id == user_to_attach.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Customer is already attached to this support case",
+                )
+            if case.provider_id == user_to_attach.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User is already attached as the provider for this support case",
+                )
+            case.customer_id = user_to_attach.id
+            case.updated_at = now
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user type for attachment",
+            )
+
+        event = CaseEvent(
+            case_id=case.id,
+            event_type=CaseEventType.INTERNAL_NOTE_ADDED,
+            actor_type="AGENT",
+            actor_id=admin.id,
+            event_metadata={
+                "action": "ATTACH_USER",
+                "attached_user_id": user_to_attach.id,
+                "attached_user_type": user_to_attach.type.value,
+            },
+            created_at=now,
+        )
+        session.add(event)
+        session.add(case)
+        await session.commit()
+        await session.refresh(case)
+
+        return BaseAPIResponse.success_response(
+            data=SupportCaseResponse.model_validate(case),
+            message="User attached to support case successfully",
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        AppErrorHandler.handleError(error)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to attach user to support case",
         )

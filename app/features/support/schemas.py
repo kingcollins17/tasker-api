@@ -137,6 +137,10 @@ class CaseAssignmentCreate(BaseModel):
     reason: Optional[str] = Field(default=None, description="Reason for assignment or transfer")
 
 
+class CaseAttachUserCreate(BaseModel):
+    user_id: str = Field(..., description="ID of the customer or provider to attach to the ticket")
+
+
 class CaseResolutionCreate(BaseModel):
     decision: str = Field(..., min_length=3, description="Final resolution decision summary")
     reason: str = Field(..., min_length=5, description="Detailed rationale for decision")
